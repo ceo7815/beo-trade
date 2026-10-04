@@ -5,7 +5,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-command -v docker >/dev/null 2>&1 || { echo "Docker is missing. Run scripts/bootstrap-server.sh as root."; exit 1; }
+command -v docker >/dev/null 2>&1 || {
+  if [[ "$(id -u)" -eq 0 ]]; then
+    bash "$ROOT/scripts/bootstrap-server.sh"
+  else
+    echo "Docker is missing. Run: sudo bash scripts/bootstrap-server.sh"
+    exit 1
+  fi
+}
 docker compose version >/dev/null 2>&1 || { echo "Docker Compose plugin is missing. Run scripts/bootstrap-server.sh as root."; exit 1; }
 command -v git >/dev/null 2>&1 || { echo "git is missing."; exit 1; }
 [[ -f .env ]] || { echo "Copy .env.example to .env on the server and fill the secrets there."; exit 1; }

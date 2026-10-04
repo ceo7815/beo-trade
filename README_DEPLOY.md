@@ -30,4 +30,12 @@ bash scripts/deploy.sh
 
 אחר כך `bash scripts/deploy.sh`. אין צורך בשינוי קוד.
 
+Theta Terminal רץ כשירות `theta` על אותו שרת, עם Java 21, על פורט 25503 בתוך הרשת הפנימית. אחרי תשלום מוסיפים רק `THETADATA_API_KEY` ב-xCloud ופורסים מחדש. הכתובת הפנימית היא `http://theta:25503`. לא משתמשים ב-`127.0.0.1`.
+
+בדיקת הספקים, בלי שליחת פקודת מסחר:
+
+```bash
+./activate-providers.sh
+```
+
 כל עוד Theta לא החזיר ציטוט ושרשרת, `/ready` נשאר `BLOCKED` וה-worker לא קונה.

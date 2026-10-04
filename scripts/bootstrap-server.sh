@@ -53,5 +53,8 @@ if ! command -v git >/dev/null 2>&1; then
 fi
 
 echo "Bootstrap finished. Docker configuration files that already existed were not replaced."
+if ! command -v java >/dev/null 2>&1 || ! java -version 2>&1 | grep -q 'version "2[1-9]'; then
+  apt-get install -y openjdk-21-jre-headless || echo "Host Java 21 was not installed. The Theta container image includes Java 21."
+fi
 docker --version
 docker compose version

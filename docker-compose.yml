@@ -29,6 +29,7 @@ services:
       - .env
     environment:
       <<: *paper-env
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
     volumes:
       - beo_data:/app/data
     networks:
@@ -45,6 +46,7 @@ services:
       - .env
     environment:
       <<: *paper-env
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
     volumes:
       - beo_data:/app/data
     expose:
@@ -80,6 +82,7 @@ services:
       - .env
     environment:
       <<: *paper-env
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
     volumes:
       - beo_data:/app/data
     networks:
@@ -102,6 +105,37 @@ services:
       timeout: 5s
       retries: 8
       start_period: 40s
+
+  theta:
+    image: beo-trade-theta
+    build:
+      context: ./docker/theta
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      TZ: UTC
+    expose:
+      - "25503"
+    volumes:
+      - theta_logs:/opt/theta/logs
+    networks:
+      - beo
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:25503/v3/terminal/mdds/status"]
+      interval: 30s
+      timeout: 5s
+      retries: 10
+      start_period: 120s
 
   web:
     image: beo-trade-web
@@ -143,3 +177,4 @@ networks:
 
 volumes:
   beo_data:
+  theta_logs:
