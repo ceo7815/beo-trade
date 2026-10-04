@@ -1,0 +1,145 @@
+name: beo-trade
+
+# One autonomous process owns scan, monitor, reconciliation, and the schedule.
+# A second process cannot trade: it exits on the data-volume lock.
+# Redis is not required. The runtime database is SQLite on beo_data.
+# APP_ENV stays local because the application refuses SQLite when APP_ENV=production.
+
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
+x-paper: &paper-env
+  APP_ENV: local
+  TRADING_MODE: PAPER
+  PAPER_ONLY: "true"
+  AUTO_CREATE_TABLES: "true"
+  TZ: UTC
+
+services:
+  migrate:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.ops.migrate"]
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+    volumes:
+      - beo_data:/app/data
+    networks:
+      - beo
+    restart: "no"
+    logging: *default-logging
+
+  api:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+    volumes:
+      - beo_data:/app/data
+    expose:
+      - "8000"
+    networks:
+      - beo
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  worker:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.runner"]
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+    volumes:
+      - beo_data:/app/data
+    networks:
+      - beo
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; p=Path('/app/data/worker_heartbeat.txt'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+  web:
+    image: beo-trade-web
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        BACKEND_URL: http://api:8000
+    environment:
+      BACKEND_URL: http://api:8000
+      PORT: "3000"
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    networks:
+      - beo
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
+networks:
+  beo:
+    name: beo_trade
+
+volumes:
+  beo_data:
