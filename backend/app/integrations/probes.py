@@ -322,7 +322,13 @@ def probe_redis(settings: Settings) -> tuple[str, int | None, str]:
 
 
 def probe_xcloud() -> tuple[str, int | None, str]:
-    return "disconnected", None, "אין נקודת בדיקה ל-XCloud. השרת הקיים לא סומן כמחובר בלי בדיקה."
+    from app.models.db import database_ready
+
+    started = time.perf_counter()
+    if not database_ready():
+        return "disconnected", None, "המסד על השרת לא ענה"
+    latency = int((time.perf_counter() - started) * 1000)
+    return "connected", latency, "התהליך רץ על השרת והמסד עונה"
 
 
 def probe_internal(integration_id: str) -> tuple[str, int | None, str]:

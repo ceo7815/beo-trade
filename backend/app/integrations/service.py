@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 
 from app.config.settings import Settings
 from app.integrations.catalog import ACTIVE, ALL, FUTURE, INTERNAL
-from app.integrations.probes import PROBES, probe_internal, probe_redis
+from app.integrations.probes import PROBES, probe_internal, probe_redis, probe_xcloud
 from app.integrations.secrets import mask, resolve_secret
 from app.models.tables import IntegrationCheck, IntegrationEvent
 
@@ -63,6 +63,9 @@ def view(settings: Settings, session: Session, spec) -> dict:
         checked_at = None
     elif spec.id == "redis":
         status, latency, detail = probe_redis(settings)
+        checked_at = datetime.now(timezone.utc).isoformat()
+    elif spec.id == "xcloud":
+        status, latency, detail = probe_xcloud()
         checked_at = datetime.now(timezone.utc).isoformat()
     elif spec.id == "regime":
         status, latency, detail = probe_internal("regime")
