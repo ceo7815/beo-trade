@@ -13,7 +13,7 @@ def detect_events(snapshot: UnderlyingSnapshot, config: TradingConfig) -> set[st
         gap = (snapshot.open - snapshot.prior_close) / snapshot.prior_close
         if abs(gap) >= Decimal(str(config.gap_percent)):
             events.add("GAP")
-    if snapshot.relative_volume >= Decimal(str(config.min_relative_volume)):
+    if snapshot.relative_volume >= Decimal(str(config.relative_volume_priority)):
         events.add("UNUSUAL_VOLUME")
     move = snapshot.change_percent
     if move >= move_floor:

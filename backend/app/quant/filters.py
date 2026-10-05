@@ -34,16 +34,22 @@ def would_fail_old_volume_floor(snapshot: UnderlyingSnapshot, config: TradingCon
     return int(snapshot.volume) < int(config.min_underlying_volume)
 
 
-def rank_underlyings(underlyings: list[UnderlyingSnapshot], as_of: datetime) -> list[UnderlyingSnapshot]:
-    """Stage B. Higher RV, larger move, more volume, then a fresher quote."""
+def rank_underlyings(
+    underlyings: list[UnderlyingSnapshot],
+    as_of: datetime,
+    priority: float = 1.8,
+) -> list[UnderlyingSnapshot]:
+    """Stage B. RV at or above the priority mark first, then RV, move, freshness, liquidity."""
 
     def key(item: UnderlyingSnapshot) -> tuple:
         age = quote_age_seconds(item.observed_at, as_of)
+        relative = float(item.relative_volume)
         return (
-            -float(item.relative_volume),
+            0 if relative >= priority else 1,
+            -relative,
             -abs(float(item.change_percent)),
-            -int(item.volume),
             age,
+            -int(item.volume),
             item.symbol,
         )
 

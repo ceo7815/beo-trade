@@ -296,6 +296,7 @@ def _filter_observation(requested: tuple[str, ...], underlyings, config: Trading
                 "rv_prior_totals": list(getattr(item, "rv_prior_totals", ()) or ()),
                 "prior_day_volume": int(getattr(item, "prior_day_volume", 0) or 0),
                 "would_fail_old_volume_floor": would_fail_old_volume_floor(item, config),
+                "rv_high_priority": float(item.relative_volume) >= config.relative_volume_priority,
             }
         )
     return {"counts": counts, "samples": samples}
@@ -315,7 +316,7 @@ def _liquidity_stage(underlyings, providers, config: TradingConfig, now: datetim
             rejections.append((item.symbol, "min_price", "liquidity"))
         else:
             kept.append(item)
-    return rank_underlyings(kept, now), rejections
+    return rank_underlyings(kept, now, config.relative_volume_priority), rejections
 
 
 def _remember_scan_liquidity(underlyings) -> None:

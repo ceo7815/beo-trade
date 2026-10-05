@@ -374,6 +374,8 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
         sector_premium = Decimal(str((sectors or {}).get("UNCLASSIFIED", 0)))
+        from app.broker.runtime import broker_risk_snapshot
+        from app.models.tables import AuditLog
 
         for row in buys:
             fresh = fresh_news(news, row.underlying, moment, settings.trading().news_max_age_seconds)
@@ -391,11 +393,30 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 buying_power=buying,
                 open_positions=len(positions),
             )
-            if decision.quantity < 1:
+            snapshot = broker_risk_snapshot(
+                account,
+                equity,
+                decision.quantity,
+                Decimal(str(row.ask)),
+                settings.trading().contract_multiplier,
+                Decimal(str(settings.trading().risk_per_trade_pct)),
+            )
+            if snapshot is None or decision.quantity < 1:
                 with session_scope() as session:
                     from app.broker.store import record_trade_event
 
-                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", decision.reason, row.recommendation_id)
+                    reason = decision.reason if decision.quantity < 1 else "EQUITY_SOURCE_MISMATCH"
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", reason, row.recommendation_id)
+                    session.add(
+                        AuditLog(
+                            actor="risk",
+                            action="pre_order_blocked",
+                            entity="order",
+                            entity_id=row.recommendation_id[:36],
+                            payload={"reason": reason, "risk_equity_used": str(equity), "snapshot": snapshot},
+                            created_at=moment,
+                        )
+                    )
                     session.commit()
                 continue
             row.quantity = decision.quantity
@@ -422,6 +443,16 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             open_premium += added
             with session_scope() as session:
                 save_recommendation(session, row, settings.dev_user_id)
+                session.add(
+                    AuditLog(
+                        actor="risk",
+                        action="pre_order",
+                        entity="order",
+                        entity_id=row.recommendation_id[:36],
+                        payload=snapshot,
+                        created_at=moment,
+                    )
+                )
                 try:
                     place_order(
                         settings,

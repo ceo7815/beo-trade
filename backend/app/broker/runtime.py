@@ -10,6 +10,43 @@ from app.models.db import session_scope
 from app.models.tables import BrokerReconciliation
 
 
+def broker_risk_snapshot(
+    account: dict,
+    equity_used: Decimal,
+    quantity: int,
+    ask: Decimal,
+    multiplier: int,
+    risk_pct: Decimal,
+) -> dict | None:
+    """The order may proceed only when sizing used this Alpaca account, not the internal ledger."""
+
+    def money(key: str, fallback: str | None = None) -> Decimal | None:
+        raw = account.get(key)
+        if raw in {None, ""} and fallback is not None:
+            raw = account.get(fallback)
+        if raw in {None, ""}:
+            return None
+        return Decimal(str(raw))
+
+    broker_equity = money("equity")
+    broker_cash = money("cash")
+    broker_buying_power = money("options_buying_power", "buying_power")
+    if broker_equity is None or broker_cash is None or broker_buying_power is None:
+        return None
+    if broker_equity != equity_used:
+        return None
+    cost = ask * Decimal(quantity) * Decimal(multiplier)
+    return {
+        "broker_equity": str(broker_equity),
+        "broker_cash": str(broker_cash),
+        "broker_buying_power": str(broker_buying_power),
+        "risk_equity_used": str(equity_used),
+        "risk_budget": str(equity_used * risk_pct),
+        "planned_position_cost": str(cost),
+        "final_quantity": int(quantity),
+    }
+
+
 def paper_equity(settings) -> Decimal | None:
     """Account equity from the paper broker. None when the account cannot be read."""
     try:

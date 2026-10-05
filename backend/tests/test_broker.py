@@ -324,6 +324,21 @@ def test_broker_unavailable_returns_502(tmp_path, monkeypatch):
     assert "secret-value" not in response.text
 
 
+def test_pre_order_risk_uses_alpaca_equity_not_the_internal_ledger():
+    from app.broker.runtime import broker_risk_snapshot
+
+    account = {"equity": "100000", "cash": "100000", "buying_power": "400000", "status": "ACTIVE"}
+    logged = broker_risk_snapshot(account, Decimal("100000"), 2, Decimal("1.25"), 100, Decimal("0.02"))
+    assert logged is not None
+    assert logged["broker_equity"] == "100000"
+    assert logged["risk_equity_used"] == "100000"
+    assert logged["broker_buying_power"] == "400000"
+    assert logged["risk_budget"] == "2000.00"
+    assert logged["planned_position_cost"] == "250.00"
+    assert logged["final_quantity"] == 2
+    assert broker_risk_snapshot(account, Decimal("1000"), 1, Decimal("1"), 100, Decimal("0.02")) is None
+
+
 def test_capabilities_keep_strategy_exits_local(tmp_path):
     settings = _settings(tmp_path)
     with TestClient(create_app(settings)) as client:
