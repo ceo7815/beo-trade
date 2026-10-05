@@ -1,0 +1,8 @@
+jar_directory = "/opt/theta/lib"
+max_jars = 3
+config = "/opt/theta/terminal.toml"
+
+[server]
+base_url = "https://nexus-api.thetadata.us/bootstrap"
+download_endpoint = "jars"
+version_endpoint = "current"

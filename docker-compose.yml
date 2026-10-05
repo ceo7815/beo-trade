@@ -115,10 +115,12 @@ services:
       - .env
     environment:
       TZ: UTC
+      THETA_LAUNCHER: v3
     expose:
       - "25503"
     volumes:
       - theta_logs:/opt/theta/logs
+      - theta_lib:/opt/theta/lib
     networks:
       - beo
     init: true
@@ -135,7 +137,7 @@ services:
       interval: 30s
       timeout: 5s
       retries: 10
-      start_period: 180s
+      start_period: 240s
 
   web:
     image: beo-trade-web
@@ -178,3 +180,4 @@ networks:
 volumes:
   beo_data:
   theta_logs:
+  theta_lib:

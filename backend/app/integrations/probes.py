@@ -85,12 +85,17 @@ def probe_thetadata(settings: Settings, transport: httpx.BaseTransport | None = 
     if not key and not base:
         return "missing_key", None, "נדרש API Key"
     subscription = ""
+    auth_result: tuple[str, int | None, str] | None = None
     if key:
-        auth_status, auth_latency, auth_detail = _probe_thetadata_key(key)
-        if auth_status != "authenticated":
-            return auth_status, auth_latency, auth_detail
-        subscription = auth_detail
-    return _probe_terminal_data(settings, transport, subscription)
+        auth_result = _probe_thetadata_key(key)
+        if auth_result[0] == "authenticated":
+            subscription = auth_result[2]
+    terminal = _probe_terminal_data(settings, transport, subscription)
+    if terminal[0] != "blocked_by_entitlement":
+        return terminal
+    if auth_result is not None and auth_result[0] != "authenticated":
+        return auth_result
+    return terminal
 
 
 def _tier(value: object) -> str:

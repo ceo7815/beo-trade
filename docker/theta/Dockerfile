@@ -7,7 +7,8 @@ RUN apt-get update \
 
 WORKDIR /opt/theta
 ADD https://download-unstable.thetadata.us/ThetaTerminalv3.jar /opt/theta/ThetaTerminalv3.jar
-COPY config.toml /opt/theta/config.toml
+COPY bootstrap.toml /opt/theta/bootstrap.toml
+COPY terminal.toml /opt/theta/terminal.toml
 COPY start.sh /opt/theta/start.sh
 RUN chmod 755 /opt/theta/start.sh \
     && mkdir -p /opt/theta/logs \
