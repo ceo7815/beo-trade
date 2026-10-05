@@ -115,7 +115,7 @@ services:
       - .env
     environment:
       TZ: UTC
-      THETA_LAUNCHER: v3
+      THETA_LAUNCHER: v3-session
     expose:
       - "25503"
     volumes:
