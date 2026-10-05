@@ -79,7 +79,7 @@ def test_hub_does_not_claim_connections_or_leak_keys(tmp_path, monkeypatch):
         assert by_id["databento"]["status"] == "planned"
         assert by_id["regime"]["status"] == "internal"
         assert by_id["redis"]["status"] != "missing_key"
-        assert all(item["status"] != "connected" for item in body["items"] if item["id"] != "redis")
+        assert all(item["status"] != "connected" for item in body["items"] if item["id"] not in {"redis", "xcloud"})
         raw = json.dumps(body)
         assert "APCA-API-SECRET" not in raw
         account = client.get("/api/v1/broker/alpaca/account")

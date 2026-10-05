@@ -100,6 +100,14 @@ class UnderlyingSnapshot:
     observed_at: datetime
     session_ok: bool
     bars: tuple[Bar, ...] = ()
+    prior_day_volume: int = 0
+    rv_numerator: int = 0
+    rv_denominator: Decimal = Decimal("0")
+    rv_day_count: int = 0
+    rv_cutoff: datetime | None = None
+    rv_prior_days: tuple[str, ...] = ()
+    rv_prior_totals: tuple[int, ...] = ()
+    rv_method: str = ""
 
     def __post_init__(self) -> None:
         ensure_aware(self.observed_at, "underlying")

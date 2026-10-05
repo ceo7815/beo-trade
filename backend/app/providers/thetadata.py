@@ -11,6 +11,7 @@ from app.config.settings import Settings
 from app.core.sessions import SCAN_PHASES, phase_at
 from app.integrations.secrets import resolve_secret
 from app.providers.base import ProviderUnavailable
+from app.quant.relative_volume import LAST_BAR_OPEN, SESSION_OPEN, time_of_day_relative_volume
 from app.schemas.domain import Bar, OptionRight, OptionSnapshot, UnderlyingSnapshot
 
 DEFAULT_BASE = "http://127.0.0.1:25503"
@@ -227,6 +228,27 @@ class ThetaFeed:
                 "/v3/stock/history/eod",
                 {"symbol": symbol, "start_date": start, "end_date": end},
             )
+        intraday: dict[str, list[dict]] = {}
+        cutoff = _completed_minute(as_of)
+        if cutoff is not None:
+            window_start = (session_day - timedelta(days=30)).strftime("%Y%m%d")
+            window_end = session_day.strftime("%Y%m%d")
+            end_clock = cutoff.strftime("%H:%M:%S")
+            for symbol in stocks:
+                if symbol not in ohlc and symbol not in trades:
+                    continue
+                intraday[symbol] = self._get(
+                    "/v3/stock/history/ohlc",
+                    {
+                        "symbol": symbol,
+                        "start_date": window_start,
+                        "end_date": window_end,
+                        "interval": "1m",
+                        "start_time": "09:30:00",
+                        "end_time": end_clock,
+                    },
+                    required=False,
+                )
         underlyings = []
         context: dict[str, dict] = {}
         newest: datetime | None = None
@@ -244,9 +266,11 @@ class ThetaFeed:
                 quotes.get(symbol),
                 trades.get(symbol),
                 history.get(symbol, []),
+                intraday.get(symbol, []),
                 as_of,
                 session_day,
                 session_ok,
+                self.settings.calendar().holidays,
             )
             if built is not None:
                 underlyings.append(built)
@@ -330,15 +354,38 @@ def _context_level(symbol: str, ohlc: dict | None, quote: dict | None, trade: di
     return {"symbol": symbol, "price": price, "change_percent": change, "observed_at": observed}
 
 
+def _completed_minute(as_of: datetime) -> datetime | None:
+    local = as_of.astimezone(EXCHANGE)
+    cutoff = local.replace(second=0, microsecond=0) - timedelta(minutes=1)
+    if cutoff.date() != local.date() or cutoff.time() < SESSION_OPEN:
+        return None
+    if cutoff.time() > LAST_BAR_OPEN:
+        return cutoff.replace(hour=LAST_BAR_OPEN.hour, minute=LAST_BAR_OPEN.minute, second=0, microsecond=0)
+    return cutoff
+
+
+def _minute_bars(rows: list[dict]) -> list[tuple[datetime, int]]:
+    bars = []
+    for row in rows:
+        stamp = _stamp(row.get("timestamp") or row.get("created") or row.get("last_trade"))
+        volume = _int(row.get("volume"))
+        if stamp is None or volume is None:
+            continue
+        bars.append((stamp, volume))
+    return bars
+
+
 def _underlying(
     symbol: str,
     ohlc: dict | None,
     quote: dict | None,
     trade: dict | None,
     history: list[dict],
+    intraday: list[dict],
     as_of: datetime,
     session_day: date,
     session_ok: bool,
+    holidays: frozenset[date] | set[date],
 ) -> UnderlyingSnapshot | None:
     observed = _stamp((quote or {}).get("timestamp")) or _stamp((trade or {}).get("timestamp")) or _stamp((ohlc or {}).get("timestamp"))
     price = _dec((trade or {}).get("price")) or _dec((ohlc or {}).get("close"))
@@ -360,6 +407,25 @@ def _underlying(
     average = sum(volumes, Decimal("0")) / Decimal(len(volumes))
     if average <= 0:
         return None
+    audit = time_of_day_relative_volume(_minute_bars(intraday), as_of, session_day, holidays)
+    if audit is None:
+        relative = Decimal("0")
+        rv_numerator = 0
+        rv_denominator = Decimal("0")
+        rv_day_count = 0
+        rv_cutoff = None
+        rv_prior_days: tuple[str, ...] = ()
+        rv_prior_totals: tuple[int, ...] = ()
+        rv_method = "unavailable"
+    else:
+        relative = audit["numerator"] / audit["denominator"]
+        rv_numerator = int(audit["numerator"])
+        rv_denominator = audit["denominator"]
+        rv_day_count = int(audit["day_count"])
+        rv_cutoff = audit["cutoff"]
+        rv_prior_days = tuple(audit["prior_days"])
+        rv_prior_totals = tuple(int(item) for item in audit["prior_totals"])
+        rv_method = str(audit["method"])
     bars: list[Bar] = []
     for row in prior_rows:
         stamp = _stamp(row.get("last_trade") or row.get("created") or row.get("timestamp"))
@@ -380,7 +446,15 @@ def _underlying(
         low=low,
         close=close,
         volume=today_volume,
-        relative_volume=Decimal(today_volume) / average,
+        relative_volume=relative,
+        prior_day_volume=_int(prior.get("volume")) or 0,
+        rv_numerator=rv_numerator,
+        rv_denominator=rv_denominator,
+        rv_day_count=rv_day_count,
+        rv_cutoff=rv_cutoff,
+        rv_prior_days=rv_prior_days,
+        rv_prior_totals=rv_prior_totals,
+        rv_method=rv_method,
         change_percent=((price - prior_close) / prior_close) * Decimal("100"),
         change_dollars=price - prior_close,
         prior_close=prior_close,

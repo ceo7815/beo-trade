@@ -17,6 +17,7 @@ from app.universe.builder import (
     load_universe,
     next_scan_symbols,
     reset_universe_state,
+    rank_symbols,
     take_batch,
 )
 from tests.test_engine import AS_OF, StubAI, ledger, loose_config
@@ -38,7 +39,8 @@ def _row(symbol: str, **overrides) -> dict:
 
 
 @pytest.fixture(autouse=True)
-def _clean():
+def _clean(monkeypatch):
+    monkeypatch.setattr("app.universe.builder.fetch_activity_scores", lambda _settings: {})
     reset_universe_state()
     yield
     reset_universe_state()
@@ -163,8 +165,15 @@ def test_scan_uses_the_dynamic_universe_and_allows_zero_candidates(tmp_path, mon
     assert empty.rejections
 
 
+def test_liquid_names_are_scanned_before_the_alphabetical_remainder():
+    ranked = rank_symbols(("AAA", "BBB", "CCC"), {"CCC": 2_000_000, "AAA": 10})
+    assert ranked == ("CCC", "BBB", "AAA")
+    assert take_batch(ranked, 2, 0)[0] == ("CCC", "BBB")
+
+
 def test_next_batch_comes_from_the_provider(tmp_path, monkeypatch):
     monkeypatch.setattr("app.universe.builder.fetch_assets", lambda _settings: [_row(symbol) for symbol in ("AAA", "BBB", "CCC")])
+    monkeypatch.setattr("app.universe.builder.fetch_activity_scores", lambda _settings: {})
     from app.config.settings import Settings
 
     settings = Settings(app_env="local", auth_required=False, trading_mode="PAPER")

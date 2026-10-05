@@ -178,6 +178,8 @@ def execute_scan(
     _store_rejections(scan_id, now, rejections)
     result = ScanResult(rows, len(news), kept, _universe_view(universe), rejections, len({item.symbol for item in kept}), counter.calls, scan_id)
     result.filter_profile = filter_profile
+    _remember_scan_liquidity(underlyings)
+    _store_rv_audit(scan_id, now, filter_profile.get("samples") or [])
     book = universe
     result.stages = {
         "universe_checked": None if book is None else getattr(book, "discovered", None),
@@ -283,6 +285,14 @@ def _filter_observation(requested: tuple[str, ...], underlyings, config: Trading
                 "move_percent": float(item.change_percent),
                 "quote_age_seconds": round(age, 3),
                 "reason": reason or "passed",
+                "rv_method": getattr(item, "rv_method", "") or "",
+                "rv_numerator": int(getattr(item, "rv_numerator", 0) or 0),
+                "rv_denominator": float(getattr(item, "rv_denominator", 0) or 0),
+                "rv_day_count": int(getattr(item, "rv_day_count", 0) or 0),
+                "rv_cutoff": None if getattr(item, "rv_cutoff", None) is None else item.rv_cutoff.isoformat(),
+                "rv_prior_days": list(getattr(item, "rv_prior_days", ()) or ()),
+                "rv_prior_totals": list(getattr(item, "rv_prior_totals", ()) or ()),
+                "prior_day_volume": int(getattr(item, "prior_day_volume", 0) or 0),
             }
         )
     return {"counts": counts, "samples": samples}
@@ -303,6 +313,60 @@ def _liquidity_stage(underlyings, providers, config: TradingConfig, now: datetim
         else:
             kept.append(item)
     return kept, rejections
+
+
+def _remember_scan_liquidity(underlyings) -> None:
+    scores = {}
+    for item in underlyings:
+        volume = int(getattr(item, "prior_day_volume", 0) or 0)
+        symbol = str(getattr(item, "symbol", "") or "").strip().upper()
+        if symbol and volume > 0:
+            scores[symbol] = volume
+    if not scores:
+        return
+    try:
+        from app.universe.builder import remember_liquidity
+
+        remember_liquidity(scores)
+    except (OSError, TypeError, ValueError):
+        return
+
+
+def _store_rv_audit(scan_id: str, now: datetime, samples: list[dict]) -> None:
+    if not samples or not database_ready():
+        return
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.models.tables import AuditLog
+
+    try:
+        with session_scope() as session:
+            for sample in samples:
+                session.add(
+                    AuditLog(
+                        actor="scanner",
+                        action="relative_volume",
+                        entity="underlying",
+                        entity_id=str(sample.get("symbol") or "")[:36],
+                        payload={
+                            "scan_id": scan_id,
+                            "method": sample.get("rv_method") or "",
+                            "numerator": sample.get("rv_numerator"),
+                            "denominator": sample.get("rv_denominator"),
+                            "day_count": sample.get("rv_day_count"),
+                            "cutoff": sample.get("rv_cutoff"),
+                            "as_of": now.isoformat(),
+                            "prior_days": sample.get("rv_prior_days") or [],
+                            "prior_totals": sample.get("rv_prior_totals") or [],
+                            "prior_day_volume": sample.get("prior_day_volume"),
+                            "relative_volume": sample.get("relative_volume"),
+                        },
+                        created_at=now,
+                    )
+                )
+            session.commit()
+    except SQLAlchemyError:
+        return
 
 
 def _store_rejections(scan_id: str, now: datetime, rejections: list[tuple[str, str, str]]) -> None:

@@ -93,6 +93,22 @@ def _handler(stamp: str = FRESH, nvda_stamp: str | None = None):
         if path == "/v3/stock/history/eod":
             row = books.get(symbol)
             return httpx.Response(200, json=[] if row is None else [row[3]])
+        if path == "/v3/stock/history/ohlc":
+            if symbol != "NVDA":
+                return httpx.Response(200, json=[])
+            return httpx.Response(
+                200,
+                json=[
+                    {"symbol": "NVDA", "timestamp": "2026-09-30T09:30:00.000", "volume": 100},
+                    {"symbol": "NVDA", "timestamp": "2026-09-30T10:59:00.000", "volume": 50},
+                    {"symbol": "NVDA", "timestamp": "2026-09-30T11:00:00.000", "volume": 9000},
+                    {"symbol": "NVDA", "timestamp": "2026-09-30T15:30:00.000", "volume": 50000},
+                    {"symbol": "NVDA", "timestamp": "2026-10-01T09:30:00.000", "volume": 200},
+                    {"symbol": "NVDA", "timestamp": "2026-10-01T10:59:00.000", "volume": 100},
+                    {"symbol": "NVDA", "timestamp": "2026-10-01T11:00:00.000", "volume": 8000},
+                    {"symbol": "NVDA", "timestamp": "2026-10-02T10:00:00.000", "volume": 1},
+                ],
+            )
         if path == "/v3/index/snapshot/price":
             return httpx.Response(200, json=[{"symbol": "VIX", "timestamp": stamp, "price": 18.4}])
         if symbol != "NVDA":
@@ -130,6 +146,14 @@ def test_underlying_quote_uses_trade_price_and_exchange_timestamp():
     assert nvda.change_percent == Decimal("2")
     assert nvda.volume == 2_000_000
     assert nvda.relative_volume == Decimal("2")
+    assert nvda.rv_method == "time_of_day_cumulative"
+    assert nvda.rv_numerator == 300
+    assert nvda.rv_denominator == Decimal("150")
+    assert nvda.rv_day_count == 1
+    assert nvda.rv_prior_days == ("2026-09-30",)
+    assert nvda.rv_prior_totals == (150,)
+    assert nvda.rv_cutoff == datetime(2026, 10, 1, 10, 59, tzinfo=EXCHANGE)
+    assert nvda.prior_day_volume == 1_000_000
     assert nvda.observed_at == datetime(2026, 10, 1, 11, 0, tzinfo=EXCHANGE)
     assert nvda.observed_at <= AS_OF
     assert nvda.session_ok is True

@@ -28,6 +28,7 @@ class UniverseBook:
     refreshed_at: datetime
     cursor: int
     detail: str
+    liquidity: dict[str, int] | None = None
 
 
 def reset_universe_state() -> None:
@@ -69,6 +70,25 @@ def filter_optionable_equities(rows: list[dict], exclusions: tuple[str, ...] = (
     return tuple(dict.fromkeys(kept)), discovered
 
 
+def rank_symbols(symbols: tuple[str, ...], liquidity: dict[str, int] | None, liquid_floor: int = 1_000_000) -> tuple[str, ...]:
+    """Names already known to trade at least the volume floor come first. Unknown names stay next, in their original order. Known thinner names come last."""
+    scores = liquidity or {}
+    liquid: list[tuple[int, str]] = []
+    unknown: list[tuple[int, str]] = []
+    thin: list[tuple[int, str]] = []
+    for index, symbol in enumerate(symbols):
+        score = scores.get(symbol)
+        if score is None:
+            unknown.append((index, symbol))
+        elif int(score) >= liquid_floor:
+            liquid.append((-int(score), symbol))
+        else:
+            thin.append((-int(score), symbol))
+    liquid.sort()
+    thin.sort()
+    return tuple(symbol for _score, symbol in liquid) + tuple(symbol for _index, symbol in unknown) + tuple(symbol for _score, symbol in thin)
+
+
 def take_batch(symbols: tuple[str, ...], max_symbols: int, cursor: int) -> tuple[tuple[str, ...], int]:
     if max_symbols < 1 or not symbols:
         return (), 0
@@ -106,6 +126,7 @@ def _read_cache(path: Path) -> UniverseBook | None:
         refreshed_at=refreshed,
         cursor=int(raw.get("cursor") or 0),
         detail=str(raw.get("detail") or ""),
+        liquidity={str(key).upper(): int(value) for key, value in (raw.get("liquidity") or {}).items() if int(value) > 0},
     )
     _MEMORY[key] = book
     return book
@@ -124,11 +145,71 @@ def _write_cache(path: Path, book: UniverseBook) -> None:
                 "refreshed_at": book.refreshed_at.isoformat(),
                 "cursor": book.cursor,
                 "detail": book.detail,
+                "liquidity": book.liquidity or {},
             }
         ),
         encoding="utf-8",
     )
     _MEMORY[str(path)] = book
+
+
+def fetch_activity_scores(settings: Settings) -> dict[str, int]:
+    """Read-only Alpaca most-actives list. A failure leaves the saved liquidity order unchanged."""
+    from app.integrations.secrets import resolve_secret
+
+    key, _origin = resolve_secret(settings, "alpaca_api_key")
+    secret, _secret_origin = resolve_secret(settings, "alpaca_api_secret")
+    if not key or not secret:
+        return {}
+    try:
+        import httpx
+
+        response = httpx.get(
+            "https://data.alpaca.markets/v1beta1/screener/stocks/most-actives",
+            params={"by": "volume", "top": 50},
+            headers={"APCA-API-KEY-ID": key, "APCA-API-SECRET-KEY": secret},
+            timeout=8.0,
+        )
+        response.raise_for_status()
+        body = response.json()
+    except Exception:
+        return {}
+    rows = body.get("most_actives") if isinstance(body, dict) else None
+    if not isinstance(rows, list):
+        return {}
+    scores = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        symbol = str(row.get("symbol") or "").strip().upper()
+        try:
+            volume = int(row.get("volume") or 0)
+        except (TypeError, ValueError):
+            continue
+        if symbol and volume > 0:
+            scores[symbol] = volume
+    return scores
+
+
+def remember_liquidity(scores: dict[str, int], cache_path: Path | None = None) -> None:
+    path = cache_path or CACHE_PATH
+    book = _read_cache(path)
+    if book is None:
+        return
+    merged = dict(book.liquidity or {})
+    changed = False
+    for symbol, volume in scores.items():
+        name = str(symbol).strip().upper()
+        try:
+            amount = int(volume)
+        except (TypeError, ValueError):
+            continue
+        if not name or amount <= 0 or merged.get(name) == amount:
+            continue
+        merged[name] = amount
+        changed = True
+    if changed:
+        _write_cache(path, replace(book, liquidity=merged))
 
 
 def fetch_assets(settings: Settings) -> list[dict]:
@@ -177,6 +258,7 @@ def load_universe(settings: Settings, config: TradingConfig, now: datetime, cach
         refreshed_at=now,
         cursor=0 if cached is None else cached.cursor,
         detail="יקום דינמי מ-Alpaca Assets. המחיר והאופציות מגיעים מ-ThetaData.",
+        liquidity={**({} if cached is None else dict(cached.liquidity or {})), **fetch_activity_scores(settings)},
     )
     _write_cache(path, book)
     return book
@@ -187,7 +269,8 @@ def next_scan_symbols(settings: Settings, config: TradingConfig, now: datetime, 
     book = load_universe(settings, config, now, path)
     if book.symbols == FIXED_WATCHLIST and book.source != "alpaca-assets":
         raise UniverseUnavailable("יקום קבוע אינו מותר.")
-    batch, cursor = take_batch(book.symbols, config.universe_max_symbols_per_scan, book.cursor)
+    ranked = rank_symbols(book.symbols, book.liquidity, config.min_underlying_volume)
+    batch, cursor = take_batch(ranked, config.universe_max_symbols_per_scan, book.cursor)
     stored = _read_cache(path)
     if stored is not None:
         _write_cache(path, replace(stored, cursor=cursor))
