@@ -119,6 +119,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
                 "ai_calls": result.ai_calls,
                 "universe": result.universe,
                 "stages": result.stages,
+                "filter": result.filter_profile,
                 "blocked": "",
             }
         )

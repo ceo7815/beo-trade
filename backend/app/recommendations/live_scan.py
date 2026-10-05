@@ -12,7 +12,7 @@ from app.models.db import database_ready, session_scope
 from app.models.tables import Candidate
 from app.providers.base import ProviderNotConfigured, ProviderUnavailable
 from app.providers.registry import ProviderSet
-from app.quant.filters import reject_underlying
+from app.quant.filters import quote_age_seconds, reject_underlying
 from app.recommendations.pipeline import Analyzer, run_scan
 from app.schemas.domain import Recommendation
 
@@ -45,6 +45,7 @@ class ScanResult:
         self.ai_calls = ai_calls
         self.scan_id = scan_id
         self.stages: dict = {}
+        self.filter_profile: dict = {}
 
 
 def execute_scan(
@@ -81,6 +82,8 @@ def execute_scan(
     if providers.market.name == "thetadata" and missing_market is None and not underlyings:
         raise ProviderUnavailable("אין ציטוט או שרשרת אופציות")
     kept, rejections = _liquidity_stage(underlyings, providers, config, now)
+    requested = tuple(getattr(getattr(providers.market, "feed", None), "_symbols", ()) or ())
+    filter_profile = _filter_observation(requested, underlyings, config, now)
     if missing_market is None and kept:
         if hasattr(providers.options, "bind_option_symbols"):
             providers.options.bind_option_symbols(tuple(item.symbol for item in kept))
@@ -174,6 +177,7 @@ def execute_scan(
     )
     _store_rejections(scan_id, now, rejections)
     result = ScanResult(rows, len(news), kept, _universe_view(universe), rejections, len({item.symbol for item in kept}), counter.calls, scan_id)
+    result.filter_profile = filter_profile
     book = universe
     result.stages = {
         "universe_checked": None if book is None else getattr(book, "discovered", None),
@@ -223,6 +227,65 @@ def _bind_dynamic_universe(providers: ProviderSet, config: TradingConfig, now: d
     feed.bind_symbols(batch)
     feed.universe_book = book
     return book
+
+
+def _filter_observation(requested: tuple[str, ...], underlyings, config: TradingConfig, now: datetime) -> dict:
+    """Record why each requested symbol stopped, without changing the filter decision."""
+    by_symbol = {item.symbol: item for item in underlyings}
+    floor = Decimal(str(config.universe_min_price))
+    counts = {
+        "symbols_requested": len(requested),
+        "quotes_received": 0,
+        "quotes_fresh": 0,
+        "rejected_no_quote": 0,
+        "rejected_stale": 0,
+        "rejected_price": 0,
+        "rejected_volume": 0,
+        "rejected_relative_volume": 0,
+        "rejected_move": 0,
+        "rejected_session": 0,
+        "rejected_future": 0,
+        "passed_underlying": 0,
+    }
+    samples = []
+    symbols = requested or tuple(item.symbol for item in underlyings)
+    for symbol in symbols:
+        item = by_symbol.get(symbol)
+        if item is None:
+            counts["rejected_no_quote"] += 1
+            continue
+        counts["quotes_received"] += 1
+        age = quote_age_seconds(item.observed_at, now)
+        if 0 <= age <= config.min_data_freshness_seconds:
+            counts["quotes_fresh"] += 1
+        reason = reject_underlying(item, config, now)
+        if reason is None and item.price < floor:
+            reason = "min_price"
+        if reason == "underlying_liquidity" and item.price <= 0:
+            bucket = "rejected_price"
+        else:
+            bucket = {
+                "stale_underlying": "rejected_stale",
+                "min_price": "rejected_price",
+                "underlying_liquidity": "rejected_volume",
+                "relative_volume": "rejected_relative_volume",
+                "underlying_move": "rejected_move",
+                "session_closed": "rejected_session",
+                "future_quote": "rejected_future",
+            }.get(reason or "", "passed_underlying")
+        counts[bucket] += 1
+        samples.append(
+            {
+                "symbol": item.symbol,
+                "price": float(item.price),
+                "volume": int(item.volume),
+                "relative_volume": float(item.relative_volume),
+                "move_percent": float(item.change_percent),
+                "quote_age_seconds": round(age, 3),
+                "reason": reason or "passed",
+            }
+        )
+    return {"counts": counts, "samples": samples}
 
 
 def _liquidity_stage(underlyings, providers, config: TradingConfig, now: datetime):
