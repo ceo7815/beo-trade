@@ -4,6 +4,3 @@ log_directory = "/opt/theta/logs"
 
 [mdds]
 enable = true
-
-[env]
-mdds_type = "PROD"
