@@ -4,6 +4,7 @@
 min_option_volume = 500
 min_open_interest = 200
 max_bid_ask_spread = 0.10
+# Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
 min_underlying_volume = 1000000
 max_expiration_days = 5
 min_expiration_days = 0

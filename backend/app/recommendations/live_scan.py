@@ -12,7 +12,7 @@ from app.models.db import database_ready, session_scope
 from app.models.tables import Candidate
 from app.providers.base import ProviderNotConfigured, ProviderUnavailable
 from app.providers.registry import ProviderSet
-from app.quant.filters import quote_age_seconds, reject_underlying
+from app.quant.filters import quote_age_seconds, rank_underlyings, reject_underlying, would_fail_old_volume_floor
 from app.recommendations.pipeline import Analyzer, run_scan
 from app.schemas.domain import Recommendation
 
@@ -187,6 +187,8 @@ def execute_scan(
         "underlyings_checked": len(underlyings),
         "underlyings_passed": len(kept),
         "chains_requested": len(kept),
+        "old_volume_floor": config.min_underlying_volume,
+        "eligible_below_old_volume_floor": sum(1 for item in kept if would_fail_old_volume_floor(item, config)),
         "contracts_checked": counts.get("contracts_checked", 0),
         "contracts_passed": counts.get("contracts_passed", 0),
         "news_checked": len(news),
@@ -293,6 +295,7 @@ def _filter_observation(requested: tuple[str, ...], underlyings, config: Trading
                 "rv_prior_days": list(getattr(item, "rv_prior_days", ()) or ()),
                 "rv_prior_totals": list(getattr(item, "rv_prior_totals", ()) or ()),
                 "prior_day_volume": int(getattr(item, "prior_day_volume", 0) or 0),
+                "would_fail_old_volume_floor": would_fail_old_volume_floor(item, config),
             }
         )
     return {"counts": counts, "samples": samples}
@@ -312,7 +315,7 @@ def _liquidity_stage(underlyings, providers, config: TradingConfig, now: datetim
             rejections.append((item.symbol, "min_price", "liquidity"))
         else:
             kept.append(item)
-    return kept, rejections
+    return rank_underlyings(kept, now), rejections
 
 
 def _remember_scan_liquidity(underlyings) -> None:

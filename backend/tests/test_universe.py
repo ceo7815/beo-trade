@@ -150,7 +150,7 @@ def test_scan_uses_the_dynamic_universe_and_allows_zero_candidates(tmp_path, mon
     )
     empty = execute_scan(
         blocked_providers,
-        TradingConfig(min_underlying_volume=50_000_000, min_data_freshness_seconds=120, universe_min_price=1),
+        TradingConfig(min_relative_volume=100, min_data_freshness_seconds=120, universe_min_price=1),
         StubAI(),
         ledger(),
         AS_OF,

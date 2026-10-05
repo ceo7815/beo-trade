@@ -12,6 +12,7 @@ def quote_age_seconds(observed_at: datetime, as_of: datetime) -> float:
 
 
 def reject_underlying(snapshot: UnderlyingSnapshot, config: TradingConfig, as_of: datetime) -> str | None:
+    """Stage A eligibility. Volume below the old 1,000,000 mark is not a rejection."""
     age = quote_age_seconds(snapshot.observed_at, as_of)
     if age < 0:
         return "future_quote"
@@ -19,13 +20,34 @@ def reject_underlying(snapshot: UnderlyingSnapshot, config: TradingConfig, as_of
         return "stale_underlying"
     if not snapshot.session_ok:
         return "session_closed"
-    if snapshot.price <= 0 or snapshot.volume < config.min_underlying_volume:
+    if snapshot.price <= 0 or snapshot.volume <= 0:
         return "underlying_liquidity"
     if snapshot.relative_volume < Decimal(str(config.min_relative_volume)):
         return "relative_volume"
     if abs(snapshot.change_percent) < Decimal(str(config.min_underlying_move_percent)):
         return "underlying_move"
     return None
+
+
+def would_fail_old_volume_floor(snapshot: UnderlyingSnapshot, config: TradingConfig) -> bool:
+    """The retired hard floor stays visible. It does not block the option chain."""
+    return int(snapshot.volume) < int(config.min_underlying_volume)
+
+
+def rank_underlyings(underlyings: list[UnderlyingSnapshot], as_of: datetime) -> list[UnderlyingSnapshot]:
+    """Stage B. Higher RV, larger move, more volume, then a fresher quote."""
+
+    def key(item: UnderlyingSnapshot) -> tuple:
+        age = quote_age_seconds(item.observed_at, as_of)
+        return (
+            -float(item.relative_volume),
+            -abs(float(item.change_percent)),
+            -int(item.volume),
+            age,
+            item.symbol,
+        )
+
+    return sorted(underlyings, key=key)
 
 
 def reject_option(
