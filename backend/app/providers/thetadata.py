@@ -325,14 +325,31 @@ class ThetaFeed:
             _state.last_error = _state.last_error or "אין שרשרת אופציות"
         return options
 
+    def _option_rows(self, path: str, symbol: str, max_dte: int, strike_range: int) -> list[dict]:
+        narrow = {
+            "symbol": symbol,
+            "expiration": "*",
+            "strike": "*",
+            "right": "both",
+            "max_dte": max_dte,
+            "strike_range": strike_range,
+        }
+        rows = self._get(path, narrow, required=False)
+        if rows:
+            return rows
+        return self._get(
+            path,
+            {"symbol": symbol, "expiration": "*", "strike": "*", "right": "both"},
+            required=False,
+        )
+
     def _options(self, symbols: tuple[str, ...], as_of: datetime, max_dte: int, strike_range: int) -> list[OptionSnapshot]:
         contracts: list[OptionSnapshot] = []
         for symbol in symbols:
-            params = {"symbol": symbol, "expiration": "*", "max_dte": max_dte, "strike_range": strike_range}
-            quotes = _index_contracts(self._get("/v3/option/snapshot/quote", params))
-            ohlc = _index_contracts(self._get("/v3/option/snapshot/ohlc", params))
-            interest = _index_contracts(self._get("/v3/option/snapshot/open_interest", params))
-            greeks = _index_contracts(self._get("/v3/option/snapshot/greeks/all", params))
+            quotes = _index_contracts(self._option_rows("/v3/option/snapshot/quote", symbol, max_dte, strike_range))
+            ohlc = _index_contracts(self._option_rows("/v3/option/snapshot/ohlc", symbol, max_dte, strike_range))
+            interest = _index_contracts(self._option_rows("/v3/option/snapshot/open_interest", symbol, max_dte, strike_range))
+            greeks = _index_contracts(self._option_rows("/v3/option/snapshot/greeks/all", symbol, max_dte, strike_range))
             for key, quote in quotes.items():
                 item = _option(symbol, quote, ohlc.get(key), interest.get(key), greeks.get(key), as_of)
                 if item is not None:

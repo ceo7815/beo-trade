@@ -165,6 +165,38 @@ def test_underlying_quote_uses_trade_price_and_exchange_timestamp():
     assert context["VIX"]["change_percent"] is None
 
 
+def test_empty_strike_window_retries_the_full_chain():
+    calls = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        calls.append(dict(request.url.params))
+        if request.url.path != "/v3/option/snapshot/quote":
+            return httpx.Response(200, json=[])
+        if "strike_range" in request.url.params:
+            return httpx.Response(472, text="NO_DATA")
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "NVDA",
+                    "expiration": "2026-10-03",
+                    "strike": 100,
+                    "right": "CALL",
+                    "timestamp": FRESH,
+                    "bid": 1.2,
+                    "ask": 1.3,
+                }
+            ],
+        )
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    chain = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(chain) == 1
+    assert chain[0].bid == Decimal("1.2")
+    assert any("strike_range" not in item for item in calls)
+
+
 def test_quote_without_volume_still_builds_a_contract():
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path != "/v3/option/snapshot/quote":
