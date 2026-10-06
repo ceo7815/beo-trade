@@ -524,10 +524,16 @@ def _option(
     expiration_text = str(quote.get("expiration") or "")[:10]
     strike = _dec(quote.get("strike"))
     right = _right(quote.get("right"))
-    if None in (observed, bid, ask, last, volume, open_interest, strike, right) or not expiration_text:
+    if None in (observed, bid, ask, strike, right) or not expiration_text:
         return None
-    if observed > as_of:
+    if observed > as_of or bid <= 0 or ask < bid:
         return None
+    if last is None:
+        last = (bid + ask) / Decimal("2")
+    if volume is None:
+        volume = 0
+    if open_interest is None:
+        open_interest = 0
     expiration = date.fromisoformat(expiration_text)
     greek = greeks or {}
     return OptionSnapshot(

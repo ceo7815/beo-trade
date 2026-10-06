@@ -1,20 +1,21 @@
 # All scan, risk, and session thresholds. Change this file, then restart.
 # Fractions are 0–1 unless the name says percent (those are also 0–1 here).
 
-min_option_volume = 500
-min_open_interest = 200
-max_bid_ask_spread = 0.10
+# A quoted contract is eligible. Volume and open interest stay on the record and no longer block a paper entry.
+min_option_volume = 0
+min_open_interest = 0
+max_bid_ask_spread = 0.40
 # Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
 min_underlying_volume = 1000000
-max_expiration_days = 5
+max_expiration_days = 21
 min_expiration_days = 0
-min_delta = 0.30
-max_delta = 0.60
+min_delta = 0.15
+max_delta = 0.75
 target_delta = 0.40
-min_gamma = 0.005
-max_theta_threshold = 0.35
+min_gamma = 0.0005
+max_theta_threshold = 0.80
 min_data_freshness_seconds = 20
-max_buys_per_scan = 8
+max_buys_per_scan = 2
 scan_interval_seconds = 60
 monitor_interval_seconds = 15
 shortlist_size = 4
@@ -22,7 +23,7 @@ min_relative_volume = 0.50
 # Ranking tier only. A name at or above this is scanned first. It does not reject a stock.
 relative_volume_priority = 1.8
 min_underlying_move_percent = 0.6
-min_option_price = 0.30
+min_option_price = 0.05
 max_option_price = 20.0
 entry_buffer_percent = 0.04
 holding_window_min_minutes = 15
@@ -69,6 +70,8 @@ outcome_target_percent = 0.0
 min_reason_codes = 2
 slippage_percent = 0.01
 allow_buy_without_news = true
+# A contract that passed the quote, greek, direction, and risk gates is a paper buy even when the model is silent.
+allow_quant_entry = true
 paper_auto_exit = true
 # One confirmed reason is enough to inspect the option chain. The move supplies that reason.
 min_events = 1
@@ -86,7 +89,7 @@ kill_switch = false
 recommendation_max_age_seconds = 180
 revalidation_max_price_drift = 0.03
 liquidity_exit_spread = 0.25
-scan_strike_range = 6
+scan_strike_range = 15
 min_eod_days = 5
 universe_max_symbols_per_scan = 40
 universe_refresh_seconds = 21600

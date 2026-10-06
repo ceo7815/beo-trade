@@ -115,8 +115,8 @@ def _handler(stamp: str = FRESH, nvda_stamp: str | None = None):
             return httpx.Response(200, json=[])
         if path == "/v3/option/snapshot/quote":
             assert request.url.params["expiration"] == "*"
-            assert request.url.params["max_dte"] == "5"
-            assert request.url.params["strike_range"] == "6"
+            assert request.url.params["max_dte"] == "21"
+            assert request.url.params["strike_range"] == "15"
             return httpx.Response(200, json=[chain["quote"]])
         if path == "/v3/option/snapshot/ohlc":
             return httpx.Response(200, json=[chain["ohlc"]])
@@ -163,6 +163,34 @@ def test_underlying_quote_uses_trade_price_and_exchange_timestamp():
     assert context["IWM"]["price"] == Decimal("102")
     assert context["VIX"]["price"] == Decimal("18.4")
     assert context["VIX"]["change_percent"] is None
+
+
+def test_quote_without_volume_still_builds_a_contract():
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path != "/v3/option/snapshot/quote":
+            return httpx.Response(200, json=[])
+        return httpx.Response(
+            200,
+            json=[
+                {
+                    "symbol": "NVDA",
+                    "expiration": "2026-10-03",
+                    "strike": 100,
+                    "right": "CALL",
+                    "timestamp": FRESH,
+                    "bid": 1.0,
+                    "ask": 1.1,
+                }
+            ],
+        )
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    chain = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(chain) == 1
+    assert chain[0].volume == 0
+    assert chain[0].open_interest == 0
+    assert chain[0].last == Decimal("1.05")
 
 
 def test_option_chain_maps_bid_ask_greeks_and_open_interest():

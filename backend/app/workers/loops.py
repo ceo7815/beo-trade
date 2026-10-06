@@ -432,7 +432,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             )
             state_risk[row.option_symbol.replace(" ", "")] = added * Decimal(str(settings.trading().initial_stop_decline_pct))
             context = {
-                "news_fresh": news_confirmed(fresh, settings.trading()),
+                "news_fresh": news_confirmed(fresh, settings.trading()) or settings.trading().allow_buy_without_news,
                 "regime_allowed": action == "ALLOW",
                 "session_open": session_open,
                 "exposure_ok": exposure_reason(equity, open_premium, added, settings.trading()) is None,

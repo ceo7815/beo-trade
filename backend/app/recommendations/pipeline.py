@@ -18,7 +18,7 @@ from app.quant.events import detect_events
 from app.quant.volatility import historical_volatility
 from app.quant.filters import reject_option, reject_underlying
 from app.quant.scenarios import enrich_option, scenarios_for
-from app.recommendations.decision import build_recommendation
+from app.recommendations.decision import build_recommendation, direction_matches
 from app.schemas.domain import (
     DecisionKind,
     ModelOutput,
@@ -210,7 +210,11 @@ def run_scan(
                 for item in priced
             ]
         contracts_passed += len(enriched)
-        shortlist = rank_contracts(enriched, underlying, config, as_of)
+        shortlist = [
+            item
+            for item in rank_contracts(enriched, underlying, config, as_of)
+            if direction_matches(underlying, item, events)
+        ]
         if not shortlist:
             continue
         risk_checked += 1

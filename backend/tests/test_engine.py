@@ -86,6 +86,7 @@ def loose_config() -> TradingConfig:
         max_sector_exposure_pct=1,
         min_events=2,
         news_max_age_seconds=86400,
+        allow_quant_entry=False,
     )
 
 
@@ -291,6 +292,29 @@ def test_backtest_does_not_see_later_news():
 
     run_backtest([underlying], [option], news + [later], [AS_OF], loose_config(), Capture(), ledger(), Decimal("1000"))
     assert "מאוחר" not in seen["headlines"]
+
+
+def test_quant_entry_buys_when_the_model_is_silent():
+    from dataclasses import replace
+
+    underlying, option, news = sample_market()
+    config = replace(loose_config(), allow_quant_entry=True, min_events=1)
+    rows = run_scan(
+        [underlying],
+        [option],
+        [],
+        config,
+        None,
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("100000"),
+        set(),
+    )
+    assert rows
+    assert rows[0].decision is DecisionKind.BUY
+    assert rows[0].suppress_reason == ""
+    assert rows[0].quantity >= 1
 
 
 def test_budget_hard_stop_blocks_the_model():

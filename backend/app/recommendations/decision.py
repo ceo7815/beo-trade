@@ -150,6 +150,27 @@ def build_recommendation(
         elif not gates["AI_OK"]:
             reason = "ai_validation"
 
+    structural = all(
+        gates[name]
+        for name in ("DATA_OK", "NEWS_OK", "LIQUIDITY_OK", "OPTIONS_OK", "GREEKS_OK", "IV_OK", "RISK_OK", "SCENARIO_OK")
+    )
+    if config.allow_quant_entry and structural and not gates["AI_OK"]:
+        gates["AI_OK"] = True
+        codes = sorted(supported_reason_codes(events, news_ok, option, config))
+        side = "עלייה" if underlying.change_percent > 0 else "ירידה"
+        right_name = "קול" if option.right.value == "CALL" else "פוט"
+        move = abs(underlying.change_percent)
+        if not thesis.strip():
+            thesis = f"{underlying.symbol} נע {side} של {move:.2f}% והחוזה {right_name} עבר את שערי הציטוט."
+        if not catalyst.strip():
+            catalyst = "המהלך במחיר המניה הוא הסיבה לכניסה."
+        if not risk.strip():
+            risk = "מחיר האופציה יכול לרדת, והזמן שוחק את החוזה."
+        if not invalidation.strip():
+            stop_pct = config.initial_stop_decline_pct * 100
+            invalidation = f"ביטול כמותי: תנועה נגד הכיוון, או ירידת מחיר האופציה ב-{stop_pct:.0f}% ממחיר הכניסה."
+        reason = ""
+
     if all(gates.values()):
         decision = DecisionKind.BUY
         reason = ""
