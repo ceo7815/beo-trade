@@ -31,7 +31,7 @@ class TradingConfig:
     scan_interval_seconds: int = 60
     monitor_interval_seconds: int = 15
     shortlist_size: int = 4
-    min_relative_volume: float = 1.0
+    min_relative_volume: float = 0.50
     relative_volume_priority: float = 1.8
     min_underlying_move_percent: float = 0.6
     min_option_price: float = 0.30

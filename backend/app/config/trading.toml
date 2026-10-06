@@ -18,7 +18,7 @@ max_buys_per_scan = 8
 scan_interval_seconds = 60
 monitor_interval_seconds = 15
 shortlist_size = 4
-min_relative_volume = 1.0
+min_relative_volume = 0.50
 # Ranking tier only. A name at or above this is scanned first. It does not reject a stock.
 relative_volume_priority = 1.8
 min_underlying_move_percent = 0.6

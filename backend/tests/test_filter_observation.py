@@ -91,9 +91,11 @@ def test_volume_below_one_million_stays_eligible_and_ranks_behind_stronger_names
     thin = _snap("FWONA", volume=93_329, relative_volume=Decimal("2.56"), change_percent=Decimal("4.5"))
     stronger = _snap("LIQ", volume=2_000_000, relative_volume=Decimal("3.1"), change_percent=Decimal("1.1"))
     ordinary = _snap("NAKA", volume=121_115, relative_volume=Decimal("1.13"), change_percent=Decimal("7.9"))
-    quiet = _snap("QUIETRV", relative_volume=Decimal("0.9"), change_percent=Decimal("2"))
+    opened = _snap("FGRU", relative_volume=Decimal("0.55"), change_percent=Decimal("1.03"))
+    quiet = _snap("QUIETRV", relative_volume=Decimal("0.49"), change_percent=Decimal("2"))
     assert reject_underlying(thin, config, NOW) is None
     assert reject_underlying(ordinary, config, NOW) is None
+    assert reject_underlying(opened, config, NOW) is None
     assert reject_underlying(quiet, config, NOW) == "relative_volume"
     assert reject_underlying(_snap("EMPTY", volume=0), config, NOW) == "underlying_liquidity"
     ranked = rank_underlyings([ordinary, thin, stronger], NOW, config.relative_volume_priority)
