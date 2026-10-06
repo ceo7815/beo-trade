@@ -64,14 +64,45 @@ def _iso(moment: datetime) -> str:
 def _rows(payload: object) -> list[dict]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, dict)]
-    if isinstance(payload, dict):
-        for key in ("response", "data"):
-            raw = payload.get(key)
-            if isinstance(raw, list):
-                return [row for row in raw if isinstance(row, dict)]
-        if "symbol" in payload:
-            return [payload]
+    if not isinstance(payload, dict):
+        return []
+    columns: list[str] = []
+    header = payload.get("header")
+    if isinstance(header, dict) and isinstance(header.get("format"), list):
+        columns = [str(item) for item in header["format"]]
+    for key in ("response", "data"):
+        raw = payload.get(key)
+        if not isinstance(raw, list) or not raw:
+            continue
+        if isinstance(raw[0], dict):
+            return [row for row in raw if isinstance(row, dict)]
+        if columns and isinstance(raw[0], list):
+            return [
+                dict(zip(columns, row))
+                for row in raw
+                if isinstance(row, list)
+            ]
+    if "symbol" in payload or "bid" in payload:
+        return [payload]
     return []
+
+
+def _parse_day(value: object) -> date | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if len(text) >= 10 and text[4] == "-" and text[7] == "-":
+        try:
+            return date.fromisoformat(text[:10])
+        except ValueError:
+            return None
+    digits = "".join(ch for ch in text if ch.isdigit())
+    if len(digits) < 8:
+        return None
+    try:
+        return date(int(digits[:4]), int(digits[4:6]), int(digits[6:8]))
+    except ValueError:
+        return None
 
 
 def _stamp(value: object) -> datetime | None:
@@ -115,12 +146,12 @@ def _right(value: object) -> OptionRight | None:
 
 
 def _contract_key(row: dict) -> tuple[str, str, str] | None:
-    expiration = str(row.get("expiration") or "")[:10]
+    expiration = _parse_day(row.get("expiration"))
     strike = _dec(row.get("strike"))
     right = _right(row.get("right"))
-    if not expiration or strike is None or right is None:
+    if expiration is None or strike is None or right is None:
         return None
-    return (expiration, format(strike, "f"), right.value)
+    return (expiration.isoformat(), format(strike, "f"), right.value)
 
 
 def _occ(symbol: str, expiration: date, right: OptionRight, strike: Decimal) -> str:
@@ -154,6 +185,8 @@ class ThetaFeed:
         self.transport = transport
         self._symbols: tuple[str, ...] = ()
         self._option_symbols: tuple[str, ...] = ()
+        self.last_option_status: str | None = None
+        self._listed_expirations: dict[str, list[str]] = {}
         base, _origin = resolve_secret(settings, "thetadata_base_url")
         self.base = (base or DEFAULT_BASE).rstrip("/")
 
@@ -207,11 +240,16 @@ class ThetaFeed:
         try:
             payload = response.json()
         except ValueError as exc:
+            if path.startswith("/v3/option/snapshot/quote"):
+                self.last_option_status = f"{code}:bad-json"
             if not required:
                 return []
             self._fail("ThetaData החזיר תשובה לא תקינה")
             raise ThetaDataError("ThetaData החזיר תשובה לא תקינה") from exc
-        return _rows(payload)
+        rows = _rows(payload)
+        if path.startswith("/v3/option/snapshot/quote"):
+            self.last_option_status = f"{code}:{len(rows)}"
+        return rows
 
     def _fail(self, message: str) -> None:
         _state.last_fetch = datetime.now(EXCHANGE).isoformat()
@@ -325,7 +363,31 @@ class ThetaFeed:
             _state.last_error = _state.last_error or "אין שרשרת אופציות"
         return options
 
-    def _option_rows(self, path: str, symbol: str, max_dte: int, strike_range: int) -> list[dict]:
+    def _near_expirations(self, symbol: str, max_dte: int, as_of: datetime) -> list[str]:
+        cached = self._listed_expirations.get(symbol)
+        if cached is not None:
+            return cached
+        session_day = as_of.astimezone(EXCHANGE).date()
+        listed = self._get("/v3/option/list/expirations", {"symbol": symbol}, required=False)
+        chosen: list[str] = []
+        for row in listed:
+            day = _parse_day(row.get("expiration"))
+            if day is None:
+                continue
+            ahead = (day - session_day).days
+            if 0 <= ahead <= max_dte:
+                chosen.append(day.isoformat())
+        if not chosen:
+            future = []
+            for row in listed:
+                day = _parse_day(row.get("expiration"))
+                if day is not None and day >= session_day:
+                    future.append(day.isoformat())
+            chosen = future[:2]
+        self._listed_expirations[symbol] = chosen[:3]
+        return self._listed_expirations[symbol]
+
+    def _option_rows(self, path: str, symbol: str, max_dte: int, strike_range: int, as_of: datetime) -> list[dict]:
         narrow = {
             "symbol": symbol,
             "expiration": "*",
@@ -335,21 +397,34 @@ class ThetaFeed:
             "strike_range": strike_range,
         }
         rows = self._get(path, narrow, required=False)
+        if not rows:
+            rows = self._get(
+                path,
+                {"symbol": symbol, "expiration": "*", "strike": "*", "right": "both"},
+                required=False,
+            )
         if rows:
             return rows
-        return self._get(
-            path,
-            {"symbol": symbol, "expiration": "*", "strike": "*", "right": "both"},
-            required=False,
-        )
+        found: list[dict] = []
+        for expiration in self._near_expirations(symbol, max_dte, as_of):
+            dated = self._get(
+                path,
+                {"symbol": symbol, "expiration": expiration, "strike": "*"},
+                required=False,
+            )
+            for row in dated:
+                if not row.get("expiration"):
+                    row["expiration"] = expiration
+            found.extend(dated)
+        return found
 
     def _options(self, symbols: tuple[str, ...], as_of: datetime, max_dte: int, strike_range: int) -> list[OptionSnapshot]:
         contracts: list[OptionSnapshot] = []
         for symbol in symbols:
-            quotes = _index_contracts(self._option_rows("/v3/option/snapshot/quote", symbol, max_dte, strike_range))
-            ohlc = _index_contracts(self._option_rows("/v3/option/snapshot/ohlc", symbol, max_dte, strike_range))
-            interest = _index_contracts(self._option_rows("/v3/option/snapshot/open_interest", symbol, max_dte, strike_range))
-            greeks = _index_contracts(self._option_rows("/v3/option/snapshot/greeks/all", symbol, max_dte, strike_range))
+            quotes = _index_contracts(self._option_rows("/v3/option/snapshot/quote", symbol, max_dte, strike_range, as_of))
+            ohlc = _index_contracts(self._option_rows("/v3/option/snapshot/ohlc", symbol, max_dte, strike_range, as_of))
+            interest = _index_contracts(self._option_rows("/v3/option/snapshot/open_interest", symbol, max_dte, strike_range, as_of))
+            greeks = _index_contracts(self._option_rows("/v3/option/snapshot/greeks/all", symbol, max_dte, strike_range, as_of))
             for key, quote in quotes.items():
                 item = _option(symbol, quote, ohlc.get(key), interest.get(key), greeks.get(key), as_of)
                 if item is not None:
@@ -538,10 +613,10 @@ def _option(
     last = _dec((ohlc or {}).get("close"))
     volume = _int((ohlc or {}).get("volume"))
     open_interest = _int((interest or {}).get("open_interest"))
-    expiration_text = str(quote.get("expiration") or "")[:10]
+    expiration = _parse_day(quote.get("expiration"))
     strike = _dec(quote.get("strike"))
     right = _right(quote.get("right"))
-    if None in (observed, bid, ask, strike, right) or not expiration_text:
+    if None in (observed, bid, ask, strike, right) or expiration is None:
         return None
     if observed > as_of or bid <= 0 or ask < bid:
         return None
@@ -551,7 +626,6 @@ def _option(
         volume = 0
     if open_interest is None:
         open_interest = 0
-    expiration = date.fromisoformat(expiration_text)
     greek = greeks or {}
     return OptionSnapshot(
         underlying=symbol,

@@ -165,6 +165,32 @@ def test_underlying_quote_uses_trade_price_and_exchange_timestamp():
     assert context["VIX"]["change_percent"] is None
 
 
+def test_column_response_and_listed_expiration_build_a_contract():
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v3/option/snapshot/quote" and request.url.params.get("expiration") == "*":
+            return httpx.Response(472, text="NO_DATA")
+        if path == "/v3/option/list/expirations":
+            return httpx.Response(200, json=[{"symbol": "NVDA", "expiration": "20261003"}])
+        if path == "/v3/option/snapshot/quote":
+            return httpx.Response(
+                200,
+                json={
+                    "header": {"format": ["expiration", "strike", "right", "timestamp", "bid", "ask"]},
+                    "response": [[20261003, 100, "C", FRESH, 1.4, 1.5]],
+                },
+            )
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    chain = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(chain) == 1
+    assert chain[0].bid == Decimal("1.4")
+    assert chain[0].expiration.isoformat() == "2026-10-03"
+    assert feed.last_option_status == "200:1"
+
+
 def test_empty_strike_window_retries_the_full_chain():
     calls = []
 

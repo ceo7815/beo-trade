@@ -202,6 +202,7 @@ def execute_scan(
         "orders": 0,
         "fills": 0,
         "exits": 0,
+        "option_status": getattr(getattr(providers.options, "feed", None), "last_option_status", None),
     }
     return result
 
