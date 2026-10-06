@@ -68,7 +68,7 @@ iv_crush_percent = 0.20
 outcome_target_percent = 0.0
 min_reason_codes = 2
 slippage_percent = 0.01
-allow_buy_without_news = false
+allow_buy_without_news = true
 paper_auto_exit = true
 # One confirmed reason is enough to inspect the option chain. The move supplies that reason.
 min_events = 1

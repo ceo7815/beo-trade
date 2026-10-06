@@ -8,7 +8,8 @@ This does not create a trade. It only allows or suppresses a side.
 - Trend DOWN: puts allowed, calls suppressed.
 - Trend MIXED with volatility CALM or ELEVATED: both sides allowed.
   The regime is context and is not a hard directional block.
-- Any UNKNOWN trend or volatility: suppress.
+- UNKNOWN volatility does not suppress when the trend is known. A missing VIX quote is not a reason to block the session.
+- UNKNOWN trend: suppress.
 """
 
 from __future__ import annotations
@@ -19,8 +20,10 @@ def regime_trade_policy(regime: dict | None, right: str) -> tuple[str, str]:
         return "SUPPRESS", "REGIME_WAITING"
     trend = regime.get("trend_state")
     volatility = regime.get("volatility_state")
-    if trend in {None, "UNKNOWN"} or volatility in {None, "UNKNOWN"}:
+    if trend in {None, "UNKNOWN"}:
         return "SUPPRESS", "REGIME_UNKNOWN"
+    if volatility in {None, "UNKNOWN"}:
+        volatility = "ELEVATED"
     if volatility == "STRESSED":
         return "SUPPRESS", "REGIME_STRESSED"
     side = right.upper()

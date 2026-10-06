@@ -6,6 +6,7 @@ from app.broker.approval import approve_recommendation
 from app.config.settings import TradingConfig
 from app.integrations.probes import probe_redis
 from app.market.regime import regime_from_context
+from app.market.regime_policy import regime_trade_policy
 from app.models.db import configure_database, init_db, session_scope
 from app.paper_trading.engine import exit_signal
 from app.quant.bars import atr, expected_move, vwap
@@ -144,3 +145,10 @@ def test_approval_is_idempotent(tmp_path):
         assert first.id == second.id
         assert first.status == "APPROVED"
         assert first.trade_id == second.trade_id
+
+
+def test_missing_vix_does_not_block_a_known_trend():
+    regime = {"status": "CALCULATED", "trend_state": "MIXED", "volatility_state": "UNKNOWN"}
+    assert regime_trade_policy(regime, "CALL") == ("ALLOW", "")
+    stressed = {"status": "CALCULATED", "trend_state": "UP", "volatility_state": "STRESSED"}
+    assert regime_trade_policy(stressed, "CALL") == ("SUPPRESS", "REGIME_STRESSED")

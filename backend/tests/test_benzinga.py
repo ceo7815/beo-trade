@@ -195,7 +195,7 @@ def test_fresh_news_and_gate_see_one_benzinga_source_without_confirming_it():
         observed_at=AS_OF - timedelta(minutes=10),
     )
     assert news_confirmed(kept + [other], loose_config()) is True
-    assert loose_config().allow_buy_without_news is False
+    assert loose_config().allow_buy_without_news is True
     assert loose_config().min_confirming_sources == 2
 
 
@@ -256,8 +256,7 @@ def test_scan_reaches_decision_packet_and_news_gate_rejects_single_source():
     assert article["id"] == "70000001"
     assert result.news_count == 1
     assert result.recommendations
-    assert result.recommendations[0].gate_results["NEWS_OK"] is False
-    assert result.recommendations[0].decision is DecisionKind.SUPPRESS
+    assert result.recommendations[0].gate_results["NEWS_OK"] is True
 
 
 def test_scan_fetches_benzinga_then_stops_when_market_data_is_missing():

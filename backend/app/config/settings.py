@@ -60,7 +60,7 @@ class TradingConfig:
     outcome_target_percent: float = 0.0
     min_reason_codes: int = 2
     slippage_percent: float = 0.01
-    allow_buy_without_news: bool = False
+    allow_buy_without_news: bool = True
     paper_auto_exit: bool = True
     min_events: int = 1
     max_input_tokens: int = 6000
