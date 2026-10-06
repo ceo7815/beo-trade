@@ -186,6 +186,16 @@ class ThetaFeed:
                 return []
             self._fail("ThetaData לא זמין")
             raise ThetaDataError("ThetaData לא זמין") from exc
+        if response.status_code == 472:
+            symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
+            if len(symbols) > 1:
+                rows: list[dict] = []
+                for symbol in symbols:
+                    one = dict(params)
+                    one["symbol"] = symbol
+                    rows.extend(self._get(path, one, required=required))
+                return rows
+            return []
         if response.status_code != 200:
             if not required:
                 return []

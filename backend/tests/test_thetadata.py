@@ -208,6 +208,24 @@ def test_future_quote_is_excluded_and_stale_quote_fails_the_freshness_gate():
     assert reject_underlying(nvda, loose_config(), AS_OF) == "stale_underlying"
 
 
+def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
+    base, seen = _handler()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        symbol = request.url.params.get("symbol", "")
+        if request.url.path.startswith("/v3/stock/") and "VIX" in symbol:
+            seen.append((request.url.path, symbol))
+            return httpx.Response(472, text="NO_DATA")
+        return base(request)
+
+    market = ThetaMarketProvider(_feed(handle))
+    rows = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+    assert "NVDA" in rows
+    assert rows["NVDA"].price == Decimal("102")
+    assert "VIX" not in rows
+    assert feed_status()["last_error"] is None
+
+
 def test_terminal_failure_returns_no_fabricated_quotes():
     def explode(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
