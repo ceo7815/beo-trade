@@ -70,7 +70,8 @@ min_reason_codes = 2
 slippage_percent = 0.01
 allow_buy_without_news = false
 paper_auto_exit = true
-min_events = 2
+# One confirmed reason is enough to inspect the option chain. The move supplies that reason.
+min_events = 1
 max_input_tokens = 6000
 max_output_tokens = 800
 news_max_age_seconds = 21600

@@ -62,7 +62,7 @@ class TradingConfig:
     slippage_percent: float = 0.01
     allow_buy_without_news: bool = False
     paper_auto_exit: bool = True
-    min_events: int = 2
+    min_events: int = 1
     max_input_tokens: int = 6000
     max_output_tokens: int = 800
     news_max_age_seconds: int = 21600
