@@ -177,7 +177,7 @@ class ThetaFeed:
         _bundle = (as_of, bundle)
         return bundle
 
-    def _get(self, path: str, params: dict, required: bool = True) -> list[dict]:
+    def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
         try:
             with httpx.Client(transport=self.transport, timeout=20) as client:
                 response = client.get(self.base + path, params={"format": "json", **params})
@@ -186,17 +186,20 @@ class ThetaFeed:
                 return []
             self._fail("ThetaData לא זמין")
             raise ThetaDataError("ThetaData לא זמין") from exc
-        if response.status_code == 472:
-            symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
-            if len(symbols) > 1:
-                rows: list[dict] = []
-                for symbol in symbols:
-                    one = dict(params)
-                    one["symbol"] = symbol
-                    rows.extend(self._get(path, one, required=required))
-                return rows
+        code = response.status_code
+        symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
+        if code in {403, 429} and _attempt < 1:
+            return self._get(path, params, required=required, _attempt=_attempt + 1)
+        if code in {403, 429, 472} and len(symbols) > 1:
+            rows: list[dict] = []
+            for symbol in symbols:
+                one = dict(params)
+                one["symbol"] = symbol
+                rows.extend(self._get(path, one, required=required))
+            return rows
+        if code in {403, 429, 472}:
             return []
-        if response.status_code != 200:
+        if code != 200:
             if not required:
                 return []
             self._fail(f"ThetaData החזיר {response.status_code}")

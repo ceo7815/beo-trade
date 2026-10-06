@@ -226,6 +226,22 @@ def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
     assert feed_status()["last_error"] is None
 
 
+def test_forbidden_on_one_symbol_keeps_the_rest_of_the_snapshot():
+    base, _seen = _handler()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        symbol = request.url.params.get("symbol", "")
+        if request.url.path.startswith("/v3/stock/") and "VIX" in symbol:
+            return httpx.Response(403, text="FORBIDDEN")
+        return base(request)
+
+    market = ThetaMarketProvider(_feed(handle))
+    rows = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+    assert "NVDA" in rows
+    assert rows["NVDA"].price == Decimal("102")
+    assert feed_status()["last_error"] is None
+
+
 def test_terminal_failure_returns_no_fabricated_quotes():
     def explode(request: httpx.Request) -> httpx.Response:
         raise httpx.ConnectError("refused")
