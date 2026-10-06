@@ -106,6 +106,7 @@ class TradingConfig:
     universe_refresh_seconds: int = 21600
     universe_min_price: float = 5
     universe_exclusions: tuple[str, ...] = ()
+    core_symbols: tuple[str, ...] = ()
     research_probe_symbol: str = "NVDA"
     context_symbols: tuple[str, ...] = ("SPY", "QQQ", "IWM", "VIX")
     fred_series: tuple[str, ...] = ("FEDFUNDS", "DGS2", "DGS10", "T10Y2Y")
@@ -141,7 +142,7 @@ def load_trading_config(path: Path | None = None) -> TradingConfig:
         raise ValueError(f"Unknown trading config keys: {', '.join(unknown)}")
     if "scenario_moves_percent" in raw:
         raw["scenario_moves_percent"] = tuple(raw["scenario_moves_percent"])
-    for key in ("universe_exclusions", "context_symbols", "fred_series"):
+    for key in ("universe_exclusions", "core_symbols", "context_symbols", "fred_series"):
         if key in raw and isinstance(raw[key], list):
             raw[key] = tuple(str(item).upper() for item in raw[key])
     if "sec_fact_tags" in raw and isinstance(raw["sec_fact_tags"], list):

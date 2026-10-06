@@ -4,7 +4,7 @@
 # A quoted contract is eligible. Volume and open interest stay on the record and no longer block a paper entry.
 min_option_volume = 0
 min_open_interest = 0
-max_bid_ask_spread = 0.40
+max_bid_ask_spread = 0.15
 # Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
 min_underlying_volume = 1000000
 max_expiration_days = 21
@@ -23,7 +23,7 @@ min_relative_volume = 0.50
 # Ranking tier only. A name at or above this is scanned first. It does not reject a stock.
 relative_volume_priority = 1.8
 min_underlying_move_percent = 0.6
-min_option_price = 0.05
+min_option_price = 0.30
 max_option_price = 20.0
 entry_buffer_percent = 0.04
 holding_window_min_minutes = 15
@@ -95,6 +95,8 @@ universe_max_symbols_per_scan = 40
 universe_refresh_seconds = 21600
 universe_min_price = 5
 universe_exclusions = []
+# Scanned every minute ahead of the rotating batch. They share universe_max_symbols_per_scan.
+core_symbols = ["SPY", "QQQ", "IWM", "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL", "NFLX", "AVGO", "PLTR", "COIN", "MSTR", "SMCI", "MU", "INTC", "BA", "JPM", "UBER", "SOFI", "HOOD", "ARM"]
 research_probe_symbol = "NVDA"
 context_symbols = ["SPY", "QQQ", "IWM", "VIX"]
 fred_series = ["FEDFUNDS", "DGS2", "DGS10", "T10Y2Y"]

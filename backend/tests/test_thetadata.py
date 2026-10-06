@@ -165,6 +165,42 @@ def test_underlying_quote_uses_trade_price_and_exchange_timestamp():
     assert context["VIX"]["change_percent"] is None
 
 
+def test_nested_v3_option_response_builds_contracts():
+    def nested(fields: dict) -> dict:
+        return {
+            "response": [
+                {
+                    "contract": {"symbol": "NVDA", "expiration": "2026-10-03", "strike": 100.000, "right": "CALL"},
+                    "data": [{"timestamp": FRESH, **fields}],
+                }
+            ]
+        }
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v3/option/snapshot/quote":
+            return httpx.Response(200, json=nested({"bid": 1.0, "ask": 1.1, "bid_size": 20, "ask_size": 25}))
+        if path == "/v3/option/snapshot/ohlc":
+            return httpx.Response(200, json=nested({"open": 1.0, "high": 1.2, "low": 0.9, "close": 1.05, "volume": 800, "count": 40}))
+        if path == "/v3/option/snapshot/open_interest":
+            return httpx.Response(200, json=nested({"open_interest": 500}))
+        if path == "/v3/option/snapshot/greeks/all":
+            return httpx.Response(200, json=nested({"implied_vol": 0.35, "delta": 0.4, "gamma": 0.02, "theta": -0.05, "vega": 0.1}))
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    chain = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(chain) == 1
+    contract = chain[0]
+    assert contract.bid == Decimal("1.0")
+    assert contract.ask == Decimal("1.1")
+    assert contract.volume == 800
+    assert contract.open_interest == 500
+    assert contract.delta == Decimal("0.4")
+    assert contract.expiration.isoformat() == "2026-10-03"
+
+
 def test_column_response_and_listed_expiration_build_a_contract():
     def handle(request: httpx.Request) -> httpx.Response:
         path = request.url.path

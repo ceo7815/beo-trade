@@ -182,6 +182,13 @@ def test_next_batch_comes_from_the_provider(tmp_path, monkeypatch):
     assert batch == ("AAA", "BBB")
     _book, second = next_scan_symbols(settings, TradingConfig(universe_max_symbols_per_scan=2, universe_refresh_seconds=3600), NOW, tmp_path / "universe.json")
     assert second == ("CCC", "AAA")
+    core_config = TradingConfig(universe_max_symbols_per_scan=3, universe_refresh_seconds=3600, core_symbols=("CCC", "SPY"))
+    _book, pinned = next_scan_symbols(settings, core_config, NOW, tmp_path / "universe.json")
+    assert pinned[:2] == ("CCC", "SPY")
+    assert len(pinned) == 3 and pinned[2] in ("AAA", "BBB")
+    _book, again = next_scan_symbols(settings, core_config, NOW, tmp_path / "universe.json")
+    assert again[:2] == ("CCC", "SPY")
+    assert again[2] != pinned[2]
     reset_theta_state()
     with pytest.raises(ProviderUnavailable, match="יקום"):
         feed = ThetaFeed(_settings(), transport=httpx.MockTransport(lambda _request: httpx.Response(200, json=[])))

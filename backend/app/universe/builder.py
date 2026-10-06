@@ -269,9 +269,13 @@ def next_scan_symbols(settings: Settings, config: TradingConfig, now: datetime, 
     book = load_universe(settings, config, now, path)
     if book.symbols == FIXED_WATCHLIST and book.source != "alpaca-assets":
         raise UniverseUnavailable("יקום קבוע אינו מותר.")
-    ranked = rank_symbols(book.symbols, book.liquidity, config.min_underlying_volume)
-    batch, cursor = take_batch(ranked, config.universe_max_symbols_per_scan, book.cursor)
+    blocked = {item.strip().upper() for item in config.universe_exclusions if item.strip()}
+    core = tuple(dict.fromkeys(item.strip().upper() for item in config.core_symbols if item.strip() and item.strip().upper() not in blocked))
+    pinned = set(core)
+    ranked = rank_symbols(tuple(symbol for symbol in book.symbols if symbol not in pinned), book.liquidity, config.min_underlying_volume)
+    room = max(0, config.universe_max_symbols_per_scan - len(core))
+    batch, cursor = take_batch(ranked, room, book.cursor)
     stored = _read_cache(path)
-    if stored is not None:
+    if stored is not None and room:
         _write_cache(path, replace(stored, cursor=cursor))
-    return book, batch
+    return book, core + batch

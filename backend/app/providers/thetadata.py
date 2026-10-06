@@ -61,7 +61,26 @@ def _iso(moment: datetime) -> str:
     return moment.astimezone(EXCHANGE).isoformat()
 
 
+def _flatten(rows: list[dict]) -> list[dict]:
+    """v3 JSON nests option rows as {"contract": {...}, "data": [{...}]}."""
+    flat: list[dict] = []
+    for row in rows:
+        contract = row.get("contract")
+        data = row.get("data")
+        if isinstance(contract, dict) and isinstance(data, list):
+            for tick in data:
+                if isinstance(tick, dict):
+                    flat.append({**contract, **tick})
+            continue
+        flat.append(row)
+    return flat
+
+
 def _rows(payload: object) -> list[dict]:
+    return _flatten(_raw_rows(payload))
+
+
+def _raw_rows(payload: object) -> list[dict]:
     if isinstance(payload, list):
         return [row for row in payload if isinstance(row, dict)]
     if not isinstance(payload, dict):
