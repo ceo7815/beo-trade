@@ -395,6 +395,39 @@ def test_fresh_providers_quote_the_held_and_bought_contracts(monkeypatch):
     assert [item.option_symbol for item in providers.options.load_options(AS_OF)] == ["NVDA  261003C00100000"]
 
 
+def test_revalidation_solves_iv_when_the_feed_has_no_greeks(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.broker.execution import fresh_quote_reasons
+    from app.quant.scenarios import enrich_option
+    from app.workers import loops
+
+    handler, _seen = _handler()
+
+    def no_greeks(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v3/option/snapshot/greeks/all":
+            return httpx.Response(200, json=[])
+        response = handler(request)
+        if request.url.path == "/v3/option/snapshot/quote":
+            rows = response.json()
+            return httpx.Response(200, json=[{**row, "bid": 2.6, "ask": 2.7} for row in rows])
+        return response
+
+    def fresh_providers(_settings):
+        feed = ThetaFeed(_settings, transport=httpx.MockTransport(no_greeks))
+        return SimpleNamespace(market=ThetaMarketProvider(feed), options=ThetaOptionsProvider(feed))
+
+    monkeypatch.setattr(loops, "build_providers", fresh_providers)
+    settings = _settings()
+    bundles = loops._loaded_bundles(settings, AS_OF, ("NVDA",))
+    raw = bundles["NVDA261003C00100000"]["option"]
+    assert raw.implied_volatility is None
+    quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), AS_OF) for item in bundles.values()]
+    assert quotes[0].implied_volatility is not None and quotes[0].implied_volatility > 0
+    reasons = fresh_quote_reasons(settings, "NVDA261003C00100000", "buy_to_open", AS_OF, quotes, {"reference_price": str(quotes[0].mid)})
+    assert "אין IV טרי" not in reasons
+
+
 def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
     base, seen = _handler()
 

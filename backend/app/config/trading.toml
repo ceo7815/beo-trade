@@ -86,7 +86,8 @@ exit_before_expiration_minutes = 20
 max_open_positions = 10
 max_daily_loss_dollars = 0
 kill_switch = false
-recommendation_max_age_seconds = 180
+# Measured from the scan clock. A scan with AI calls can run several minutes; the live-quote drift check guards the price.
+recommendation_max_age_seconds = 600
 revalidation_max_price_drift = 0.03
 liquidity_exit_spread = 0.25
 scan_strike_range = 15

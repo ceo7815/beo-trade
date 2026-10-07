@@ -346,12 +346,15 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     from app.models.store import save_recommendation
     from app.options.risk_limits import daily_loss_reason, exposure_reason, sector_exposure_reason
 
+    from app.quant.scenarios import enrich_option
+
     try:
         providers = build_providers(settings)
         symbols = tuple(dict.fromkeys(row.underlying for row in buys))
-        if hasattr(providers.options, "bind_option_symbols"):
-            providers.options.bind_option_symbols(symbols)
-        quotes = list(providers.options.load_options(moment))
+        # Revalidate the same way the scan priced the contract: IV and greeks are solved from the live mid when the feed omits them.
+        live = datetime.now(timezone.utc)
+        bundles = _loaded_bundles(settings, live, symbols)
+        quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), live) for item in bundles.values()]
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
     except Exception:
         return
@@ -484,7 +487,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                             "recommendation_id": row.recommendation_id,
                             "revalidation": context,
                         },
-                        moment,
+                        live,
                         quotes,
                     )
                 except Exception:
