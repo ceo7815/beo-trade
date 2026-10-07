@@ -90,6 +90,8 @@ recommendation_max_age_seconds = 180
 revalidation_max_price_drift = 0.03
 liquidity_exit_spread = 0.25
 scan_strike_range = 15
+# Option chains are read only for the top-ranked names that passed the stock gates. 0 reads every one.
+max_chains_per_scan = 6
 min_eod_days = 5
 universe_max_symbols_per_scan = 40
 universe_refresh_seconds = 21600

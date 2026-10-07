@@ -84,9 +84,10 @@ def execute_scan(
     kept, rejections = _liquidity_stage(underlyings, providers, config, now)
     requested = tuple(getattr(getattr(providers.market, "feed", None), "_symbols", ()) or ())
     filter_profile = _filter_observation(requested, underlyings, config, now)
+    chained = kept if config.max_chains_per_scan <= 0 else kept[: config.max_chains_per_scan]
     if missing_market is None and kept:
         if hasattr(providers.options, "bind_option_symbols"):
-            providers.options.bind_option_symbols(tuple(item.symbol for item in kept))
+            providers.options.bind_option_symbols(tuple(item.symbol for item in chained))
         try:
             options = list(providers.options.load_options(now))
         except ProviderNotConfigured as exc:
@@ -186,7 +187,7 @@ def execute_scan(
         "universe_passed": None if book is None else getattr(book, "filtered", None),
         "underlyings_checked": len(underlyings),
         "underlyings_passed": len(kept),
-        "chains_requested": len(kept),
+        "chains_requested": len(chained),
         "old_volume_floor": config.min_underlying_volume,
         "eligible_below_old_volume_floor": sum(1 for item in kept if would_fail_old_volume_floor(item, config)),
         "contracts_checked": counts.get("contracts_checked", 0),

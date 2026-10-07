@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import signal
+import threading
 import time
 from datetime import datetime, timezone
 
@@ -22,7 +23,7 @@ _lock_handle = None
 
 def beat(path, phase: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_suffix(".tmp")
+    temporary = path.with_suffix(f".{threading.get_ident()}.tmp")
     temporary.write_text(f"{datetime.now(timezone.utc).isoformat()} {phase}\n", encoding="utf-8")
     temporary.replace(path)
 
@@ -44,6 +45,20 @@ def _request_stop(signum, _frame) -> None:
     log.info("worker.shutdown", signal=signum, service="worker")
 
 
+def _monitor_forever(settings, calendar, interval: int) -> None:
+    """Exits and liveness do not wait for a long scan."""
+    while not _stop:
+        now = datetime.now(timezone.utc)
+        phase = phase_at(now, calendar)
+        try:
+            monitor_once(settings)
+        except Exception:
+            log.warning("worker.monitor_failed", service="monitor")
+        beat(MONITOR_HEARTBEAT, phase)
+        beat(HEARTBEAT, "HALTED" if is_halted() else phase)
+        time.sleep(interval)
+
+
 def run_forever() -> None:
     global _lock_handle
     structlog.configure(
@@ -63,9 +78,10 @@ def run_forever() -> None:
     calendar = settings.calendar()
     trading = settings.trading()
     last_scan = 0.0
-    last_monitor = 0.0
     last_reconcile = 0.0
     log.info("worker.started", service="worker", trading_mode="PAPER", paper_only=True)
+    monitor = threading.Thread(target=_monitor_forever, args=(settings, calendar, trading.monitor_interval_seconds), name="monitor", daemon=True)
+    monitor.start()
     while True:
         now = datetime.now(timezone.utc)
         phase = phase_at(now, calendar)
@@ -77,7 +93,7 @@ def run_forever() -> None:
             halted=halted,
             phase=phase,
             scan_due=clock - last_scan >= trading.scan_interval_seconds,
-            monitor_due=clock - last_monitor >= trading.monitor_interval_seconds,
+            monitor_due=False,
             reconcile_due=clock - last_reconcile >= trading.scan_interval_seconds,
         )
         if plan["reconcile"]:
@@ -93,14 +109,8 @@ def run_forever() -> None:
             except Exception:
                 log.warning("worker.scan_failed", service="worker")
             last_scan = clock
-        if plan["monitor"]:
-            try:
-                monitor_once(settings)
-            except Exception:
-                log.warning("worker.monitor_failed", service="monitor")
-            beat(MONITOR_HEARTBEAT, phase)
-            last_monitor = clock
         if _stop:
+            monitor.join(timeout=20)
             log.info("worker.stopped", service="worker")
             return
         time.sleep(min(5, trading.monitor_interval_seconds))

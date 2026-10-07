@@ -107,6 +107,7 @@ class TradingConfig:
     universe_min_price: float = 5
     universe_exclusions: tuple[str, ...] = ()
     core_symbols: tuple[str, ...] = ()
+    max_chains_per_scan: int = 0
     research_probe_symbol: str = "NVDA"
     context_symbols: tuple[str, ...] = ("SPY", "QQQ", "IWM", "VIX")
     fred_series: tuple[str, ...] = ("FEDFUNDS", "DGS2", "DGS10", "T10Y2Y")

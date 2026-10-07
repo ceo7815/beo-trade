@@ -249,8 +249,8 @@ class ThetaFeed:
         rows = self._get(path, params, required=required)
         pinned = {item.strip().upper() for item in self.settings.trading().core_symbols}
         if rows and key[1] in pinned:
-            for stale in [item for item in _prior if item[2] != key[2]]:
-                del _prior[stale]
+            for stale in [item for item in list(_prior) if item[2] != key[2]]:
+                _prior.pop(stale, None)
             if key[0] == "1m":
                 rows = [
                     {"timestamp": row.get("timestamp") or row.get("created") or row.get("last_trade"), "volume": row.get("volume")}
