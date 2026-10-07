@@ -361,6 +361,17 @@ def test_liquid_quote_read_just_after_the_scan_clock_is_kept():
     assert reject_underlying(rows["NVDA"], loose_config(), AS_OF) != "stale_underlying"
 
 
+def test_prior_history_for_a_core_name_is_read_once_per_session():
+    handler, seen = _handler()
+    feed = _feed(handler)
+    market = ThetaMarketProvider(feed)
+    first = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+    second = {item.symbol: item for item in market.load_underlyings(AS_OF + timedelta(seconds=60))}
+    eod = [symbol for path, symbol in seen if path == "/v3/stock/history/eod" and symbol == "NVDA"]
+    assert len(eod) == 1
+    assert second["NVDA"].prior_close == first["NVDA"].prior_close
+
+
 def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
     base, seen = _handler()
 

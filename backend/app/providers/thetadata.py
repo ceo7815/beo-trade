@@ -37,12 +37,15 @@ class _State:
 
 _state = _State()
 _bundle: tuple[datetime, dict] | None = None
+# Prior-session bars do not change during a session. Keyed by (kind, symbol, session day).
+_prior: dict[tuple[str, str, date], list[dict]] = {}
 
 
 def reset_theta_state() -> None:
     global _state, _bundle
     _state = _State()
     _bundle = None
+    _prior.clear()
 
 
 def feed_status() -> dict:
@@ -239,6 +242,23 @@ class ThetaFeed:
         _bundle = (as_of, bundle)
         return bundle
 
+    def _prior_rows(self, key: tuple[str, str, date], path: str, params: dict, required: bool) -> list[dict]:
+        cached = _prior.get(key)
+        if cached is not None:
+            return cached
+        rows = self._get(path, params, required=required)
+        pinned = {item.strip().upper() for item in self.settings.trading().core_symbols}
+        if rows and key[1] in pinned:
+            for stale in [item for item in _prior if item[2] != key[2]]:
+                del _prior[stale]
+            if key[0] == "1m":
+                rows = [
+                    {"timestamp": row.get("timestamp") or row.get("created") or row.get("last_trade"), "volume": row.get("volume")}
+                    for row in rows
+                ]
+            _prior[key] = rows
+        return rows
+
     def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
         try:
             with httpx.Client(transport=self.transport, timeout=20) as client:
@@ -299,36 +319,37 @@ class ThetaFeed:
         quotes = _by_symbol(self._get("/v3/stock/snapshot/quote", {"symbol": listed}))
         trades = _by_symbol(self._get("/v3/stock/snapshot/trade", {"symbol": listed}))
         history: dict[str, list[dict]] = {}
+        start = (session_day - timedelta(days=30)).strftime("%Y%m%d")
+        end = (session_day - timedelta(days=1)).strftime("%Y%m%d")
         for symbol in stocks:
             if symbol not in ohlc and symbol not in trades:
                 continue
-            start = (session_day - timedelta(days=30)).strftime("%Y%m%d")
-            end = (session_day - timedelta(days=1)).strftime("%Y%m%d")
-            history[symbol] = self._get(
+            history[symbol] = self._prior_rows(
+                ("eod", symbol, session_day),
                 "/v3/stock/history/eod",
                 {"symbol": symbol, "start_date": start, "end_date": end},
+                required=True,
             )
         intraday: dict[str, list[dict]] = {}
         cutoff = _completed_minute(as_of)
         if cutoff is not None:
-            window_start = (session_day - timedelta(days=30)).strftime("%Y%m%d")
-            window_end = session_day.strftime("%Y%m%d")
+            today = session_day.strftime("%Y%m%d")
             end_clock = cutoff.strftime("%H:%M:%S")
             for symbol in stocks:
                 if symbol not in ohlc and symbol not in trades:
                     continue
-                intraday[symbol] = self._get(
+                earlier = self._prior_rows(
+                    ("1m", symbol, session_day),
                     "/v3/stock/history/ohlc",
-                    {
-                        "symbol": symbol,
-                        "start_date": window_start,
-                        "end_date": window_end,
-                        "interval": "1m",
-                        "start_time": "09:30:00",
-                        "end_time": end_clock,
-                    },
+                    {"symbol": symbol, "start_date": start, "end_date": end, "interval": "1m", "start_time": "09:30:00", "end_time": "16:00:00"},
                     required=False,
                 )
+                current = self._get(
+                    "/v3/stock/history/ohlc",
+                    {"symbol": symbol, "start_date": today, "end_date": today, "interval": "1m", "start_time": "09:30:00", "end_time": end_clock},
+                    required=False,
+                )
+                intraday[symbol] = [*_on_days(earlier, session_day, before=True), *_on_days(current, session_day, before=False)]
         underlyings = []
         context: dict[str, dict] = {}
         newest: datetime | None = None
@@ -496,6 +517,18 @@ def _completed_minute(as_of: datetime) -> datetime | None:
     if cutoff.time() > LAST_BAR_OPEN:
         return cutoff.replace(hour=LAST_BAR_OPEN.hour, minute=LAST_BAR_OPEN.minute, second=0, microsecond=0)
     return cutoff
+
+
+def _on_days(rows: list[dict], session_day: date, before: bool) -> list[dict]:
+    kept = []
+    for row in rows:
+        stamp = _stamp(row.get("timestamp") or row.get("created") or row.get("last_trade"))
+        if stamp is None:
+            continue
+        day = stamp.astimezone(EXCHANGE).date()
+        if (day < session_day) if before else (day == session_day):
+            kept.append(row)
+    return kept
 
 
 def _minute_bars(rows: list[dict]) -> list[tuple[datetime, int]]:
