@@ -48,11 +48,21 @@ def _cash(settings: Settings) -> Decimal | None:
     return paper_equity(settings)
 
 
+def record_scan_blocked(moment: datetime, reason: str) -> None:
+    try:
+        from app.analytics.routes import write_last_scan
+
+        write_last_scan({"observed_at": moment.isoformat(), "blocked": reason, "recommendations": 0, "buys": 0, "ai_calls": 0, "universe": None})
+    except (TypeError, ValueError, OSError):
+        pass
+
+
 def scan_once(settings: Settings, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
     publish_quiet("scan.requested", moment.isoformat())
     cash = _cash(settings)
     if cash is None:
+        record_scan_blocked(moment, "אין נתוני חשבון")
         return {"ok": False, "blocked": "אין נתוני חשבון"}
     providers = build_providers(settings)
     entries = []
@@ -81,12 +91,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             open_planned_risk=_open_planned_risk(settings),
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
-        try:
-            from app.analytics.routes import write_last_scan
-
-            write_last_scan({"observed_at": moment.isoformat(), "blocked": str(exc), "recommendations": 0, "buys": 0, "ai_calls": 0, "universe": None})
-        except (TypeError, ValueError, OSError):
-            pass
+        record_scan_blocked(moment, str(exc))
         return {"ok": False, "blocked": str(exc)}
     publish_quiet("scan.completed", str(len(result.recommendations)))
     for row in result.recommendations:

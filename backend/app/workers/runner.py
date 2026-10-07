@@ -14,7 +14,7 @@ from app.models.db import configure_database, init_db
 from app.ops.lock import acquire_single_worker_lock
 from app.ops.paths import HEARTBEAT, MONITOR_HEARTBEAT, RECONCILE_HEARTBEAT, WORKER_LOCK
 from app.ops.safety import assert_boot_safe
-from app.workers.loops import monitor_once, reconcile_once, scan_once
+from app.workers.loops import monitor_once, reconcile_once, record_scan_blocked, scan_once
 
 log = structlog.get_logger()
 _stop = False
@@ -106,8 +106,9 @@ def run_forever() -> None:
         if plan["scan"]:
             try:
                 scan_once(settings, now)
-            except Exception:
-                log.warning("worker.scan_failed", service="worker")
+            except Exception as exc:
+                log.warning("worker.scan_failed", service="worker", error=type(exc).__name__)
+                record_scan_blocked(now, f"שגיאה פנימית בסריקה: {type(exc).__name__}: {str(exc)[:200]}")
             last_scan = clock
         if _stop:
             monitor.join(timeout=20)

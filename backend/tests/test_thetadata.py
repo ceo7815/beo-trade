@@ -428,6 +428,20 @@ def test_revalidation_solves_iv_when_the_feed_has_no_greeks(monkeypatch):
     assert "אין IV טרי" not in reasons
 
 
+def test_unresponsive_terminal_ends_the_scan_after_three_transport_failures():
+    calls = []
+
+    def hang(request: httpx.Request) -> httpx.Response:
+        calls.append(request.url.path)
+        raise httpx.ReadTimeout("no answer", request=request)
+
+    feed = ThetaFeed(_settings(), transport=httpx.MockTransport(hang))
+    feed.bind_option_symbols(("NVDA", "AMD", "TSLA"))
+    with pytest.raises(ProviderUnavailable, match="לא מגיב"):
+        ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(calls) == 3
+
+
 def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
     base, seen = _handler()
 

@@ -17,6 +17,9 @@ from app.schemas.domain import Bar, OptionRight, OptionSnapshot, UnderlyingSnaps
 DEFAULT_BASE = "http://127.0.0.1:25503"
 EXCHANGE = ZoneInfo("America/New_York")
 LATE_QUOTE_SECONDS = 90
+REQUEST_TIMEOUT_SECONDS = 10
+# A terminal that stops answering would otherwise hold one scan for every optional request's timeout.
+MAX_TRANSPORT_FAILURES = 3
 
 
 class ThetaDataError(ProviderUnavailable):
@@ -219,6 +222,7 @@ class ThetaFeed:
         self._option_symbols: tuple[str, ...] = ()
         self.last_option_status: str | None = None
         self._listed_expirations: dict[str, list[str]] = {}
+        self._transport_failures = 0
         base, _origin = resolve_secret(settings, "thetadata_base_url")
         self.base = (base or DEFAULT_BASE).rstrip("/")
 
@@ -261,9 +265,13 @@ class ThetaFeed:
 
     def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
         try:
-            with httpx.Client(transport=self.transport, timeout=20) as client:
+            with httpx.Client(transport=self.transport, timeout=REQUEST_TIMEOUT_SECONDS) as client:
                 response = client.get(self.base + path, params={"format": "json", **params})
         except httpx.HTTPError as exc:
+            self._transport_failures += 1
+            if self._transport_failures >= MAX_TRANSPORT_FAILURES:
+                self._fail("ThetaData לא מגיב")
+                raise ThetaDataError("ThetaData לא מגיב") from exc
             if not required:
                 return []
             self._fail("ThetaData לא זמין")
