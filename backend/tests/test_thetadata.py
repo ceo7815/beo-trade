@@ -201,6 +201,29 @@ def test_nested_v3_option_response_builds_contracts():
     assert contract.expiration.isoformat() == "2026-10-03"
 
 
+@pytest.mark.parametrize(
+    ("stamp", "current"),
+    [(FUTURE, True), (STALE, True), ("2026-09-30T15:59:00.000", False)],
+)
+def test_standing_session_quote_is_current_when_the_chain_is_read(stamp, current):
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v3/option/snapshot/quote":
+            return httpx.Response(
+                200,
+                json=[{"symbol": "NVDA", "expiration": "2026-10-03", "strike": 100, "right": "CALL", "timestamp": stamp, "bid": 1.0, "ask": 1.1}],
+            )
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    chain = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(chain) == 1
+    if current:
+        assert chain[0].observed_at == AS_OF
+    else:
+        assert chain[0].observed_at < AS_OF
+
+
 def test_column_response_and_listed_expiration_build_a_contract():
     def handle(request: httpx.Request) -> httpx.Response:
         path = request.url.path

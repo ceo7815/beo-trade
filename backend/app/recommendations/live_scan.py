@@ -191,6 +191,7 @@ def execute_scan(
         "eligible_below_old_volume_floor": sum(1 for item in kept if would_fail_old_volume_floor(item, config)),
         "contracts_checked": counts.get("contracts_checked", 0),
         "contracts_passed": counts.get("contracts_passed", 0),
+        "option_rejections": counts.get("option_rejections", {}),
         "news_checked": len(news),
         "news_passed": counts.get("news_passed", 0),
         "risk_checked": counts.get("risk_checked", 0),

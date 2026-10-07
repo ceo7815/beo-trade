@@ -626,7 +626,12 @@ def _option(
     greeks: dict | None,
     as_of: datetime,
 ) -> OptionSnapshot | None:
-    observed = _stamp(quote.get("timestamp"))
+    quoted = _stamp(quote.get("timestamp"))
+    # A snapshot returns the standing NBBO; its timestamp is the last change, not when it was read.
+    # Chains are read after the scan clock starts, so a quote from this session is current as of the scan.
+    observed = quoted
+    if quoted is not None and quoted.astimezone(EXCHANGE).date() == as_of.astimezone(EXCHANGE).date():
+        observed = as_of.astimezone(EXCHANGE)
     bid = _dec(quote.get("bid"))
     ask = _dec(quote.get("ask"))
     last = _dec((ohlc or {}).get("close"))

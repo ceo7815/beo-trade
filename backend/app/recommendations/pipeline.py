@@ -175,6 +175,7 @@ def run_scan(
     ai_calls = 0
     contracts_checked = 0
     contracts_passed = 0
+    option_rejections: dict[str, int] = {}
     news_passed = 0
     risk_checked = 0
     risk_passed = 0
@@ -197,7 +198,9 @@ def run_scan(
             if option.option_symbol in active_symbols:
                 continue
             filled = enrich_option(option, underlying, config, as_of)
-            if reject_option(filled, underlying, config, as_of, session_date):
+            reason = reject_option(filled, underlying, config, as_of, session_date)
+            if reason:
+                option_rejections[reason] = option_rejections.get(reason, 0) + 1
                 continue
             priced = scenarios_for(filled, underlying, config, as_of)
             enriched.append(filled)
@@ -216,6 +219,8 @@ def run_scan(
             if direction_matches(underlying, item, events)
         ]
         if not shortlist:
+            if enriched:
+                option_rejections["direction"] = option_rejections.get("direction", 0) + 1
             continue
         risk_checked += 1
         company = None if research is None else (research.get("companies") or {}).get(underlying.symbol)
@@ -354,6 +359,7 @@ def run_scan(
             {
                 "contracts_checked": contracts_checked,
                 "contracts_passed": contracts_passed,
+                "option_rejections": option_rejections,
                 "news_passed": news_passed,
                 "risk_checked": risk_checked,
                 "risk_passed": risk_passed,
