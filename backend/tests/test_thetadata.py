@@ -372,6 +372,29 @@ def test_prior_history_for_a_core_name_is_read_once_per_session():
     assert second["NVDA"].prior_close == first["NVDA"].prior_close
 
 
+def test_fresh_providers_quote_the_held_and_bought_contracts(monkeypatch):
+    from types import SimpleNamespace
+
+    from app.workers import loops
+
+    handler, _seen = _handler()
+
+    def fresh_providers(_settings):
+        feed = ThetaFeed(_settings, transport=httpx.MockTransport(handler))
+        return SimpleNamespace(market=ThetaMarketProvider(feed), options=ThetaOptionsProvider(feed))
+
+    monkeypatch.setattr(loops, "build_providers", fresh_providers)
+    held = loops._held_underlyings([{"symbol": "NVDA261003C00100000", "qty": "1"}])
+    assert held == ("NVDA",)
+    bundles = loops._loaded_bundles(_settings(), AS_OF, held)
+    assert "NVDA261003C00100000" in bundles
+    assert bundles["NVDA261003C00100000"]["underlying"].symbol == "NVDA"
+
+    providers = fresh_providers(_settings())
+    providers.options.bind_option_symbols(("NVDA",))
+    assert [item.option_symbol for item in providers.options.load_options(AS_OF)] == ["NVDA  261003C00100000"]
+
+
 def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():
     base, seen = _handler()
 

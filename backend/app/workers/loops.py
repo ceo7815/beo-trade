@@ -139,8 +139,6 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     from app.schemas.domain import PaperFill
 
     moment = now or datetime.now(timezone.utc)
-    if quotes is None:
-        quotes = _loaded_bundles(settings, moment)
     owns_adapter = adapter is None
     if adapter is None:
         try:
@@ -149,6 +147,8 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             return {"positions": 0, "exits": []}
     try:
         positions = adapter.sync_positions()
+        if quotes is None and positions:
+            quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
         bundles = quotes if quotes is not None else {}
         exits = []
         for position in positions:
@@ -198,11 +198,25 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             adapter.close()
 
 
-def _loaded_bundles(settings: Settings, now: datetime) -> dict:
+def _held_underlyings(positions: list[dict]) -> tuple[str, ...]:
+    from app.broker.normalize import parse_option_symbol
+
+    held = []
+    for position in positions:
+        contract = parse_option_symbol(str(position.get("symbol") or "").replace(" ", "").upper())
+        if contract is not None:
+            held.append(str(contract["underlying"]).upper())
+    return tuple(dict.fromkeys(held))
+
+
+def _loaded_bundles(settings: Settings, now: datetime, underlyings_held: tuple[str, ...] = ()) -> dict:
     try:
         providers = build_providers(settings)
         if providers.market is None or providers.options is None:
             return {}
+        feed = getattr(providers.market, "feed", None)
+        if underlyings_held and feed is not None and hasattr(feed, "bind_symbols"):
+            feed.bind_symbols(underlyings_held)
         underlyings = {row.symbol: row for row in providers.market.load_underlyings(now)}
         bundles = {}
         for option in providers.options.load_options(now):
@@ -334,8 +348,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
 
     try:
         providers = build_providers(settings)
+        symbols = tuple(dict.fromkeys(row.underlying for row in buys))
+        if hasattr(providers.options, "bind_option_symbols"):
+            providers.options.bind_option_symbols(symbols)
         quotes = list(providers.options.load_options(moment))
-        symbols = tuple(row.underlying for row in buys)
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
     except Exception:
         return
@@ -535,11 +551,11 @@ def close_all_positions(settings: Settings, now: datetime | None = None) -> dict
         adapter = open_paper_broker(settings)
     except (AlpacaNotConfigured, PaperOnlyError) as exc:
         return {"ok": False, "blocked": str(exc), "submitted": [], "blocked_positions": []}
-    quotes = _loaded_bundles(settings, moment)
     submitted = []
     blocked = []
     try:
         positions = list(adapter.sync_positions())
+        quotes = _loaded_bundles(settings, moment, _held_underlyings(positions)) if positions else {}
         with session_scope() as session:
             record_trade_event(session, "close-all", "CLOSE_ALL", "beo-trade", "בקשת סגירת כל הפוזיציות")
             for position in positions:
