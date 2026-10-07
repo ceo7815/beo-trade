@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 
@@ -351,6 +351,14 @@ def test_future_quote_is_excluded_and_stale_quote_fails_the_freshness_gate():
     nvda = next(item for item in stale if item.symbol == "NVDA")
     assert nvda.observed_at < AS_OF
     assert reject_underlying(nvda, loose_config(), AS_OF) == "stale_underlying"
+
+
+def test_liquid_quote_read_just_after_the_scan_clock_is_kept():
+    late = (AS_OF.astimezone(EXCHANGE) + timedelta(seconds=30)).strftime("%Y-%m-%dT%H:%M:%S.000")
+    handler, _seen = _handler(nvda_stamp=late)
+    rows = {item.symbol: item for item in ThetaMarketProvider(_feed(handler)).load_underlyings(AS_OF)}
+    assert rows["NVDA"].observed_at == AS_OF
+    assert reject_underlying(rows["NVDA"], loose_config(), AS_OF) != "stale_underlying"
 
 
 def test_no_data_on_one_symbol_keeps_the_rest_of_the_snapshot():

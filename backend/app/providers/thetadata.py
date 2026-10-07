@@ -16,6 +16,7 @@ from app.schemas.domain import Bar, OptionRight, OptionSnapshot, UnderlyingSnaps
 
 DEFAULT_BASE = "http://127.0.0.1:25503"
 EXCHANGE = ZoneInfo("America/New_York")
+LATE_QUOTE_SECONDS = 90
 
 
 class ThetaDataError(ProviderUnavailable):
@@ -135,6 +136,15 @@ def _stamp(value: object) -> datetime | None:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=EXCHANGE)
     return parsed
+
+
+def _at_scan(stamp: datetime | None, as_of: datetime) -> datetime | None:
+    """Snapshots are read after the scan clock starts, so a liquid name's last quote lands just after it."""
+    if stamp is None or stamp <= as_of:
+        return stamp
+    if (stamp - as_of).total_seconds() <= LATE_QUOTE_SECONDS:
+        return as_of.astimezone(EXCHANGE)
+    return None
 
 
 def _dec(value: object) -> Decimal | None:
@@ -465,9 +475,9 @@ def _history_before(rows: list[dict], session_day: date) -> list[dict]:
 
 
 def _context_level(symbol: str, ohlc: dict | None, quote: dict | None, trade: dict | None, history: list[dict], as_of: datetime, session_day: date) -> dict | None:
-    observed = _stamp((quote or {}).get("timestamp")) or _stamp((trade or {}).get("timestamp")) or _stamp((ohlc or {}).get("timestamp"))
+    observed = _at_scan(_stamp((quote or {}).get("timestamp")) or _stamp((trade or {}).get("timestamp")) or _stamp((ohlc or {}).get("timestamp")), as_of)
     price = _dec((trade or {}).get("price")) or _dec((ohlc or {}).get("close"))
-    if observed is None or price is None or observed > as_of:
+    if observed is None or price is None:
         return None
     change = None
     prior_rows = _history_before(history, session_day)
@@ -511,9 +521,9 @@ def _underlying(
     session_ok: bool,
     holidays: frozenset[date] | set[date],
 ) -> UnderlyingSnapshot | None:
-    observed = _stamp((quote or {}).get("timestamp")) or _stamp((trade or {}).get("timestamp")) or _stamp((ohlc or {}).get("timestamp"))
+    observed = _at_scan(_stamp((quote or {}).get("timestamp")) or _stamp((trade or {}).get("timestamp")) or _stamp((ohlc or {}).get("timestamp")), as_of)
     price = _dec((trade or {}).get("price")) or _dec((ohlc or {}).get("close"))
-    if observed is None or price is None or observed > as_of or ohlc is None:
+    if observed is None or price is None or ohlc is None:
         return None
     prior_rows = _history_before(history, session_day)
     if not prior_rows:
@@ -592,9 +602,9 @@ def _index_level(rows: list[dict], as_of: datetime, symbol: str) -> dict | None:
     for row in rows:
         if str(row.get("symbol") or "").strip().upper() != symbol:
             continue
-        stamp = _stamp(row.get("timestamp"))
+        stamp = _at_scan(_stamp(row.get("timestamp")), as_of)
         price = _dec(row.get("price"))
-        if stamp is None or price is None or stamp > as_of:
+        if stamp is None or price is None:
             continue
         return {"symbol": symbol, "price": price, "change_percent": None, "observed_at": stamp}
     return None
