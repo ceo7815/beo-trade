@@ -178,6 +178,7 @@ export default function HistoryPage() {
   const [period, setPeriod] = useState<Period>("today");
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
+  const [view, setView] = useState<"all" | "open" | "closed">("all");
 
   useEffect(() => {
     let alive = true;
@@ -287,6 +288,26 @@ export default function HistoryPage() {
           <span className="ops-pip num">{span(report)}</span>
         </div>
 
+        <div className="ops-pips" role="tablist" aria-label="סוג עסקה" style={{ flexWrap: "wrap", gap: 8 }}>
+          {([
+            ["all", `הכול · ${live.length + closed.length}`],
+            ["open", `פתוחות · ${live.length}`],
+            ["closed", `סגורות · ${closed.length}`],
+          ] as const).map(([id, label]) => (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={view === id}
+              className={`ops-pip ${view === id ? "on" : ""}`}
+              onClick={() => setView(id)}
+              style={{ cursor: "pointer" }}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
         {summary ? (
           <div className="engine-board" aria-label="סיכום">
             {cubes.map((row, rowIndex) => (
@@ -309,6 +330,7 @@ export default function HistoryPage() {
           </p>
         ) : null}
 
+        {view !== "closed" ? (
         <section className="ops-pane">
           <h2>פוזיציות פתוחות · {live.length}</h2>
           <div className="ops-scroll">
@@ -354,7 +376,9 @@ export default function HistoryPage() {
             </table>
           </div>
         </section>
+        ) : null}
 
+        {view !== "open" ? (
         <section className="ops-pane">
           <h2>עסקאות שנסגרו · {closed.length}</h2>
           <div className="ops-scroll">
@@ -400,6 +424,7 @@ export default function HistoryPage() {
             </table>
           </div>
         </section>
+        ) : null}
 
         {failed && !report ? <p className="ops-line">אין נתונים. השרת לא החזיר את דוח העסקאות.</p> : null}
         {report?.available === false ? <p className="ops-line">אין חיבור ל-Alpaca Paper ({report.detail}).</p> : null}

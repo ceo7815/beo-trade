@@ -82,6 +82,20 @@ function ageLabel(seconds: number | null | undefined) {
   return `${Math.floor(seconds / 60)} דק׳`;
 }
 
+function riskOf(positions: Position[] | null): { cost: number; pnl: number } | null {
+  if (positions === null) return null;
+  let cost = 0;
+  let pnl = 0;
+  for (const item of positions) {
+    const basis = Number(item.cost_basis);
+    const gain = Number(item.unrealized_pl);
+    if (!item.current_price || !Number.isFinite(basis) || !Number.isFinite(gain)) return null;
+    cost += Math.abs(basis);
+    pnl += gain;
+  }
+  return { cost, pnl };
+}
+
 function share(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
@@ -175,6 +189,7 @@ function Board() {
   const pnl = risk?.today_pnl == null || risk.today_pnl === "" ? null : Number(risk.today_pnl);
   const scan = desk?.last_scan ?? null;
   const exposure = exposureOf(positions);
+  const atRisk = riskOf(positions);
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
@@ -209,6 +224,8 @@ function Board() {
         <Cell label="שווי תיק" hint="Portfolio" value={money(account?.portfolio_value)} />
         <Cell label="רווח/הפסד היום" hint="P&L" value={pnl === null ? "אין נתונים" : money(pnl)} className={tone(pnl)} />
         <Cell label="תשואה היום" hint="Return" value={pnl === null || !equity ? "אין נתונים" : `${((pnl / equity) * 100).toFixed(2)}%`} className={tone(pnl)} />
+        <Cell label="כסף בסיכון" hint="Invested" value={atRisk === null ? "אין נתונים" : money(atRisk.cost)} />
+        <Cell label="תשואה על הכסף בסיכון" hint="Return on Risk" value={atRisk === null ? "אין נתונים" : atRisk.cost > 0 ? share((atRisk.pnl / atRisk.cost) * 100) : "—"} className={tone(atRisk === null ? null : atRisk.pnl)} />
         <Cell label="פוזיציות" value={positions === null ? "אין נתונים" : String(positions.length)} />
         <Cell label="חשיפה" hint="Exposure" value={exposure === null ? "אין נתונים" : money(exposure)} />
       </div>

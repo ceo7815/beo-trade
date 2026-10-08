@@ -802,7 +802,7 @@ body {
 
 .ops-book {
   display: grid;
-  grid-template-columns: repeat(8, minmax(0, 1fr));
+  grid-template-columns: repeat(10, minmax(0, 1fr));
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -1358,7 +1358,7 @@ button.engine-cube { cursor: pointer; }
 
 @media (max-width: 1280px) {
   .int-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ops-book { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+  .ops-book { grid-template-columns: repeat(5, minmax(0, 1fr)); }
   .ops-grid, .ops-split { grid-template-columns: 1fr; }
 }
 
