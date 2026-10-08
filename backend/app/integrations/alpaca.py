@@ -126,7 +126,7 @@ class AlpacaPaperClient:
         body = response.json()
         return body if isinstance(body, dict) else {}
 
-    def activities(self, activity_types: str = "", after: str = "", until: str = "") -> list[dict]:
+    def activities(self, activity_types: str = "", after: str = "", until: str = "", page_token: str = "") -> list[dict]:
         params: dict[str, str | int] = {"page_size": 100, "direction": "desc"}
         if activity_types:
             params["activity_types"] = activity_types
@@ -134,6 +134,8 @@ class AlpacaPaperClient:
             params["after"] = after
         if until:
             params["until"] = until
+        if page_token:
+            params["page_token"] = page_token
         response = self._client.get("/v2/account/activities", params=params)
         response.raise_for_status()
         body = response.json()

@@ -61,6 +61,22 @@ class AlpacaAdapter:
                 fills.append(item)
         return fills
 
+    def get_all_fills(self, max_pages: int = 20) -> list[dict]:
+        fills = []
+        token = ""
+        for _ in range(max_pages):
+            page = self.client.activities("FILL", page_token=token)
+            for row in page:
+                item = fill_from_activity(row)
+                if item is not None:
+                    fills.append(item)
+            if len(page) < 100:
+                break
+            token = str(page[-1].get("id") or "")
+            if not token:
+                break
+        return fills
+
     def get_market_clock(self) -> dict:
         return normalize_clock(self.client.clock())
 

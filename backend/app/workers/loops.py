@@ -71,7 +71,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
 
     if database_ready():
         with session_scope() as session:
-            entries = load_usage(session, moment - timedelta(days=31))
+            entries = load_usage(session, moment - timedelta(days=31), make_ledger(settings).cost_of)
     ledger = make_ledger(settings, entries)
     try:
         result = execute_scan(

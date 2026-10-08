@@ -9,6 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, Query
 
 from app.analytics.finance import daily_rows, drawdown_from_equity, dte_bucket, filter_trades, monthly_rows, period_cards, split_by, summarize_trades, trading_day_pnl
+from app.analytics.trades import round_trips, summarize
 from app.broker.normalize import execution_pnl, parse_option_symbol
 from app.broker.runtime import open_paper_broker
 from app.config.settings import Settings
@@ -303,6 +304,43 @@ def register(app: FastAPI, settings: Settings) -> None:
             "sector_note": "נתוני סקטור אינם זמינים",
         }
 
+    @app.get("/api/v1/trades/report")
+    def trades_report(authorization: str | None = Header(default=None)):
+        from app.main import user_id_from_header
+
+        user_id_from_header(settings, authorization)
+        try:
+            adapter = open_paper_broker(settings)
+        except Exception as exc:
+            return {"environment": "PAPER", "available": False, "detail": type(exc).__name__}
+        try:
+            fills = adapter.get_all_fills()
+            positions = adapter.get_positions()
+        except Exception as exc:
+            return {"environment": "PAPER", "available": False, "detail": type(exc).__name__}
+        finally:
+            adapter.close()
+        report = round_trips(fills, positions, multiplier=settings.trading().contract_multiplier)
+        ai_cost = None
+        if database_ready():
+            with session_scope() as session:
+                _annotate(session, report["closed"] + report["open"])
+                from app.ai.budget import make_ledger
+                from app.models.store import load_usage
+
+                entries = load_usage(session, datetime(2000, 1, 1, tzinfo=timezone.utc), make_ledger(settings).cost_of)
+                ai_cost = sum((entry.cost for entry in entries), Decimal("0"))
+        return {
+            "environment": "PAPER",
+            "available": True,
+            "source": "alpaca-paper FILL",
+            "summary": summarize(report["closed"], report["open"], ai_cost),
+            "closed": report["closed"],
+            "open": report["open"],
+            "orphan_sells": report["orphan_sells"],
+            "paper_limitation": "מחירי מילוי Paper אופטימיים ביחס ללייב. רווח Paper אינו ראיה לרווח בכסף אמיתי.",
+        }
+
     @app.get("/api/v1/ai/summary")
     def ai_summary(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
@@ -379,6 +417,73 @@ def _round_trip_fee(buy: dict, sell: dict) -> str | None:
     if any(item is None for item in paid):
         return None
     return str(sum(paid, Decimal("0")))
+
+
+def _annotate(session, trades: list[dict]) -> None:
+    """Exit reason and entry plan from the desk's own records, matched by contract and time."""
+    from datetime import timedelta
+
+    from sqlalchemy import select
+
+    from app.models.tables import PositionState
+
+    symbols = {row["symbol"] for row in trades}
+    if not symbols:
+        return
+    events = list(
+        session.scalars(
+            select(BrokerTradeEvent)
+            .where(BrokerTradeEvent.state.in_(("EXIT_TRIGGERED", "CLOSE_ALL")))
+            .order_by(BrokerTradeEvent.created_at.asc())
+        )
+    )
+    states = list(session.scalars(select(PositionState).where(PositionState.symbol.in_(symbols))))
+    slack = timedelta(minutes=3)
+    for trade in trades:
+        opened = _parsed_time(trade.get("opened_at") or "")
+        closed = _parsed_time(trade.get("closed_at") or "")
+        trade["exit_reason"] = None
+        trade["exit_detail"] = None
+        if opened is not None and closed is not None:
+            for event in events:
+                stamp = event.created_at if event.created_at.tzinfo else event.created_at.replace(tzinfo=timezone.utc)
+                if not (opened - slack <= stamp <= closed + slack):
+                    continue
+                if event.state == "CLOSE_ALL":
+                    trade["exit_reason"] = "CLOSE_ALL"
+                    trade["exit_detail"] = event.reason
+                elif event.trade_id.replace(" ", "").upper() == trade["symbol"]:
+                    parts = (event.reason or "").split()
+                    trade["exit_reason"] = parts[0] if parts else None
+                    trade["exit_detail"] = event.reason
+        trade["plan"] = None
+        if opened is None:
+            continue
+        nearest = None
+        for state in states:
+            if state.symbol.replace(" ", "").upper() != trade["symbol"]:
+                continue
+            entry = state.entry_time if state.entry_time.tzinfo else state.entry_time.replace(tzinfo=timezone.utc)
+            gap = abs((entry - opened).total_seconds())
+            if gap <= 900 and (nearest is None or gap < nearest[0]):
+                nearest = (gap, state)
+        if nearest is None:
+            continue
+        state = nearest[1]
+        text = lambda value: None if value is None else str(value)  # noqa: E731
+        trade["plan"] = {
+            "thesis": state.thesis or None,
+            "invalidation": state.invalidation or None,
+            "direction": state.underlying_direction or None,
+            "underlying_at_entry": text(state.entry_underlying_price),
+            "delta_at_entry": text(state.entry_delta),
+            "iv_at_entry": text(state.entry_iv),
+            "stop_price": text(state.initial_stop_price),
+            "target_1": text(state.target_1),
+            "target_2": text(state.target_2),
+            "planned_risk": text(state.planned_risk),
+            "peak_price": text(state.peak_option_price),
+        }
 
 
 def _stored_closed() -> list[dict]:

@@ -31,8 +31,18 @@ type Position = {
   right?: string | null;
   qty?: string | null;
   unrealized_pl?: string | null;
+  unrealized_plpc?: string | null;
   current_price?: string | null;
   market_value?: string | null;
+  cost_basis?: string | null;
+};
+
+type TradeTotals = {
+  total_pnl: string;
+  total_return_pct: string | null;
+  realized_pnl: string;
+  ai_cost: string | null;
+  net_after_ai: string | null;
 };
 
 type Decision = {
@@ -72,6 +82,13 @@ function ageLabel(seconds: number | null | undefined) {
   return `${Math.floor(seconds / 60)} דק׳`;
 }
 
+function share(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "—";
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "—";
+  return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
+}
+
 function tone(value: number | null) {
   if (value === null || value === 0) return "flat";
   return value > 0 ? "up" : "down";
@@ -101,6 +118,7 @@ function Board() {
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
+  const [totals, setTotals] = useState<TradeTotals | null>(null);
   const [missing, setMissing] = useState("");
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
@@ -131,11 +149,19 @@ function Board() {
       if (auditBody.status === "fulfilled") setAudit(auditBody.value.items || []);
       if (riskBody.status === "fulfilled") setRisk(riskBody.value);
     }
+    function loadTotals() {
+      apiGet<{ summary?: TradeTotals }>("/api/v1/trades/report")
+        .then((body) => alive && setTotals(body.summary ?? null))
+        .catch(() => undefined);
+    }
     load();
+    loadTotals();
     const timer = window.setInterval(load, 12000);
+    const totalsTimer = window.setInterval(loadTotals, 60000);
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
+      window.clearInterval(totalsTimer);
       window.clearInterval(timer);
       window.clearInterval(clockTimer);
     };
@@ -181,8 +207,8 @@ function Board() {
         <Cell label="מזומן" hint="Cash" value={money(account?.cash)} />
         <Cell label="כוח קנייה" hint="Buying Power" value={money(account?.buying_power)} />
         <Cell label="שווי תיק" hint="Portfolio" value={money(account?.portfolio_value)} />
-        <Cell label="רווח/הפסד" hint="P&L" value={pnl === null ? "אין נתונים" : money(pnl)} className={tone(pnl)} />
-        <Cell label="תשואה" hint="Return" value={pnl === null || !equity ? "אין נתונים" : `${((pnl / equity) * 100).toFixed(2)}%`} className={tone(pnl)} />
+        <Cell label="רווח/הפסד היום" hint="P&L" value={pnl === null ? "אין נתונים" : money(pnl)} className={tone(pnl)} />
+        <Cell label="תשואה היום" hint="Return" value={pnl === null || !equity ? "אין נתונים" : `${((pnl / equity) * 100).toFixed(2)}%`} className={tone(pnl)} />
         <Cell label="פוזיציות" value={positions === null ? "אין נתונים" : String(positions.length)} />
         <Cell label="חשיפה" hint="Exposure" value={exposure === null ? "אין נתונים" : money(exposure)} />
       </div>
@@ -218,8 +244,10 @@ function Board() {
                     <th>חוזה</th>
                     <th>צד</th>
                     <th>כמות</th>
+                    <th>הושקע</th>
                     <th>שווי</th>
                     <th>רווח/הפסד</th>
+                    <th>%</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -229,11 +257,13 @@ function Board() {
                       <td className="num">{item.symbol}</td>
                       <td className="num">{item.right || "—"}</td>
                       <td className="num">{item.qty || "—"}</td>
+                      <td className="num">{money(item.cost_basis)}</td>
                       <td className="num">{money(item.market_value)}</td>
                       <td className={`num ${tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}`}>{item.current_price ? money(item.unrealized_pl) : "אין נתונים"}</td>
+                      <td className={`num ${tone(item.unrealized_plpc ? Number(item.unrealized_plpc) : null)}`}>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : "—"}</td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={6}>{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</td></tr>
+                    <tr><td colSpan={8}>{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</td></tr>
                   )}
                 </tbody>
               </table>
@@ -285,6 +315,10 @@ function Board() {
               <Cell label="תקרת הפסד" value={money(risk?.daily_loss_limit)} />
               <Cell label="תקרת חשיפה" value={money(risk?.exposure_limit)} />
               <Cell label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
+              <Cell label="רווח/הפסד מההתחלה" value={totals ? money(totals.total_pnl) : "אין נתונים"} className={tone(totals ? Number(totals.total_pnl) : null)} />
+              <Cell label="תשואה על הכסף שהושקע" value={totals ? share(totals.total_return_pct) : "אין נתונים"} className={tone(totals?.total_return_pct ? Number(totals.total_return_pct) : null)} />
+              <Cell label="עלות AI מההתחלה" value={totals?.ai_cost != null ? money(totals.ai_cost) : "אין נתונים"} />
+              <Cell label="נטו אחרי AI" value={totals?.net_after_ai != null ? money(totals.net_after_ai) : "אין נתונים"} className={tone(totals?.net_after_ai ? Number(totals.net_after_ai) : null)} />
             </div>
           </section>
         </div>

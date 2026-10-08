@@ -123,8 +123,8 @@ class OpenAIResponsesClient:
         cached_tokens = measured["cached_tokens"]
         output_tokens = measured["output_tokens"]
         cost = None
-        if None not in (input_tokens, cached_tokens, output_tokens):
-            cost = self.ledger.cost_of(input_tokens, cached_tokens, output_tokens)
+        if None not in (input_tokens, output_tokens):
+            cost = self.ledger.cost_of(input_tokens, cached_tokens or 0, output_tokens)
         self.ledger.record(
             UsageEntry(
                 process="decision",

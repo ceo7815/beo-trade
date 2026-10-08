@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -10,6 +11,7 @@ from app.ai.budget import UsageEntry
 from app.ai.prompts import PROMPT_VERSION
 from app.models.tables import (
     AIAnalysis,
+    AIRequestLog,
     AIUsage,
     Alert,
     AuditLog,
@@ -179,22 +181,43 @@ def count_internal_candidates(session: Session) -> int:
     return len(list(session.scalars(select(RecommendationRow.id))))
 
 
-def load_usage(session: Session, since: datetime) -> list[UsageEntry]:
-    rows = session.scalars(select(AIUsage).where(AIUsage.created_at >= since))
-    entries = []
-    for row in rows:
-        created = row.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=timezone.utc)
+def _utc(moment: datetime) -> datetime:
+    return moment.replace(tzinfo=timezone.utc) if moment.tzinfo is None else moment
+
+
+def load_usage(session: Session, since: datetime, cost_of: Callable[[int, int, int], Decimal] | None = None) -> list[UsageEntry]:
+    """Every model call the worker logged, priced from its own estimate or from its tokens."""
+    entries = [
+        UsageEntry(
+            process=row.process,
+            created_at=_utc(row.created_at),
+            cost=Decimal(str(row.cost)),
+            input_tokens=row.input_tokens,
+            cached_tokens=row.cached_tokens,
+            output_tokens=row.output_tokens,
+            model=row.model,
+        )
+        for row in session.scalars(select(AIUsage).where(AIUsage.created_at >= since))
+    ]
+    for row in session.scalars(select(AIRequestLog).where(AIRequestLog.created_at >= since)):
+        fresh = row.input_tokens or 0
+        cached = row.cached_tokens or 0
+        output = row.output_tokens or 0
+        if row.estimated_cost is not None:
+            cost = Decimal(str(row.estimated_cost))
+        elif cost_of is not None and (fresh or output):
+            cost = cost_of(fresh, cached, output)
+        else:
+            cost = Decimal("0")
         entries.append(
             UsageEntry(
-                process=row.process,
-                created_at=created,
-                cost=Decimal(str(row.cost)),
-                input_tokens=row.input_tokens,
-                cached_tokens=row.cached_tokens,
-                output_tokens=row.output_tokens,
-                model=row.model,
+                process="decision",
+                created_at=_utc(row.created_at),
+                cost=cost,
+                input_tokens=fresh,
+                cached_tokens=cached,
+                output_tokens=output,
+                model=row.model or "",
             )
         )
     return entries

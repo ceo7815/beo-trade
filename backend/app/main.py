@@ -236,7 +236,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 from app.ai.budget import BudgetLedger
 
                 start = ledger._start(now, day_only=False)
-                entries = load_usage(session, start)
+                entries = load_usage(session, start, ledger.cost_of)
                 ledger = make_ledger(current, entries)
                 month_cost = ledger.month_total(now)
                 day_cost = ledger.day_total(now)
@@ -421,7 +421,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         ledger = make_ledger(current, [])
         with session_scope() as session:
             user = get_user(session, current.dev_user_id if not current.auth_required else user_id_from_header(current, authorization))
-            entries = load_usage(session, ledger._start(now, day_only=False))
+            entries = load_usage(session, ledger._start(now, day_only=False), ledger.cost_of)
             from app.broker.runtime import paper_equity
 
             cash = paper_equity(current)
