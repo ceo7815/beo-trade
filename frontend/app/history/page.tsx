@@ -73,9 +73,12 @@ type Summary = {
   net_after_ai: string | null;
 };
 
+type Period = "today" | "yesterday" | "month" | "range" | "all";
+
 type Report = {
   available: boolean;
   detail?: string;
+  window?: { period: Period; start: string | null; end: string | null; includes_today: boolean };
   summary?: Summary;
   closed?: Trade[];
   open?: Trade[];
@@ -152,15 +155,39 @@ function side(trade: Trade) {
   return "—";
 }
 
+const PERIODS: { id: Period; label: string }[] = [
+  { id: "today", label: "היום" },
+  { id: "yesterday", label: "אתמול" },
+  { id: "month", label: "מתחילת החודש" },
+  { id: "range", label: "טווח תאריכים" },
+  { id: "all", label: "מההתחלה" },
+];
+
+function span(report: Report | null) {
+  const frame = report?.window;
+  if (!frame || frame.period === "all") return "כל העסקאות";
+  if (!frame.start && !frame.end) return "בחר תאריכים";
+  if (frame.start === frame.end) return frame.start ?? "";
+  return `${frame.start ?? "…"} עד ${frame.end ?? "…"}`;
+}
+
 export default function HistoryPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<Trade | null>(null);
+  const [period, setPeriod] = useState<Period>("today");
+  const [start, setStart] = useState("");
+  const [end, setEnd] = useState("");
 
   useEffect(() => {
     let alive = true;
+    const query = new URLSearchParams({ period });
+    if (period === "range") {
+      if (start) query.set("start", start);
+      if (end) query.set("end", end);
+    }
     const load = () => {
-      apiGet<Report>("/api/v1/trades/report")
+      apiGet<Report>(`/api/v1/report/trades?${query.toString()}`)
         .then((body) => {
           if (!alive) return;
           setReport(body);
@@ -168,13 +195,14 @@ export default function HistoryPage() {
         })
         .catch(() => alive && setFailed(true));
     };
+    setReport(null);
     load();
     const timer = window.setInterval(load, 30000);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [period, start, end]);
 
   useEffect(() => {
     if (!open) return;
@@ -231,6 +259,33 @@ export default function HistoryPage() {
             {failed || report?.available === false ? "אין נתונים" : report ? "Alpaca Paper" : "טוען"}
           </span>
         </header>
+
+        <div className="ops-pips" role="tablist" aria-label="תקופה" style={{ flexWrap: "wrap", alignItems: "center", gap: 8 }}>
+          {PERIODS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              role="tab"
+              aria-selected={period === item.id}
+              className={`ops-pip ${period === item.id ? "on" : ""}`}
+              onClick={() => setPeriod(item.id)}
+              style={{ cursor: "pointer" }}
+            >
+              {item.label}
+            </button>
+          ))}
+          {period === "range" ? (
+            <>
+              <label className="ops-pip">
+                מ־ <input type="date" value={start} onChange={(event) => setStart(event.target.value)} className="num" style={{ background: "transparent", color: "inherit", border: 0 }} />
+              </label>
+              <label className="ops-pip">
+                עד <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} className="num" style={{ background: "transparent", color: "inherit", border: 0 }} />
+              </label>
+            </>
+          ) : null}
+          <span className="ops-pip num">{span(report)}</span>
+        </div>
 
         {summary ? (
           <div className="engine-board" aria-label="סיכום">
@@ -293,7 +348,7 @@ export default function HistoryPage() {
                     <td className="num">{held(trade.held_minutes)}</td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={13}>{report ? "אין פוזיציה פתוחה" : "טוען"}</td></tr>
+                  <tr><td colSpan={13}>{!report ? "טוען" : report.window?.includes_today === false ? "פוזיציות פתוחות מוצגות רק בתקופה שכוללת את היום" : "אין פוזיציה פתוחה"}</td></tr>
                 )}
               </tbody>
             </table>
@@ -339,7 +394,7 @@ export default function HistoryPage() {
                     <td>{reason(trade)}</td>
                   </tr>
                 )) : (
-                  <tr><td colSpan={13}>{report ? "עדיין אין עסקה שנסגרה" : "טוען"}</td></tr>
+                  <tr><td colSpan={13}>{report ? "אין עסקה שנסגרה בתקופה הזו" : "טוען"}</td></tr>
                 )}
               </tbody>
             </table>

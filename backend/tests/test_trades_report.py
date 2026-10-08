@@ -3,7 +3,7 @@ from decimal import Decimal
 
 from app.ai.budget import make_ledger
 from app.ai.telemetry import store_ai_request
-from app.analytics.trades import round_trips, summarize
+from app.analytics.trades import round_trips, summarize, window, within
 from app.config.settings import Settings
 from app.models.db import configure_database, init_db, session_scope
 from app.models.store import load_usage
@@ -66,6 +66,52 @@ def test_paper_fills_pair_into_whole_trades_with_return_on_money_invested():
     assert summary["wins"] == 2 and summary["losses"] == 5
     assert summary["win_rate_pct"] == "28.57"
     assert summary["worst"]["symbol"] == "KORU261016P00018000"
+
+
+def test_periods_are_new_york_trading_dates():
+    thursday = datetime(2026, 10, 8, 20, 0, tzinfo=timezone.utc)
+    assert window("today", now=thursday)["start"] == "2026-10-08"
+    assert window("yesterday", now=thursday)["start"] == "2026-10-07"
+    monday = datetime(2026, 10, 12, 15, 0, tzinfo=timezone.utc)
+    assert window("yesterday", now=monday)["start"] == "2026-10-09"
+    month = window("month", now=thursday)
+    assert (month["start"], month["end"], month["includes_today"]) == ("2026-10-01", "2026-10-08", True)
+    span = window("range", "2026-10-07", "2026-10-01", now=thursday)
+    assert (span["start"], span["end"], span["includes_today"]) == ("2026-10-01", "2026-10-07", False)
+    late_evening_new_york = "2026-10-08T01:30:00Z"
+    assert within(late_evening_new_york, window("yesterday", now=thursday))
+
+
+def test_the_report_route_is_not_taken_by_the_trade_detail_route(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    class Adapter:
+        def get_all_fills(self):
+            return _fills()
+
+        def get_positions(self):
+            return []
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("app.analytics.routes.open_paper_broker", lambda settings: Adapter())
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "report.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        trading_mode="PAPER",
+    )
+    with TestClient(create_app(settings)) as client:
+        body = client.get("/api/v1/report/trades", params={"period": "range", "start": "2026-10-07", "end": "2026-10-07"}).json()
+    assert body["available"] is True
+    assert body["window"]["period"] == "range"
+    assert len(body["closed"]) == 6
+    assert body["open"] == []
+    assert body["summary"]["realized_pnl"] == "-1500.00"
 
 
 def test_a_sell_without_its_buy_in_the_history_is_not_a_trade():

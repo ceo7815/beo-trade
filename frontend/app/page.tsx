@@ -150,7 +150,7 @@ function Board() {
       if (riskBody.status === "fulfilled") setRisk(riskBody.value);
     }
     function loadTotals() {
-      apiGet<{ summary?: TradeTotals }>("/api/v1/trades/report")
+      apiGet<{ summary?: TradeTotals }>("/api/v1/report/trades")
         .then((body) => alive && setTotals(body.summary ?? null))
         .catch(() => undefined);
     }

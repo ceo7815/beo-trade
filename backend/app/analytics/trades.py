@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
+from zoneinfo import ZoneInfo
 
 from app.broker.normalize import parse_option_symbol
 
@@ -174,6 +175,61 @@ def round_trips(fills: list[dict], positions: list[dict] | None = None, now: dat
     closed.sort(key=lambda row: row.get("closed_at") or "", reverse=True)
     still_open.sort(key=lambda row: row.get("opened_at") or "", reverse=True)
     return {"closed": closed, "open": still_open, "orphan_sells": orphan_sells}
+
+
+PERIODS = ("all", "today", "yesterday", "month", "range")
+
+
+def _previous_session(day: date) -> date:
+    day -= timedelta(days=1)
+    while day.weekday() >= 5:
+        day -= timedelta(days=1)
+    return day
+
+
+def _day(text: str) -> date | None:
+    try:
+        return date.fromisoformat(text.strip())
+    except (AttributeError, ValueError):
+        return None
+
+
+def window(period: str, start: str = "", end: str = "", now: datetime | None = None, zone: str = "America/New_York") -> dict:
+    """Trading dates are New York dates. Yesterday is the previous weekday session."""
+    today = (now or datetime.now(timezone.utc)).astimezone(ZoneInfo(zone)).date()
+    kind = period if period in PERIODS else "all"
+    first: date | None = None
+    last: date | None = None
+    if kind == "today":
+        first = last = today
+    elif kind == "yesterday":
+        first = last = _previous_session(today)
+    elif kind == "month":
+        first, last = today.replace(day=1), today
+    elif kind == "range":
+        first, last = _day(start), _day(end)
+        if first and last and first > last:
+            first, last = last, first
+    return {
+        "period": kind,
+        "start": None if first is None else first.isoformat(),
+        "end": None if last is None else last.isoformat(),
+        "includes_today": last is None or last >= today,
+        "zone": zone,
+    }
+
+
+def within(moment: datetime | str | None, frame: dict) -> bool:
+    if isinstance(moment, str):
+        moment = _moment(moment)
+    if moment is None:
+        return frame["start"] is None and frame["end"] is None
+    day = moment.astimezone(ZoneInfo(frame["zone"])).date().isoformat()
+    if frame["start"] and day < frame["start"]:
+        return False
+    if frame["end"] and day > frame["end"]:
+        return False
+    return True
 
 
 def summarize(closed: list[dict], still_open: list[dict], ai_cost: Decimal | None = None) -> dict:

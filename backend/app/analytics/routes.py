@@ -9,7 +9,7 @@ from pathlib import Path
 from fastapi import FastAPI, Header, Query
 
 from app.analytics.finance import daily_rows, drawdown_from_equity, dte_bucket, filter_trades, monthly_rows, period_cards, split_by, summarize_trades, trading_day_pnl
-from app.analytics.trades import round_trips, summarize
+from app.analytics.trades import round_trips, summarize, window, within
 from app.broker.normalize import execution_pnl, parse_option_symbol
 from app.broker.runtime import open_paper_broker
 from app.config.settings import Settings
@@ -304,11 +304,12 @@ def register(app: FastAPI, settings: Settings) -> None:
             "sector_note": "נתוני סקטור אינם זמינים",
         }
 
-    @app.get("/api/v1/trades/report")
-    def trades_report(authorization: str | None = Header(default=None)):
+    @app.get("/api/v1/report/trades")
+    def trades_report(authorization: str | None = Header(default=None), period: str = "all", start: str = "", end: str = ""):
         from app.main import user_id_from_header
 
         user_id_from_header(settings, authorization)
+        frame = window(period, start, end, zone=settings.exchange_timezone)
         try:
             adapter = open_paper_broker(settings)
         except Exception as exc:
@@ -321,22 +322,25 @@ def register(app: FastAPI, settings: Settings) -> None:
         finally:
             adapter.close()
         report = round_trips(fills, positions, multiplier=settings.trading().contract_multiplier)
+        closed = [row for row in report["closed"] if within(row.get("closed_at"), frame)]
+        still_open = report["open"] if frame["includes_today"] else []
         ai_cost = None
         if database_ready():
             with session_scope() as session:
-                _annotate(session, report["closed"] + report["open"])
+                _annotate(session, closed + still_open)
                 from app.ai.budget import make_ledger
                 from app.models.store import load_usage
 
                 entries = load_usage(session, datetime(2000, 1, 1, tzinfo=timezone.utc), make_ledger(settings).cost_of)
-                ai_cost = sum((entry.cost for entry in entries), Decimal("0"))
+                ai_cost = sum((entry.cost for entry in entries if within(entry.created_at, frame)), Decimal("0"))
         return {
             "environment": "PAPER",
             "available": True,
             "source": "alpaca-paper FILL",
-            "summary": summarize(report["closed"], report["open"], ai_cost),
-            "closed": report["closed"],
-            "open": report["open"],
+            "window": frame,
+            "summary": summarize(closed, still_open, ai_cost),
+            "closed": closed,
+            "open": still_open,
             "orphan_sells": report["orphan_sells"],
             "paper_limitation": "מחירי מילוי Paper אופטימיים ביחס ללייב. רווח Paper אינו ראיה לרווח בכסף אמיתי.",
         }
