@@ -1040,6 +1040,26 @@ body {
 .ops-feed { transition: background 180ms ease; }
 .ops-feed:hover { background: rgba(255, 255, 255, 0.03); }
 
+.ops-flow {
+  display: grid;
+  grid-template-columns: 72px 56px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  border-bottom: 1px solid rgba(228, 201, 150, 0.1);
+  border-inline-start: 3px solid transparent;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  animation: ops-in 260ms ease;
+}
+
+.ops-flow:last-child { border-bottom: 0; }
+.ops-flow i { font-style: normal; font-size: 11px; color: var(--muted); }
+.ops-flow span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ops-flow.entry { border-inline-start-color: rgba(120, 170, 255, 0.7); }
+.ops-flow.exit { border-inline-start-color: rgba(231, 201, 138, 0.8); }
+.ops-flow.blocked { border-inline-start-color: rgba(255, 120, 120, 0.6); opacity: 0.8; }
+
 @keyframes ops-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }

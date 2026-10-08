@@ -142,6 +142,22 @@ def _packet(
     return packet
 
 
+def ai_failure_label(exc: Exception) -> str:
+    """OpenAI uses 429 for both a rate limit and an exhausted quota; the body code tells them apart."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    if status is None:
+        return type(exc).__name__
+    label = f"{type(exc).__name__}:{status}"
+    try:
+        body = response.json()
+    except Exception:
+        return label
+    error = body.get("error") if isinstance(body, dict) else None
+    code = error.get("code") or error.get("type") if isinstance(error, dict) else None
+    return f"{label}:{code}" if code else label
+
+
 def run_scan(
     underlyings: list[UnderlyingSnapshot],
     options: list[OptionSnapshot],
@@ -251,8 +267,7 @@ def run_scan(
                     model = analyzer.analyze(packet, as_of)
                 except Exception as exc:
                     model = None
-                    status = getattr(getattr(exc, "response", None), "status_code", None)
-                    label = type(exc).__name__ if status is None else f"{type(exc).__name__}:{status}"
+                    label = ai_failure_label(exc)
                     ai_failures[label] = ai_failures.get(label, 0) + 1
                 if model is not None and record_ai is not None and not (model.raw or {}).get("cached"):
                     try:

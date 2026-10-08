@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
@@ -112,13 +113,20 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             for row in result.recommendations:
                 save_recommendation(session, row, settings.dev_user_id)
             session.commit()
-    _submit_autonomous_buys(settings, result.recommendations, moment)
+    started = time.monotonic()
+    outcomes: list[dict] = []
+    _submit_autonomous_buys(settings, result.recommendations, moment, outcomes)
+    if isinstance(result.stages.get("seconds"), dict):
+        result.stages["seconds"]["submit"] = round(time.monotonic() - started, 2)
+    result.stages["orders"] = sum(1 for item in outcomes if item.get("result") == "submitted")
+    result.stages["buy_outcomes"] = outcomes
     try:
         from app.analytics.routes import write_last_scan
 
         write_last_scan(
             {
                 "observed_at": moment.isoformat(),
+                "finished_at": datetime.now(timezone.utc).isoformat(),
                 "recommendations": len(result.recommendations),
                 "buys": sum(1 for row in result.recommendations if row.decision.value == "BUY"),
                 "ai_calls": result.ai_calls,
@@ -378,10 +386,15 @@ def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     return book
 
 
-def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetime) -> None:
+def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetime, outcomes: list[dict] | None = None) -> None:
     buys = [row for row in recommendations if getattr(row.decision, "value", row.decision) == "BUY"]
     if not buys:
         return
+    outcomes = [] if outcomes is None else outcomes
+
+    def blocked_all(reason: str) -> None:
+        outcomes.extend({"symbol": row.option_symbol, "result": "blocked", "reason": reason} for row in buys)
+
     from app.broker.execution import place_order
     from app.broker.runtime import open_paper_broker
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
@@ -401,17 +414,20 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         bundles = _loaded_bundles(settings, live, symbols)
         quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), live) for item in bundles.values()]
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
-    except Exception:
+    except Exception as exc:
+        blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
     pnl = _measured_pnl(settings)
     sectors = _measured_sectors(settings)
     if equity is None or pnl is None or sectors is None:
+        blocked_all("ACCOUNT_DATA_MISSING")
         return
     regime = last_regime()
     try:
         adapter = open_paper_broker(settings)
     except (AlpacaNotConfigured, PaperOnlyError):
+        blocked_all("BROKER_UNAVAILABLE")
         return
     try:
         clock = adapter.get_market_clock()
@@ -421,9 +437,11 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             positions = list(adapter.get_positions())
             open_orders = list(adapter.get_orders("open"))
         except Exception:
+            blocked_all("BROKER_POSITIONS_UNAVAILABLE")
             return
         open_premium = _open_premium(positions, open_orders, settings.trading().contract_multiplier)
         if open_premium is None:
+            blocked_all("OPEN_PREMIUM_UNKNOWN")
             return
         from app.news.confirm import fresh_news, news_confirmed
         from sqlalchemy import select
@@ -485,6 +503,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         )
                     )
                     session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
                 continue
             row.quantity = decision.quantity
             added = Decimal(str(row.ask)) * Decimal(row.quantity) * Decimal(settings.trading().contract_multiplier)
@@ -540,8 +559,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         live,
                         quotes,
                     )
-                except Exception:
-                    pass
+                    outcomes.append({"symbol": row.option_symbol, "result": "submitted", "reason": ""})
+                except Exception as exc:
+                    outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
                 session.commit()
     finally:
         adapter.close()

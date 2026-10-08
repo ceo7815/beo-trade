@@ -3,19 +3,52 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { PHASES, apiGet, type SystemStatus } from "@/lib/api";
+import { exitLabel } from "@/lib/exits";
 
 type Desk = {
   autonomous: boolean;
   heartbeat_age_seconds: number | null;
   last_scan: {
     observed_at?: string;
+    finished_at?: string;
     recommendations?: number;
     buys?: number;
     ai_calls?: number;
     blocked?: string;
     universe?: { discovered?: number; filtered?: number } | null;
+    stages?: {
+      orders?: number;
+      buy_outcomes?: { symbol: string; result: string; reason: string }[];
+      ai_failures?: Record<string, number>;
+    } | null;
   } | null;
 };
+
+type FlowTrade = {
+  symbol: string;
+  underlying?: string | null;
+  right?: string | null;
+  qty?: number | string | null;
+  qty_open?: number | string | null;
+  entry_price?: string | null;
+  exit_price?: string | null;
+  current_price?: string | null;
+  invested?: string | null;
+  pnl?: string | null;
+  return_pct?: string | null;
+  unrealized_pnl?: string | null;
+  opened_at?: string | null;
+  closed_at?: string | null;
+  exit_reason?: string | null;
+};
+
+type TodayReport = {
+  summary?: { closed_count?: number; wins?: number; losses?: number; realized_pnl?: string; unrealized_pnl?: string; total_pnl?: string } | null;
+  closed?: FlowTrade[];
+  open?: FlowTrade[];
+};
+
+type FlowEvent = { at: string; kind: "entry" | "exit" | "blocked"; trade: FlowTrade | null; text: string };
 
 type BrokerAccount = {
   equity?: string | null;
@@ -30,6 +63,7 @@ type Position = {
   underlying?: string | null;
   right?: string | null;
   qty?: string | null;
+  avg_entry_price?: string | null;
   unrealized_pl?: string | null;
   unrealized_plpc?: string | null;
   current_price?: string | null;
@@ -43,16 +77,6 @@ type TradeTotals = {
   realized_pnl: string;
   ai_cost: string | null;
   net_after_ai: string | null;
-};
-
-type Decision = {
-  id: string;
-  decision: string;
-  underlying: string;
-  call_put: string;
-  strike: string;
-  suppress_reason: string;
-  created_at: string | null;
 };
 
 type Risk = {
@@ -128,7 +152,7 @@ function Board() {
   const [account, setAccount] = useState<BrokerAccount | null>(null);
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [orders, setOrders] = useState<Order[] | null>(null);
-  const [decisions, setDecisions] = useState<Decision[] | null>(null);
+  const [today, setToday] = useState<TodayReport | null>(null);
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
@@ -140,13 +164,13 @@ function Board() {
   useEffect(() => {
     let alive = true;
     async function load() {
-      const [deskBody, statusBody, accountBody, positionBody, orderBody, decisionBody, auditBody, riskBody] = await Promise.allSettled([
+      const [deskBody, statusBody, accountBody, positionBody, orderBody, todayBody, auditBody, riskBody] = await Promise.allSettled([
         apiGet<Desk>("/api/v1/desk"),
         apiGet<SystemStatus>("/api/v1/system"),
         apiGet<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account"),
         apiGet<{ items?: Position[] }>("/api/v1/broker/alpaca/positions"),
         apiGet<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open"),
-        apiGet<{ items: Decision[] }>("/api/v1/decisions?limit=8"),
+        apiGet<TodayReport>("/api/v1/report/trades?period=today"),
         apiGet<{ items: AuditRow[] }>("/api/v1/audit"),
         apiGet<Risk>("/api/v1/risk"),
       ]);
@@ -159,7 +183,7 @@ function Board() {
       } else setMissing("אין נתוני חשבון");
       if (positionBody.status === "fulfilled") setPositions(positionBody.value.items || []);
       if (orderBody.status === "fulfilled") setOrders(orderBody.value.items || []);
-      if (decisionBody.status === "fulfilled") setDecisions(decisionBody.value.items || []);
+      if (todayBody.status === "fulfilled") setToday(todayBody.value);
       if (auditBody.status === "fulfilled") setAudit(auditBody.value.items || []);
       if (riskBody.status === "fulfilled") setRisk(riskBody.value);
     }
@@ -239,20 +263,7 @@ function Board() {
       <div className="ops-grid">
         <div className="ops-main">
           <section className="ops-pane">
-            <h2>צינור המערכת</h2>
-            <div className="ops-rail">
-              <Node label="סריקה" value={scanNode(scan, closed)} />
-              <Node label="יקום" value={scan?.universe?.filtered != null ? String(scan.universe.filtered) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="AI" value={scan ? String(scan.ai_calls ?? 0) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="החלטות" value={scan ? String(scan.recommendations ?? 0) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="ביצוע" value={scan ? String(scan.buys ?? 0) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
-            </div>
-          </section>
-
-          <div className="ops-split">
-          <section className="ops-pane">
-            <h2>פוזיציות פתוחות · Alpaca Paper</h2>
+            <h2>פוזיציות פתוחות · Alpaca Paper · {positions === null ? "טוען" : `${positions.length} פתוחות`}</h2>
             <div className="ops-scroll">
               <table className="ops-table">
                 <thead>
@@ -261,6 +272,9 @@ function Board() {
                     <th>חוזה</th>
                     <th>צד</th>
                     <th>כמות</th>
+                    <th>נפתחה</th>
+                    <th>כניסה</th>
+                    <th>עכשיו</th>
                     <th>הושקע</th>
                     <th>שווי</th>
                     <th>רווח/הפסד</th>
@@ -274,50 +288,55 @@ function Board() {
                       <td className="num">{item.symbol}</td>
                       <td className="num">{item.right || "—"}</td>
                       <td className="num">{item.qty || "—"}</td>
+                      <td className="num">{clock(openedAt(today, item.symbol))}</td>
+                      <td className="num">{price(item.avg_entry_price)}</td>
+                      <td className="num">{price(item.current_price)}</td>
                       <td className="num">{money(item.cost_basis)}</td>
                       <td className="num">{money(item.market_value)}</td>
                       <td className={`num ${tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}`}>{item.current_price ? money(item.unrealized_pl) : "אין נתונים"}</td>
                       <td className={`num ${tone(item.unrealized_plpc ? Number(item.unrealized_plpc) : null)}`}>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : "—"}</td>
                     </tr>
                   )) : (
-                    <tr><td colSpan={8}>{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</td></tr>
+                    <tr><td colSpan={11}>{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</td></tr>
                   )}
                 </tbody>
               </table>
             </div>
           </section>
 
-          <section className="ops-pane">
-            <h2>החלטות אחרונות</h2>
+          <section className="ops-pane grow">
+            <h2>זרם פעילות היום · כניסות ויציאות · {todayLine(today)}</h2>
             <div className="ops-scroll">
-              <table className="ops-table">
-                <thead>
-                  <tr>
-                    <th>שעה</th>
-                    <th>החלטה</th>
-                    <th>נכס</th>
-                    <th>צד</th>
-                    <th>סיבה</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {decisions && decisions.length > 0 ? decisions.map((item) => (
-                    <tr key={item.id}>
-                      <td className="num">{clock(item.created_at)}</td>
-                      <td className="num">{item.decision}</td>
-                      <td className="num">{item.underlying}</td>
-                      <td className="num">{item.call_put}</td>
-                      <td>{item.suppress_reason || "—"}</td>
-                    </tr>
-                  )) : (
-                    <tr><td colSpan={5}>{decisions === null ? "טוען" : "אין עדיין החלטות שמורות"}</td></tr>
-                  )}
-                </tbody>
-              </table>
+              {flowOf(today, scan).length === 0 ? (
+                <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
+              ) : flowOf(today, scan).map((event, index) => (
+                <div className={`ops-flow ${event.kind}`} key={`${event.at}-${event.kind}-${index}`}>
+                  <b className="num">{clock(event.at)}</b>
+                  <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
+                  <span>{event.text}</span>
+                  {event.kind === "exit" && event.trade ? (
+                    <b className={`num ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
+                  ) : event.kind === "entry" && event.trade ? (
+                    <b className="num">{money(event.trade.invested)}</b>
+                  ) : <b />}
+                </div>
+              ))}
             </div>
           </section>
-          </div>
-          <section className="ops-pane grow">
+
+          <section className="ops-pane">
+            <h2>צינור המערכת</h2>
+            <div className="ops-rail">
+              <Node label="סריקה אחרונה" value={scanNode(scan, closed)} />
+              <Node label="משך סריקה" value={durationOf(scan)} />
+              <Node label="AI" value={aiNode(scan, closed)} />
+              <Node label="החלטות" value={scan ? String(scan.recommendations ?? 0) : closed ? "ממתין" : "אין נתונים"} />
+              <Node label="BUY" value={scan ? String(scan.buys ?? 0) : closed ? "ממתין" : "אין נתונים"} />
+              <Node label="נשלחו לברוקר" value={scan?.stages?.orders != null ? String(scan.stages.orders) : closed ? "ממתין" : "—"} />
+              <Node label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
+            </div>
+          </section>
+          <section className="ops-pane">
             <h2>לוח מצב</h2>
             <div className="ops-matrix">
               <Cell label="פתיחת סשן" value={clock(status?.session_open)} />
@@ -442,6 +461,65 @@ function exposureOf(items: Position[] | null) {
   return Number.isFinite(total) ? total : null;
 }
 
+function price(value: string | null | undefined) {
+  if (value == null || value === "") return "—";
+  const number = Number(value);
+  return Number.isFinite(number) ? number.toFixed(2) : "—";
+}
+
+function contractLabel(trade: FlowTrade) {
+  const side = trade.right === "PUT" ? "PUT" : trade.right === "CALL" ? "CALL" : "";
+  return `${trade.underlying || trade.symbol} ${side}`.trim();
+}
+
+function openedAt(today: TodayReport | null, symbol: string) {
+  const key = symbol.replace(/\s/g, "");
+  return today?.open?.find((item) => item.symbol.replace(/\s/g, "") === key)?.opened_at ?? null;
+}
+
+function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[] {
+  const events: FlowEvent[] = [];
+  const seen = new Set<string>();
+  for (const trade of [...(today?.closed ?? []), ...(today?.open ?? [])]) {
+    const entryKey = `${trade.symbol}-${trade.opened_at}`;
+    if (trade.opened_at && !seen.has(entryKey)) {
+      seen.add(entryKey);
+      events.push({ at: trade.opened_at, kind: "entry", trade, text: `${contractLabel(trade)} · ${trade.qty_open ?? trade.qty ?? "—"} חוזים · ${price(trade.entry_price)}` });
+    }
+    if (trade.closed_at) {
+      events.push({ at: trade.closed_at, kind: "exit", trade, text: `${contractLabel(trade)} · ${price(trade.entry_price)} → ${price(trade.exit_price)} · ${exitLabel(trade.exit_reason)}` });
+    }
+  }
+  const blocked = (scan?.stages?.buy_outcomes ?? []).filter((item) => item.result === "blocked");
+  if (blocked.length > 0 && scan?.finished_at) {
+    for (const item of blocked) {
+      events.push({ at: scan.finished_at, kind: "blocked", trade: null, text: `${item.symbol.replace(/\s+/g, " ")} · ${item.reason}` });
+    }
+  }
+  return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
+}
+
+function todayLine(today: TodayReport | null) {
+  const summary = today?.summary;
+  if (!summary) return "אין נתונים";
+  const realized = Number(summary.realized_pnl);
+  const sign = Number.isFinite(realized) && realized > 0 ? "+" : "";
+  return `${summary.closed_count ?? 0} נסגרו · ${summary.wins ?? 0} ברווח · ${summary.losses ?? 0} בהפסד · ממומש ${sign}${money(summary.realized_pnl)}`;
+}
+
+function durationOf(scan: Desk["last_scan"]) {
+  if (!scan?.observed_at || !scan.finished_at) return "—";
+  const seconds = (new Date(scan.finished_at).getTime() - new Date(scan.observed_at).getTime()) / 1000;
+  if (!Number.isFinite(seconds) || seconds < 0) return "—";
+  return seconds < 60 ? `${Math.round(seconds)} שנ׳` : `${(seconds / 60).toFixed(1)} דק׳`;
+}
+
+function aiNode(scan: Desk["last_scan"], closed: boolean) {
+  if (!scan) return closed ? "ממתין" : "אין נתונים";
+  const failures = Object.values(scan.stages?.ai_failures ?? {}).reduce((sum, count) => sum + count, 0);
+  return failures > 0 ? `${scan.ai_calls ?? 0} · ${failures} נכשלו` : String(scan.ai_calls ?? 0);
+}
+
 function scanNode(scan: Desk["last_scan"], closed: boolean) {
   if (scan?.blocked) return "חסום";
   if (scan?.observed_at) return clock(scan.observed_at);
@@ -453,7 +531,13 @@ function narrativeOf(desk: Desk | null, scan: Desk["last_scan"], closed: boolean
   if (!desk) return "מתחבר למנוע";
   if (!desk.autonomous) return "המנוע לא פעיל. אין סריקה חיה.";
   if (scan?.blocked) return `סריקה אחרונה נעצרה: ${scan.blocked}`;
-  if (scan?.observed_at) return `סריקה אחרונה ${clock(scan.observed_at)} · ${scan.recommendations ?? 0} החלטות · ${scan.buys ?? 0} ביצועים`;
+  if (scan?.observed_at) {
+    const outcomes = scan.stages?.buy_outcomes ?? [];
+    const sent = outcomes.filter((item) => item.result === "submitted").length;
+    const stopped = outcomes.filter((item) => item.result === "blocked");
+    const why = stopped.length > 0 ? ` · ${stopped.length} נחסמו: ${stopped[0].reason}` : "";
+    return `סריקה אחרונה ${clock(scan.observed_at)} · משך ${durationOf(scan)} · ${scan.buys ?? 0} BUY · ${sent} נשלחו${why}`;
+  }
   if (closed) return `המנוע פועם. ${phase}. הסריקה ממתינה לחלון המסחר.`;
   return "המנוע פועם. אין עדיין סריקה שמורה.";
 }

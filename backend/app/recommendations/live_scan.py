@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -74,11 +75,14 @@ def execute_scan(
     underlyings = []
     options = []
     scan_id = str(uuid4())
+    clock = _StageClock()
     universe = _bind_dynamic_universe(providers, config, now)
+    clock.mark("universe")
     try:
         underlyings = list(providers.market.load_underlyings(now))
     except ProviderNotConfigured as exc:
         missing_market = exc.variable
+    clock.mark("underlyings")
     if providers.market.name == "thetadata" and missing_market is None and not underlyings:
         raise ProviderUnavailable("אין ציטוט או שרשרת אופציות")
     kept, rejections = _liquidity_stage(underlyings, providers, config, now)
@@ -92,6 +96,7 @@ def execute_scan(
             options = list(providers.options.load_options(now))
         except ProviderNotConfigured as exc:
             missing_market = exc.variable
+    clock.mark("options")
 
     if providers.news.name == "unconfigured":
         if missing_market:
@@ -105,6 +110,7 @@ def execute_scan(
             raise MarketDataMissing(exc.variable) from exc
         if missing_market:
             raise MarketDataMissing(missing_market, news_count=len(news))
+    clock.mark("news")
 
     macro = None
     if providers.macro is not None:
@@ -112,6 +118,7 @@ def execute_scan(
             macro = providers.macro.load(now)
         except ProviderUnavailable:
             macro = None
+    clock.mark("macro")
     context = getattr(providers.market, "context_quotes", None)
     quotes = context() if callable(context) else None
     regime = regime_from_context(quotes, macro)
@@ -121,6 +128,8 @@ def execute_scan(
             research = providers.research.load(now, tuple(item.symbol for item in kept))
         except ProviderUnavailable:
             research = None
+    clock.mark("research")
+
     def _reuse(digest: str, moment: datetime):
         if not database_ready():
             return None
@@ -176,11 +185,13 @@ def execute_scan(
         open_underlyings=open_underlyings,
         open_planned_risk=open_planned_risk,
     )
+    clock.mark("decisions")
     _store_rejections(scan_id, now, rejections)
     result = ScanResult(rows, len(news), kept, _universe_view(universe), rejections, len({item.symbol for item in kept}), counter.calls, scan_id)
     result.filter_profile = filter_profile
     _remember_scan_liquidity(underlyings)
     _store_rv_audit(scan_id, now, filter_profile.get("samples") or [])
+    clock.mark("storage")
     book = universe
     result.stages = {
         "universe_checked": None if book is None else getattr(book, "discovered", None),
@@ -206,8 +217,22 @@ def execute_scan(
         "fills": 0,
         "exits": 0,
         "option_status": getattr(getattr(providers.options, "feed", None), "last_option_status", None),
+        "seconds": clock.seconds,
     }
     return result
+
+
+class _StageClock:
+    """Wall time per scan stage, so a slow scan names the step that held it."""
+
+    def __init__(self) -> None:
+        self._last = time.monotonic()
+        self.seconds: dict[str, float] = {}
+
+    def mark(self, stage: str) -> None:
+        moment = time.monotonic()
+        self.seconds[stage] = round(moment - self._last, 2)
+        self._last = moment
 
 
 class _CountingAnalyzer:

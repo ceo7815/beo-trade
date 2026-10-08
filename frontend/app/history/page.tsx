@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { apiGet } from "@/lib/api";
+import { EXIT_REASONS } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
 type Plan = {
@@ -84,19 +85,6 @@ type Report = {
   open?: Trade[];
   orphan_sells?: number;
   paper_limitation?: string;
-};
-
-const EXIT_REASONS: Record<string, string> = {
-  SESSION_CLOSE: "סגירת יום מסחר",
-  STOP: "סטופ הפסד",
-  PROTECTED_STOP: "סטופ מוגן",
-  TRAILING: "סטופ נגרר",
-  TIME_STOP: "זמן ההחזקה הסתיים",
-  EXPIRATION: "לפני פקיעה",
-  INVALIDATION: "התזה בוטלה",
-  LIQUIDITY: "נזילות ירדה",
-  KILL_SWITCH: "עצירת חירום",
-  CLOSE_ALL: "סגירת כל הפוזיציות",
 };
 
 function num(value: string | null | undefined) {
