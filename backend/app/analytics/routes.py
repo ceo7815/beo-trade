@@ -328,6 +328,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         if database_ready():
             with session_scope() as session:
                 _annotate(session, closed + still_open)
+                _explain(session, closed + still_open, settings.trading())
                 from app.ai.budget import make_ledger
                 from app.models.store import load_usage
 
@@ -488,6 +489,63 @@ def _annotate(session, trades: list[dict]) -> None:
             "planned_risk": text(state.planned_risk),
             "peak_price": text(state.peak_option_price),
         }
+
+
+def _entry_recommendation(session, trade: dict) -> dict | None:
+    """The BUY that opened this trade: by its broker order first, then by contract and time."""
+    from sqlalchemy import select
+
+    from app.models.tables import AIAnalysis, BrokerOrderRecord, RecommendationRow
+
+    row = None
+    order_ids = [str(item) for item in trade.get("order_ids") or [] if item]
+    if order_ids:
+        orders = session.scalars(
+            select(BrokerOrderRecord).where(
+                BrokerOrderRecord.broker_order_id.in_(order_ids),
+                BrokerOrderRecord.position_intent == "buy_to_open",
+                BrokerOrderRecord.recommendation_id != "",
+            )
+        )
+        for order in orders:
+            row = session.get(RecommendationRow, order.recommendation_id)
+            if row is not None:
+                break
+    opened = _parsed_time(trade.get("opened_at") or "")
+    if row is None and opened is not None:
+        symbol = str(trade.get("symbol") or "").replace(" ", "").upper()
+        candidates = session.scalars(
+            select(RecommendationRow).where(
+                RecommendationRow.underlying == str(trade.get("underlying") or ""),
+                RecommendationRow.decision == "BUY",
+            )
+        )
+        best = None
+        for candidate in candidates:
+            if candidate.option_symbol.replace(" ", "").upper() != symbol:
+                continue
+            made = candidate.created_at if candidate.created_at.tzinfo else candidate.created_at.replace(tzinfo=timezone.utc)
+            gap = (opened - made).total_seconds()
+            if -120 <= gap <= 1800 and (best is None or abs(gap) < best[0]):
+                best = (abs(gap), candidate)
+        row = None if best is None else best[1]
+    if row is None:
+        return None
+    analysis = session.get(AIAnalysis, row.analysis_id) if row.analysis_id else None
+    return {
+        "thesis": row.thesis,
+        "catalyst": row.catalyst,
+        "reason_codes": list(row.reason_codes or []),
+        "underlying_price": str(row.underlying_price),
+        "ai_reviewed": bool(analysis is not None and analysis.model),
+    }
+
+
+def _explain(session, trades: list[dict], config) -> None:
+    from app.analytics.story import trade_story
+
+    for trade in trades:
+        trade["story"] = trade_story(trade, _entry_recommendation(session, trade), config)
 
 
 def _stored_closed() -> list[dict]:

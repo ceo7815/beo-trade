@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet } from "@/lib/api";
 import { EXIT_REASONS } from "@/lib/exits";
 import { money } from "@/lib/pnl";
@@ -48,6 +49,7 @@ type Trade = {
   exit_reason?: string | null;
   exit_detail?: string | null;
   plan?: Plan | null;
+  story?: Story | null;
 };
 
 type Summary = {
@@ -470,7 +472,8 @@ function TradeModal({ trade, onClose }: { trade: Trade; onClose: () => void }) {
           </div>
           <button type="button" onClick={onClose}>סגור</button>
         </header>
-        <h3>העסקה</h3>
+        <TradeStory story={trade.story} />
+        <h3>פרטים טכניים</h3>
         <pre>{lines.map(([label, value]) => `${label}: ${value}`).join("\n")}</pre>
         <h3>התוכנית בכניסה</h3>
         {plan ? (

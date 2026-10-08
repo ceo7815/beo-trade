@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { PHASES, apiGet, type SystemStatus } from "@/lib/api";
+import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 
 type Desk = {
@@ -40,6 +41,8 @@ type FlowTrade = {
   opened_at?: string | null;
   closed_at?: string | null;
   exit_reason?: string | null;
+  held_minutes?: number | null;
+  story?: Story | null;
 };
 
 type TodayReport = {
@@ -153,6 +156,7 @@ function Board() {
   const [positions, setPositions] = useState<Position[] | null>(null);
   const [orders, setOrders] = useState<Order[] | null>(null);
   const [today, setToday] = useState<TodayReport | null>(null);
+  const [picked, setPicked] = useState<FlowTrade | null>(null);
   const [audit, setAudit] = useState<AuditRow[] | null>(null);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
@@ -283,7 +287,7 @@ function Board() {
                 </thead>
                 <tbody>
                   {positions && positions.length > 0 ? positions.map((item) => (
-                    <tr key={item.symbol}>
+                    <tr key={item.symbol} className="ops-pick" title="לחץ להסבר על העסקה" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
                       <td className="num">{item.underlying || "—"}</td>
                       <td className="num">{item.symbol}</td>
                       <td className="num">{item.right || "—"}</td>
@@ -310,7 +314,12 @@ function Board() {
               {flowOf(today, scan).length === 0 ? (
                 <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
               ) : flowOf(today, scan).map((event, index) => (
-                <div className={`ops-flow ${event.kind}`} key={`${event.at}-${event.kind}-${index}`}>
+                <div
+                  className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
+                  key={`${event.at}-${event.kind}-${index}`}
+                  title={event.trade ? "לחץ להסבר על העסקה" : undefined}
+                  onClick={() => event.trade && setPicked(event.trade)}
+                >
                   <b className="num">{clock(event.at)}</b>
                   <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
                   <span>{event.text}</span>
@@ -343,14 +352,9 @@ function Board() {
               <Cell label="סגירת סשן" value={clock(status?.session_close)} />
               <Cell label="מסד" value={status?.database === "ok" ? "פעיל" : status ? "אין חיבור" : "אין נתונים"} />
               <Cell label="מודל" value={status?.ai_model || "אין נתונים"} />
-              <Cell label="קריאות AI" value={status ? String(status.ai_calls) : "אין נתונים"} />
-              <Cell label="עלות היום" value={status ? `$${status.ai_day_usd}` : "אין נתונים"} />
-              <Cell label="המלצות שמורות" value={status ? String(status.internal_candidates) : "אין נתונים"} />
-              <Cell label="החלטות BUY שמורות" value={status ? String(status.active_buys) : "אין נתונים"} />
               <Cell label="הון לעסקה" value={money(risk?.per_trade_limit)} />
               <Cell label="תקרת הפסד" value={money(risk?.daily_loss_limit)} />
               <Cell label="תקרת חשיפה" value={money(risk?.exposure_limit)} />
-              <Cell label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
               <Cell label="רווח/הפסד מההתחלה" value={totals ? money(totals.total_pnl) : "אין נתונים"} className={tone(totals ? Number(totals.total_pnl) : null)} />
               <Cell label="תשואה על הכסף שהושקע" value={totals ? share(totals.total_return_pct) : "אין נתונים"} className={tone(totals?.total_return_pct ? Number(totals.total_return_pct) : null)} />
               <Cell label="עלות AI מההתחלה" value={totals?.ai_cost != null ? money(totals.ai_cost) : "אין נתונים"} />
@@ -397,8 +401,53 @@ function Board() {
         </aside>
       </div>
       {missing ? <p className="ops-line">{missing}</p> : null}
+      {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
     </section>
   );
+}
+
+function TradeWindow({ trade, onClose }: { trade: FlowTrade; onClose: () => void }) {
+  const closed = Boolean(trade.closed_at);
+  const result = closed ? trade.pnl : trade.unrealized_pnl;
+  const value = result == null || result === "" ? null : Number(result);
+  return (
+    <div className="engine-backdrop" onClick={onClose}>
+      <article className="engine-modal" role="dialog" aria-modal="true" aria-labelledby="dash-trade-title" onClick={(event) => event.stopPropagation()}>
+        <header>
+          <div>
+            <p>{closed ? "עסקה סגורה" : "פוזיציה פתוחה"} · PAPER · נפתחה {clock(trade.opened_at)}{closed ? ` · נסגרה ${clock(trade.closed_at)}` : ""}</p>
+            <h2 id="dash-trade-title" className={tone(value)}>
+              {contractLabel(trade)} · {value === null ? "—" : money(value)}{trade.return_pct ? ` (${share(trade.return_pct)})` : ""}
+            </h2>
+          </div>
+          <button type="button" onClick={onClose}>סגור</button>
+        </header>
+        <TradeStory story={trade.story} />
+        <p className="trade-story-foot">
+          כניסה {price(trade.entry_price)} · {closed ? `יציאה ${price(trade.exit_price)}` : `עכשיו ${price(trade.current_price)}`} · הושקע {money(trade.invested)} · <a href="/history">כל העסקאות</a>
+        </p>
+      </article>
+    </div>
+  );
+}
+
+function openTrade(today: TodayReport | null, symbol: string) {
+  const key = symbol.replace(/\s/g, "");
+  return today?.open?.find((item) => item.symbol.replace(/\s/g, "") === key) ?? null;
+}
+
+function fromPosition(item: Position): FlowTrade {
+  return {
+    symbol: item.symbol,
+    underlying: item.underlying,
+    right: item.right,
+    qty: item.qty,
+    entry_price: item.avg_entry_price,
+    current_price: item.current_price,
+    invested: item.cost_basis,
+    unrealized_pnl: item.unrealized_pl,
+    story: null,
+  };
 }
 
 function Cell({ label, hint, value, className = "" }: { label: string; hint?: string; value: string; className?: string }) {
@@ -473,8 +522,7 @@ function contractLabel(trade: FlowTrade) {
 }
 
 function openedAt(today: TodayReport | null, symbol: string) {
-  const key = symbol.replace(/\s/g, "");
-  return today?.open?.find((item) => item.symbol.replace(/\s/g, "") === key)?.opened_at ?? null;
+  return openTrade(today, symbol)?.opened_at ?? null;
 }
 
 function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[] {
