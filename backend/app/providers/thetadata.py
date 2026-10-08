@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -44,6 +45,8 @@ _bundle: tuple[datetime, dict] | None = None
 _prior: dict[tuple[str, str, date], list[dict]] = {}
 # A month of minute bars per symbol is heavy; rotating symbols beyond this many are refetched.
 MAX_ROTATING_PRIOR = 40
+# Minute bars not fetched within this budget wait for a later scan; the cache fills across scans.
+INTRADAY_BUDGET_SECONDS = 45
 
 
 def reset_theta_state() -> None:
@@ -225,6 +228,7 @@ class ThetaFeed:
         self.last_option_status: str | None = None
         self._listed_expirations: dict[str, list[str]] = {}
         self._transport_failures = 0
+        self.request_stats: dict[str, dict] = {}
         base, _origin = resolve_secret(settings, "thetadata_base_url")
         self.base = (base or DEFAULT_BASE).rstrip("/")
 
@@ -270,10 +274,13 @@ class ThetaFeed:
         return rows
 
     def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
+        started = time.monotonic()
+        stats = self.request_stats.setdefault(path, {"count": 0, "seconds": 0.0, "slowest": 0.0})
         try:
             with httpx.Client(transport=self.transport, timeout=REQUEST_TIMEOUT_SECONDS) as client:
                 response = client.get(self.base + path, params={"format": "json", **params})
         except httpx.HTTPError as exc:
+            self._count(stats, started)
             self._transport_failures += 1
             if self._transport_failures >= MAX_TRANSPORT_FAILURES:
                 self._fail("ThetaData לא מגיב")
@@ -282,6 +289,7 @@ class ThetaFeed:
                 return []
             self._fail("ThetaData לא זמין")
             raise ThetaDataError("ThetaData לא זמין") from exc
+        self._count(stats, started)
         code = response.status_code
         symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
         if code in {403, 429} and _attempt < 1:
@@ -314,6 +322,13 @@ class ThetaFeed:
             self.last_option_status = f"{code}:{len(rows)}"
         return rows
 
+    @staticmethod
+    def _count(stats: dict, started: float) -> None:
+        spent = time.monotonic() - started
+        stats["count"] += 1
+        stats["seconds"] = round(stats["seconds"] + spent, 2)
+        stats["slowest"] = round(max(stats["slowest"], spent), 2)
+
     def _fail(self, message: str) -> None:
         _state.last_fetch = datetime.now(EXCHANGE).isoformat()
         _state.last_error = message
@@ -329,6 +344,7 @@ class ThetaFeed:
         stocks = tuple(dict.fromkeys((*universe, *context_symbols)))
         listed = ",".join(stocks)
         session_day = as_of.astimezone(EXCHANGE).date()
+        self.request_stats = {}
         ohlc = _by_symbol(self._get("/v3/stock/snapshot/ohlc", {"symbol": listed}))
         quotes = _by_symbol(self._get("/v3/stock/snapshot/quote", {"symbol": listed}))
         trades = _by_symbol(self._get("/v3/stock/snapshot/trade", {"symbol": listed}))
@@ -349,8 +365,13 @@ class ThetaFeed:
         if cutoff is not None:
             today = session_day.strftime("%Y%m%d")
             end_clock = cutoff.strftime("%H:%M:%S")
+            deadline = time.monotonic() + INTRADAY_BUDGET_SECONDS
+            skipped = 0
             for symbol in stocks:
                 if symbol not in ohlc and symbol not in trades:
+                    continue
+                if time.monotonic() > deadline and ("1m", symbol, session_day) not in _prior:
+                    skipped += 1
                     continue
                 earlier = self._prior_rows(
                     ("1m", symbol, session_day),
@@ -364,6 +385,7 @@ class ThetaFeed:
                     required=False,
                 )
                 intraday[symbol] = [*_on_days(earlier, session_day, before=True), *_on_days(current, session_day, before=False)]
+            self.request_stats["intraday_skipped"] = {"count": skipped}
         underlyings = []
         context: dict[str, dict] = {}
         newest: datetime | None = None

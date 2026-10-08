@@ -219,6 +219,7 @@ def execute_scan(
         "fills": 0,
         "exits": 0,
         "option_status": getattr(getattr(providers.options, "feed", None), "last_option_status", None),
+        "theta_requests": getattr(getattr(providers.market, "feed", None), "request_stats", None),
         "seconds": clock.seconds,
     }
     return result
