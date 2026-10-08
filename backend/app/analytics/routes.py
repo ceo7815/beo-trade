@@ -29,10 +29,28 @@ def write_last_scan(payload: dict) -> None:
 
 
 def read_last_scan() -> dict | None:
-    if not LAST_SCAN.exists():
+    return _read_json(LAST_SCAN)
+
+
+SCAN_PROGRESS = LAST_SCAN.with_name("scan_progress.json")
+
+
+def write_scan_progress(payload: dict) -> None:
+    SCAN_PROGRESS.parent.mkdir(parents=True, exist_ok=True)
+    temporary = SCAN_PROGRESS.with_suffix(".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.replace(SCAN_PROGRESS)
+
+
+def read_scan_progress() -> dict | None:
+    return _read_json(SCAN_PROGRESS)
+
+
+def _read_json(path: Path) -> dict | None:
+    if not path.exists():
         return None
     try:
-        body = json.loads(LAST_SCAN.read_text(encoding="utf-8"))
+        body = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
     return body if isinstance(body, dict) else None
@@ -94,6 +112,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "autonomous": fresh,
             "heartbeat_age_seconds": age,
             "last_scan": read_last_scan(),
+            "scan_progress": read_scan_progress(),
         }
 
     @app.get("/api/v1/decisions")

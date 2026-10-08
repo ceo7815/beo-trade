@@ -26,3 +26,11 @@ def test_stage_clock_records_each_stage():
     clock.mark("options")
     assert set(clock.seconds) == {"universe", "options"}
     assert all(value >= 0 for value in clock.seconds.values())
+
+
+def test_stage_clock_reports_each_finished_stage():
+    seen = []
+    clock = _StageClock(lambda stage, seconds: seen.append((stage, set(seconds))))
+    clock.mark("universe")
+    clock.mark("options")
+    assert seen == [("universe", {"universe"}), ("options", {"universe", "options"})]

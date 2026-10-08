@@ -49,6 +49,27 @@ def _cash(settings: Settings) -> Decimal | None:
     return paper_equity(settings)
 
 
+def _progress_writer(started: datetime):
+    """The running scan's last finished stage, so a stuck scan shows where it stopped."""
+
+    def write(stage: str, seconds: dict) -> None:
+        try:
+            from app.analytics.routes import write_scan_progress
+
+            write_scan_progress(
+                {
+                    "started_at": started.isoformat(),
+                    "stage_done": stage,
+                    "seconds": seconds,
+                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+        except (TypeError, ValueError, OSError):
+            pass
+
+    return write
+
+
 def record_scan_blocked(moment: datetime, reason: str) -> None:
     try:
         from app.analytics.routes import write_last_scan
@@ -61,6 +82,8 @@ def record_scan_blocked(moment: datetime, reason: str) -> None:
 def scan_once(settings: Settings, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
     publish_quiet("scan.requested", moment.isoformat())
+    progress = _progress_writer(moment)
+    progress("started", {})
     cash = _cash(settings)
     if cash is None:
         record_scan_blocked(moment, "אין נתוני חשבון")
@@ -90,6 +113,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             enforce_exposure=True,
             open_underlyings=_open_underlyings(settings),
             open_planned_risk=_open_planned_risk(settings),
+            progress=progress,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
         record_scan_blocked(moment, str(exc))
@@ -115,9 +139,11 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             session.commit()
     started = time.monotonic()
     outcomes: list[dict] = []
+    seconds = result.stages.get("seconds") if isinstance(result.stages.get("seconds"), dict) else {}
+    progress("submitting", seconds)
     _submit_autonomous_buys(settings, result.recommendations, moment, outcomes)
-    if isinstance(result.stages.get("seconds"), dict):
-        result.stages["seconds"]["submit"] = round(time.monotonic() - started, 2)
+    seconds["submit"] = round(time.monotonic() - started, 2)
+    progress("done", seconds)
     result.stages["orders"] = sum(1 for item in outcomes if item.get("result") == "submitted")
     result.stages["buy_outcomes"] = outcomes
     try:
@@ -454,6 +480,8 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             for stored in session.scalars(select(PositionState).where(PositionState.status == "open")):
                 state_risk[stored.symbol.replace(" ", "")] = Decimal(str(stored.planned_risk))
         account = adapter.get_account()
+        if account.get("equity") not in {None, ""}:
+            equity = Decimal(str(account["equity"]))
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
         from app.broker.runtime import broker_risk_snapshot

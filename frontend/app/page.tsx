@@ -23,6 +23,7 @@ type Desk = {
       ai_failures?: Record<string, number>;
     } | null;
   } | null;
+  scan_progress?: { started_at?: string; stage_done?: string; updated_at?: string } | null;
 };
 
 type FlowTrade = {
@@ -338,6 +339,7 @@ function Board() {
             <div className="ops-rail">
               <Node label="סריקה אחרונה" value={scanNode(scan, closed)} />
               <Node label="משך סריקה" value={durationOf(scan)} />
+              <Node label="סריקה רצה" value={runningOf(desk?.scan_progress ?? null)} />
               <Node label="AI" value={aiNode(scan, closed)} />
               <Node label="החלטות" value={scan ? String(scan.recommendations ?? 0) : closed ? "ממתין" : "אין נתונים"} />
               <Node label="BUY" value={scan ? String(scan.buys ?? 0) : closed ? "ממתין" : "אין נתונים"} />
@@ -560,6 +562,27 @@ function durationOf(scan: Desk["last_scan"]) {
   const seconds = (new Date(scan.finished_at).getTime() - new Date(scan.observed_at).getTime()) / 1000;
   if (!Number.isFinite(seconds) || seconds < 0) return "—";
   return seconds < 60 ? `${Math.round(seconds)} שנ׳` : `${(seconds / 60).toFixed(1)} דק׳`;
+}
+
+const STAGE_TEXT: Record<string, string> = {
+  started: "התחלה",
+  universe: "יקום",
+  underlyings: "מניות",
+  options: "אופציות",
+  news: "חדשות",
+  macro: "מאקרו",
+  research: "מחקר/AI",
+  decisions: "החלטות",
+  storage: "שמירה",
+  submitting: "שליחה לברוקר",
+};
+
+function runningOf(progress: Desk["scan_progress"]) {
+  if (!progress?.started_at || progress.stage_done === "done") return "לא";
+  const minutes = (Date.now() - new Date(progress.started_at).getTime()) / 60000;
+  if (!Number.isFinite(minutes) || minutes < 0) return "—";
+  const stage = STAGE_TEXT[progress.stage_done ?? ""] ?? progress.stage_done ?? "";
+  return `${minutes.toFixed(1)} דק׳ · אחרי ${stage}`;
 }
 
 function aiNode(scan: Desk["last_scan"], closed: boolean) {
