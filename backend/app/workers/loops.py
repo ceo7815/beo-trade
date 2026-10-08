@@ -52,7 +52,7 @@ def _cash(settings: Settings) -> Decimal | None:
 def _progress_writer(started: datetime):
     """The running scan's last finished stage, so a stuck scan shows where it stopped."""
 
-    def write(stage: str, seconds: dict) -> None:
+    def write(stage: str, seconds: dict, theta: dict | None = None) -> None:
         try:
             from app.analytics.routes import write_scan_progress
 
@@ -61,6 +61,7 @@ def _progress_writer(started: datetime):
                     "started_at": started.isoformat(),
                     "stage_done": stage,
                     "seconds": seconds,
+                    "theta_requests": theta,
                     "updated_at": datetime.now(timezone.utc).isoformat(),
                 }
             )

@@ -229,6 +229,8 @@ class ThetaFeed:
         self._listed_expirations: dict[str, list[str]] = {}
         self._transport_failures = 0
         self.request_stats: dict[str, dict] = {}
+        self.on_request = None
+        self._reported = 0.0
         base, _origin = resolve_secret(settings, "thetadata_base_url")
         self.base = (base or DEFAULT_BASE).rstrip("/")
 
@@ -322,12 +324,18 @@ class ThetaFeed:
             self.last_option_status = f"{code}:{len(rows)}"
         return rows
 
-    @staticmethod
-    def _count(stats: dict, started: float) -> None:
+    def _count(self, stats: dict, started: float) -> None:
         spent = time.monotonic() - started
         stats["count"] += 1
         stats["seconds"] = round(stats["seconds"] + spent, 2)
         stats["slowest"] = round(max(stats["slowest"], spent), 2)
+        stats["last_at"] = datetime.now(EXCHANGE).strftime("%H:%M:%S")
+        if self.on_request is not None and time.monotonic() - self._reported >= 5:
+            self._reported = time.monotonic()
+            try:
+                self.on_request(self.request_stats)
+            except Exception:
+                pass
 
     def _fail(self, message: str) -> None:
         _state.last_fetch = datetime.now(EXCHANGE).isoformat()

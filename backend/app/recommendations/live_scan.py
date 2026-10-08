@@ -65,7 +65,7 @@ def execute_scan(
     enforce_exposure: bool = False,
     open_underlyings: set[str] | None = None,
     open_planned_risk: Decimal = Decimal("0"),
-    progress: Callable[[str, dict[str, float]], None] | None = None,
+    progress: Callable[..., None] | None = None,
 ) -> ScanResult:
     """Load news when Benzinga is configured, then run the decision pipeline.
 
@@ -78,6 +78,9 @@ def execute_scan(
     options = []
     scan_id = str(uuid4())
     clock = _StageClock(progress)
+    feed = getattr(providers.market, "feed", None)
+    if progress is not None and feed is not None and hasattr(feed, "on_request"):
+        feed.on_request = lambda stats: progress(clock.stage, dict(clock.seconds), {path: dict(row) for path, row in stats.items()})
     universe = _bind_dynamic_universe(providers, config, now)
     clock.mark("universe")
     try:
@@ -232,11 +235,13 @@ class _StageClock:
         self._last = time.monotonic()
         self.seconds: dict[str, float] = {}
         self._on_mark = on_mark
+        self.stage = "started"
 
     def mark(self, stage: str) -> None:
         moment = time.monotonic()
         self.seconds[stage] = round(moment - self._last, 2)
         self._last = moment
+        self.stage = stage
         if self._on_mark is not None:
             try:
                 self._on_mark(stage, dict(self.seconds))
