@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from app.config.settings import TradingConfig
+from app.models.tables import PositionState
 from app.paper_trading.engine import exit_signal
 from app.positions.admission import admit_buy
 from app.positions.state import apply_quote, load_open_state, open_state
@@ -233,7 +234,8 @@ def test_holding_time_and_invalidation_use_stored_entry(tmp_path):
     )
     assert one["exits"][0]["reason"] == "TIME_STOP"
     with session_scope() as session:
-        loaded = load_open_state(session, symbol)
+        assert load_open_state(session, symbol) is None
+        loaded = session.get(PositionState, "trade-hold")
         loaded.entry_time = NOW
         session.commit()
         fill = fill_from_state(loaded)

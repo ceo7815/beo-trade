@@ -52,11 +52,14 @@ def open_state(
 ) -> PositionState:
     """Create the entry record once. A second call for the same trade keeps the original entry."""
     existing = session.get(PositionState, trade_id)
-    if existing is not None:
+    if existing is not None and existing.status == "open":
         if quantity > existing.entry_fill_quantity:
             existing.entry_fill_quantity = quantity
             _lock_risk(existing, config)
         return existing
+    if existing is not None:
+        session.delete(existing)
+        session.flush()
     stop = Decimal(str(config.initial_stop_decline_pct))
     one_r_price = entry_price * stop
     row = PositionState(
@@ -103,6 +106,46 @@ def _lock_risk(row: PositionState, config: TradingConfig) -> None:
     one_r = entry * stop * Decimal(row.entry_fill_quantity) * Decimal(config.contract_multiplier)
     row.planned_risk = float(one_r)
     row.one_r_amount = float(one_r)
+
+
+def retire_absent(session: Session, held_symbols: set[str]) -> int:
+    """A contract the broker no longer holds is closed, so a later entry starts a new record."""
+    held = {symbol.replace(" ", "") for symbol in held_symbols}
+    retired = 0
+    for row in session.scalars(select(PositionState).where(PositionState.status == "open")):
+        if row.symbol not in held:
+            row.status = "closed"
+            retired += 1
+    return retired
+
+
+def rebase_entry(row: PositionState, entry_price: Decimal, quantity: int, config: TradingConfig) -> bool:
+    """The broker's average entry is the truth. A record carried over from an earlier
+    round trip in the same contract is re-anchored to it, keeping the observed peak."""
+    stored = Decimal(str(row.entry_fill_price))
+    if quantity < 1 or entry_price <= 0:
+        return False
+    if abs(stored - entry_price) <= Decimal("0.01") and row.entry_fill_quantity == quantity:
+        return False
+    stop = Decimal(str(config.initial_stop_decline_pct))
+    one_r_price = entry_price * stop
+    peak = max(Decimal(str(row.peak_option_price)), entry_price)
+    row.entry_fill_price = float(entry_price)
+    row.entry_option_price = float(entry_price)
+    row.entry_fill_quantity = quantity
+    row.peak_option_price = float(peak)
+    row.initial_stop_price = float(entry_price * (Decimal("1") - stop))
+    row.protected_stop_price = float(entry_price - one_r_price * Decimal(str(config.protective_stop_r)))
+    row.target_1 = float(entry_price + one_r_price * Decimal(str(config.trail_activate_r)))
+    row.target_2 = float(entry_price + one_r_price * Decimal(str(config.winner_run_r)))
+    row.trailing_peak = float(peak)
+    row.trailing_trigger = float(peak * (Decimal("1") - Decimal(str(config.trailing_pct))))
+    _lock_risk(row, config)
+    gain = peak - entry_price
+    row.protected_mode = gain >= one_r_price * Decimal(str(config.protect_at_r))
+    row.trailing_active = gain >= one_r_price * Decimal(str(config.trail_activate_r))
+    row.winner_run_mode = gain >= one_r_price * Decimal(str(config.winner_run_r))
+    return True
 
 
 def load_open_state(session: Session, symbol: str) -> PositionState | None:

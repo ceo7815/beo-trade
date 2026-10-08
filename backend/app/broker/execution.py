@@ -16,8 +16,39 @@ from app.models.tables import ApprovalRecord, BrokerOrderRecord, RecommendationR
 from app.schemas.domain import OptionSnapshot
 
 
-def client_order_id_for(trade_id: str, intent: str) -> str:
-    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"beo-trade:{trade_id}:{intent}"))
+FINISHED_ORDER_STATES = frozenset({"FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED", "DONE_FOR_DAY"})
+MAX_EXIT_ATTEMPTS = 50
+
+
+def client_order_id_for(trade_id: str, intent: str, attempt: int = 0) -> str:
+    key = trade_id if attempt == 0 else f"{trade_id}#{attempt}"
+    return str(uuid.uuid5(uuid.NAMESPACE_URL, f"beo-trade:{key}:{intent}"))
+
+
+def _finished(existing: BrokerOrderRecord | None, remote: dict | None) -> bool:
+    if remote is not None:
+        return str(remote.get("internal_state") or "").upper() in FINISHED_ORDER_STATES
+    return existing is not None and str(existing.status or "").upper() in FINISHED_ORDER_STATES
+
+
+def _resolve_client_order_id(session: Session, adapter, trade_id: str, intent: str):
+    """An exit id is reused only while its order is live. A trade id can be a contract
+    symbol that was bought and sold before, so a finished sell must not block the next one."""
+    attempts = MAX_EXIT_ATTEMPTS if intent == "sell_to_close" else 1
+    for attempt in range(attempts):
+        client_order_id = client_order_id_for(trade_id, intent, attempt)
+        existing = order_by_client(session, client_order_id)
+        try:
+            remote = adapter.get_order_by_client_id(client_order_id)
+        except Exception as exc:
+            raise PaperOnlyError("מצב הפקודה לא ידוע. לא נשלחת פקודה נוספת.") from exc
+        if not isinstance(remote, dict):
+            remote = None
+        if existing is None and remote is None:
+            return client_order_id, None, None
+        if intent != "sell_to_close" or not _finished(existing, remote):
+            return client_order_id, existing, remote
+    raise PaperOnlyError("יותר מדי ניסיונות יציאה לאותה עסקה")
 
 
 def validate_order(
@@ -167,14 +198,7 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
     recommendation_id = str(request.get("recommendation_id") or "")
     stored = session.scalar(select(ApprovalRecord).where(ApprovalRecord.recommendation_id == recommendation_id)) if recommendation_id else None
     trade_id = str(request.get("trade_id") or (stored.trade_id if stored is not None else "") or uuid.uuid4())
-    client_order_id = client_order_id_for(trade_id, intent)
-    existing = order_by_client(session, client_order_id)
-    try:
-        remote = adapter.get_order_by_client_id(client_order_id)
-    except Exception as exc:
-        raise PaperOnlyError("מצב הפקודה לא ידוע. לא נשלחת פקודה נוספת.") from exc
-    if not isinstance(remote, dict):
-        remote = None
+    client_order_id, existing, remote = _resolve_client_order_id(session, adapter, trade_id, intent)
     if existing is not None or remote is not None:
         record_trade_event(session, trade_id, "ENTRY_SUBMITTED" if intent == "buy_to_open" else "EXIT_SUBMITTED", "beo-trade", "פקודה קיימת לא נשלחה שוב", str(request.get("recommendation_id") or ""))
         return {"duplicate": True, "order": remote or {"client_order_id": client_order_id, "status": existing.status}, "trade_id": trade_id}

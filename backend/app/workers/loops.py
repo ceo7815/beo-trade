@@ -152,6 +152,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             return {"positions": 0, "exits": []}
     try:
         positions = adapter.sync_positions()
+        _retire_closed_states({str(row.get("symbol") or "") for row in positions})
         if quotes is None and positions:
             quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
         bundles = quotes if quotes is not None else {}
@@ -234,11 +235,20 @@ def _loaded_bundles(settings: Settings, now: datetime, underlyings_held: tuple[s
         return {}
 
 
+def _retire_closed_states(held_symbols: set[str]) -> None:
+    from app.models.db import session_scope
+    from app.positions.state import retire_absent
+
+    with session_scope() as session:
+        if retire_absent(session, held_symbols):
+            session.commit()
+
+
 def _position_fill(settings: Settings, symbol: str, trade_id: str, entry: object, position: dict, option, underlying, moment: datetime):
     """Read the stored entry. A missing record is not saved from the current quote."""
     from app.models.db import session_scope
     from app.models.tables import PositionState
-    from app.positions.state import apply_quote, fill_from_state, load_open_state, locked_levels
+    from app.positions.state import apply_quote, fill_from_state, load_open_state, locked_levels, rebase_entry
     from app.schemas.domain import PaperFill
 
     with session_scope() as session:
@@ -246,6 +256,7 @@ def _position_fill(settings: Settings, symbol: str, trade_id: str, entry: object
         if state is None or state.status != "open":
             state = load_open_state(session, symbol)
         if state is not None:
+            rebase_entry(state, Decimal(str(entry)), int(float(position.get("qty") or 0)), settings.trading())
             iv = option.implied_volatility
             apply_quote(
                 state,
