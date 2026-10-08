@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
-import { money, percent } from "@/lib/pnl";
+import { TradeStory, type Story } from "@/components/TradeStory";
+import { apiGet, type SystemStatus } from "@/lib/api";
+import { money } from "@/lib/pnl";
 
 type BrokerPosition = {
   symbol?: string;
@@ -18,345 +19,335 @@ type BrokerPosition = {
   cost_basis?: string;
   unrealized_pl?: string;
   unrealized_plpc?: string;
-  asset_class?: string;
 };
 
-type BrokerOrder = {
-  symbol?: string;
-  position_intent?: string;
-  internal_state?: string;
+type Levels = {
+  available: boolean;
+  stage?: "AT_RISK" | "PROTECTED" | "TRAILING";
+  entry?: string | null;
+  stop?: string | null;
+  protect_at?: string | null;
+  protected_stop?: string | null;
+  trail_on?: string | null;
+  trailing_pct?: number;
+  peak?: string | null;
+  trail_trigger?: string | null;
+  active_exit?: string | null;
+  pnl_at_active_exit?: string | null;
+  dte?: number | null;
+  time_exit_at?: string | null;
+  time_exit_passed?: boolean;
+  close_exit_minutes?: number | null;
+  from_record?: boolean;
 };
 
-type Risk = {
-  max_positions?: number | null;
-  exposure_limit?: string | null;
-  per_trade_limit?: string | null;
-  state?: string;
+type OpenTrade = {
+  symbol: string;
+  opened_at?: string | null;
+  levels?: Levels | null;
+  story?: Story | null;
 };
 
-type Explain = {
-  title: string;
-  does: string;
-  tools: string[];
-  formula: string;
+type Report = {
+  open?: OpenTrade[];
+  summary?: { realized_pnl?: string; closed_count?: number; wins?: number; losses?: number } | null;
 };
 
-function asNumber(value: string | undefined) {
-  if (value === undefined || value === null || value === "") return null;
+type Risk = { max_positions?: number | null; exposure_limit?: string | null };
+
+const STAGES: Record<string, { label: string; hint: string }> = {
+  AT_RISK: { label: "בסיכון", hint: "עדיין לא הגיעה לרווח של R אחד. הסטופ המקורי פעיל." },
+  PROTECTED: { label: "מוגנת", hint: "הרוויחה R אחד. הסטופ הועלה לקרבת מחיר הכניסה." },
+  TRAILING: { label: "סטופ נגרר", hint: "הרוויחה 1.5R. הרווח ננעל ועולה עם השיא." },
+};
+
+function num(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function shown(value: string | number | null | undefined, prefix = "") {
-  if (value === undefined || value === null || value === "") return "אין נתונים";
-  return `${prefix}${value}`;
+function px(value: string | number | null | undefined) {
+  const parsed = num(value);
+  return parsed === null ? "—" : parsed.toFixed(2);
 }
 
-function dte(expiration: string | undefined) {
-  if (!expiration) return null;
-  const end = Date.parse(`${expiration}T00:00:00Z`);
-  if (!Number.isFinite(end)) return null;
-  const now = new Date();
-  const today = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
-  return Math.round((end - today) / 86400000);
+function signedMoney(value: number | null) {
+  if (value === null) return "אין נתונים";
+  return `${value > 0 ? "+" : ""}${money(value)}`;
 }
 
-function book(items: BrokerPosition[] | null) {
-  if (!items) return null;
-  let contracts = 0;
-  let contractsOk = true;
-  let exposure = 0;
-  let exposureOk = true;
-  let cost = 0;
-  let costOk = true;
-  let pnl = 0;
-  let pnlOk = true;
-  for (const item of items) {
-    const qty = asNumber(item.qty);
-    if (qty === null) contractsOk = false;
-    else contracts += Math.abs(qty);
-    const value = asNumber(item.market_value);
-    if (value === null) exposureOk = false;
-    else exposure += Math.abs(value);
-    const basis = asNumber(item.cost_basis);
-    if (basis === null) costOk = false;
-    else cost += Math.abs(basis);
-    const row = asNumber(item.unrealized_pl);
-    if (!item.current_price || row === null) pnlOk = false;
-    else pnl += row;
-  }
-  if (items.length === 0) {
-    contractsOk = true;
-    exposureOk = true;
-    costOk = true;
-    pnlOk = true;
-  }
-  return {
-    count: items.length,
-    calls: items.filter((item) => item.right === "CALL").length,
-    puts: items.filter((item) => item.right === "PUT").length,
-    contracts: contractsOk ? contracts : null,
-    exposure: exposureOk ? exposure : null,
-    cost: costOk ? cost : null,
-    pnl: pnlOk ? pnl : null,
-  };
+function signedPct(value: number | null) {
+  if (value === null) return "—";
+  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
 }
 
-function positionExplain(item: BrokerPosition, orders: BrokerOrder[]): Explain {
-  const entry = asNumber(item.avg_entry_price);
-  const days = dte(item.expiration);
-  const order = orders.find((row) => row.symbol === item.symbol && row.position_intent === "buy_to_open");
-  const exitOrder = orders.find((row) => row.symbol === item.symbol && row.position_intent === "sell_to_close");
-  const lines = [
-    `נכס בסיס ${shown(item.underlying)}`,
-    `חוזה ${shown(item.symbol)}`,
-    `${shown(item.right)} · strike ${shown(item.strike)} · פקיעה ${shown(item.expiration)}`,
-    `DTE ${days === null ? "אין נתונים" : days}`,
-    `כמות ${shown(item.qty)}`,
-    `כניסה ${shown(item.avg_entry_price, "$")}`,
-    `מחיר Alpaca ${shown(item.current_price, "$")}`,
-    "מחיר ThetaData: אין ציטוט מחובר לפוזיציה",
-    `שווי ${shown(item.market_value, "$")}`,
-    `עלות ${shown(item.cost_basis, "$")}`,
-    `רווח/הפסד ${item.current_price ? shown(item.unrealized_pl, "$") : "אין נתונים"}`,
-    `תשואה ${item.current_price && item.unrealized_plpc ? percent(Number(item.unrealized_plpc) * 100) : "אין נתונים"}`,
-    `סטופ ראשוני ${entry === null ? "אין נתונים" : money(entry * 0.6)}`,
-    `הגנה אחרי +1R ${entry === null ? "אין נתונים" : money(entry * 0.9)}`,
-    "Trailing כבוי",
-    "זמן בעסקה: אין חותמת כניסה על אובייקט הפוזיציה",
-    `פקודת כניסה ${order?.internal_state || "אין נתונים"}`,
-    `פקודת יציאה ${exitOrder?.internal_state || "אין נתונים"}`,
-  ];
-  return {
-    title: item.symbol || "פוזיציה",
-    does: "חוזה פתוח שאושר אצל Alpaca Paper. הרמות של סטופ ויעד מחושבות מהכניסה. הן אינן פקודה שמורה אצל הברוקר.",
-    tools: ["Alpaca positions", "OCC", "מנוע יציאה"],
-    formula: `${lines.join("\n")}\nstop = כניסה × 0.60\nאחרי +1R הסטופ = כניסה − 0.25R\n0DTE ≤ 90 דקות\n1DTE ≤ 180 דקות\nחשיפה = |market_value|`,
-  };
+function tone(value: number | null) {
+  if (value === null || value === 0) return "flat";
+  return value > 0 ? "up" : "down";
+}
+
+function clock(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "—";
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", timeZone: "Asia/Dubai" }).format(date);
+}
+
+function span(ms: number) {
+  const minutes = Math.round(Math.abs(ms) / 60000);
+  if (minutes < 60) return `${minutes} דק׳`;
+  const hours = Math.floor(minutes / 60);
+  return `${hours} ש׳ ${minutes % 60} דק׳`;
+}
+
+function expiryLabel(dte: number | null | undefined) {
+  if (dte === null || dte === undefined) return "פקיעה לא ידועה";
+  if (dte <= 0) return "פוקע היום";
+  if (dte === 1) return "פוקע מחר";
+  return `פוקע בעוד ${dte} ימים`;
 }
 
 export default function PositionsPage() {
-  const [items, setItems] = useState<BrokerPosition[] | null>(null);
-  const [orders, setOrders] = useState<BrokerOrder[]>([]);
+  const [positions, setPositions] = useState<BrokerPosition[] | null>(null);
+  const [report, setReport] = useState<Report | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
+  const [status, setStatus] = useState<SystemStatus | null>(null);
   const [failed, setFailed] = useState(false);
-  const [open, setOpen] = useState<Explain | null>(null);
+  const [updated, setUpdated] = useState<number | null>(null);
+  const [now, setNow] = useState(() => Date.now());
+  const [picked, setPicked] = useState<{ position: BrokerPosition; trade: OpenTrade | null } | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const load = () => {
-      Promise.all([
-        apiGet<{ items: BrokerPosition[] }>("/api/v1/broker/alpaca/positions"),
-        apiGet<{ items: BrokerOrder[] }>("/api/v1/broker/alpaca/orders?status=all"),
-        apiGet<Risk>("/api/v1/risk"),
-      ])
-        .then(([positions, orderBody, riskBody]) => {
+    const fast = () => {
+      apiGet<{ items: BrokerPosition[] }>("/api/v1/broker/alpaca/positions")
+        .then((body) => {
           if (!alive) return;
-          setItems(positions.items);
-          setOrders(orderBody.items);
-          setRisk(riskBody);
+          setPositions(body.items || []);
           setFailed(false);
+          setUpdated(Date.now());
         })
-        .catch(() => {
-          if (!alive) return;
-          setFailed(true);
-        });
+        .catch(() => alive && setFailed(true));
     };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const slow = () => {
+      Promise.allSettled([
+        apiGet<Report>("/api/v1/report/trades?period=today"),
+        apiGet<Risk>("/api/v1/risk"),
+        apiGet<SystemStatus>("/api/v1/system"),
+      ]).then(([reportBody, riskBody, statusBody]) => {
+        if (!alive) return;
+        if (reportBody.status === "fulfilled") setReport(reportBody.value);
+        if (riskBody.status === "fulfilled") setRisk(riskBody.value);
+        if (statusBody.status === "fulfilled") setStatus(statusBody.value);
+      });
+    };
+    fast();
+    slow();
+    const fastTimer = window.setInterval(fast, 8000);
+    const slowTimer = window.setInterval(slow, 20000);
+    const tick = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      window.clearInterval(fastTimer);
+      window.clearInterval(slowTimer);
+      window.clearInterval(tick);
     };
   }, []);
 
   useEffect(() => {
-    if (!open) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
-    };
+    if (!picked) return;
+    const onKey = (event: KeyboardEvent) => event.key === "Escape" && setPicked(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [picked]);
 
-  const stats = book(items);
-  const maxPositions = risk?.max_positions;
-  const exposureLimit = asNumber(risk?.exposure_limit ?? undefined);
+  const tradeOf = (symbol: string | undefined) => {
+    const key = (symbol || "").replace(/\s/g, "");
+    return report?.open?.find((item) => item.symbol.replace(/\s/g, "") === key) ?? null;
+  };
 
-  const cubes: { label: string; value: string; explain: Explain }[] = [
-    {
-      label: "פוזיציות",
-      value: stats ? (maxPositions == null ? String(stats.count) : `${stats.count} / ${maxPositions}`) : "אין נתונים",
-      explain: {
-        title: "פוזיציות פתוחות",
-        does: "כמה חוזים פתוחים עכשיו אצל Alpaca Paper, מול תקרת הפוזיציות המקבילות.",
-        tools: ["Alpaca positions", "trading.toml"],
-        formula: "פתוח = len(positions)\nתקרה = max_concurrent_positions = 5\nBUY חדש נחסם כשפתוח ≥ 5",
-      },
-    },
-    {
-      label: "CALL",
-      value: stats ? String(stats.calls) : "אין נתונים",
-      explain: {
-        title: "CALL",
-        does: "כמה מהפוזיציות הפתוחות הן אופציית רכש.",
-        tools: ["סימול OCC"],
-        formula: "CALL אם האות בסימול היא C",
-      },
-    },
-    {
-      label: "PUT",
-      value: stats ? String(stats.puts) : "אין נתונים",
-      explain: {
-        title: "PUT",
-        does: "כמה מהפוזיציות הפתוחות הן אופציית מכר.",
-        tools: ["סימול OCC"],
-        formula: "PUT אם האות בסימול היא P",
-      },
-    },
-    {
-      label: "חוזים",
-      value: stats ? (stats.contracts === null ? "אין נתונים" : String(stats.contracts)) : "אין נתונים",
-      explain: {
-        title: "חוזים",
-        does: "סך החוזים הפתוחים. כל חוזה מייצג 100 מניות.",
-        tools: ["Alpaca qty"],
-        formula: "חוזים = Σ |qty|\nמכפיל = 100",
-      },
-    },
-    {
-      label: "עלות",
-      value: stats ? (stats.cost === null ? "אין נתונים" : money(stats.cost)) : "אין נתונים",
-      explain: {
-        title: "עלות",
-        does: "עלות הכניסה של הפוזיציות הפתוחות בחשבון Alpaca Paper.",
-        tools: ["Alpaca cost_basis"],
-        formula: "עלות = Σ |cost_basis|",
-      },
-    },
-    {
-      label: "חשיפה",
-      value: stats ? (stats.exposure === null ? "אין נתונים" : money(stats.exposure)) : "אין נתונים",
-      explain: {
-        title: "חשיפה",
-        does: "שווי השוק הפתוח. רשימה ריקה מאושרת היא אפס. חוזה בלי שווי שוק משאיר את הסכום בלי נתון.",
-        tools: ["Alpaca market_value"],
-        formula: "חשיפה = Σ |market_value|\nתקרה = הון × 35%",
-      },
-    },
-    {
-      label: "רווח/הפסד",
-      value: stats ? (stats.pnl === null ? "אין נתונים" : money(stats.pnl)) : "אין נתונים",
-      explain: {
-        title: "רווח/הפסד לא ממומש",
-        does: "סכום הרווח הפתוח ש-Alpaca מחזיר, רק כשיש מחיר נוכחי. בלי מחיר אין סיכום.",
-        tools: ["Alpaca unrealized_pl", "current_price"],
-        formula: "לא ממומש = Σ unrealized_pl\nמוצג רק כש-current_price קיים\nתשואה = unrealized_plpc",
-      },
-    },
-    {
-      label: "תקרת חשיפה",
-      value: exposureLimit === null ? "אין נתונים" : money(exposureLimit),
-      explain: {
-        title: "תקרת חשיפה",
-        does: "המקסימום המותר לפרמיה פתוחה. מעבר לתקרה חוסם BUY חדש.",
-        tools: ["הון Alpaca Paper", "trading.toml"],
-        formula: "תקרה = equity × 0.35",
-      },
-    },
-  ];
-  const rows = [cubes.slice(0, 4), cubes.slice(4)];
+  const items = positions ?? [];
+  const cost = items.reduce((sum, item) => sum + Math.abs(num(item.cost_basis) ?? 0), 0);
+  const open = items.every((item) => num(item.unrealized_pl) !== null) ? items.reduce((sum, item) => sum + (num(item.unrealized_pl) ?? 0), 0) : null;
+  const exposure = items.reduce((sum, item) => sum + Math.abs(num(item.market_value) ?? 0), 0);
+  const limit = num(risk?.exposure_limit);
+  const atStops = items.map((item) => num(tradeOf(item.symbol)?.levels?.pnl_at_active_exit)).filter((value): value is number => value !== null);
+  const worstCase = atStops.length === items.length && items.length > 0 ? atStops.reduce((sum, value) => sum + value, 0) : null;
+  const realized = num(report?.summary?.realized_pnl);
+  const sessionClose = status?.session_close ? new Date(status.session_close).getTime() : null;
+  const age = updated === null ? null : Math.max(0, Math.round((now - updated) / 1000));
 
   return (
     <Shell>
-      <section className="engine">
+      <section className="live">
         <header className="ops-head">
           <div>
-            <h1>פוזיציות פתוחות</h1>
-            <p>Open Positions · PAPER</p>
+            <h1>מרכז בקרה · פוזיציות פתוחות</h1>
+            <p>כל פוזיציה: איפה היא עכשיו, מה יוציא אותה, ומתי</p>
           </div>
-          <span className={`ops-pip ${failed ? "warn" : items ? "on" : "warn"}`}>
-            <i />
-            {failed ? "אין נתונים" : items ? "Alpaca Paper" : "טוען"}
-          </span>
+          <div className="ops-pips">
+            <span className={`ops-pip ${failed ? "warn" : positions ? "on" : "warn"}`}>
+              <i />
+              {failed ? "אין חיבור לברוקר" : age === null ? "טוען" : `חי · עודכן לפני ${age} שנ׳`}
+            </span>
+            <span className="ops-pip">PAPER</span>
+            {sessionClose ? <span className="ops-pip num">סגירת מסחר {clock(sessionClose)} · עוד {span(sessionClose - now)}</span> : null}
+          </div>
         </header>
 
-        <div className="engine-board" aria-label="סיכום פוזיציות">
-          {rows.map((row, rowIndex) => (
-            <div className="engine-row fit" key={row[0]?.label ?? rowIndex}>
-              {row.map((cube, index) => (
-                <button
-                  key={cube.label}
-                  type="button"
-                  className="engine-cube stat"
-                  style={{ animationDelay: `${(rowIndex * 4 + index) * 40}ms` }}
-                  onClick={() => setOpen(cube.explain)}
-                >
-                  <span>{cube.label}</span>
-                  <b className="num">{cube.value}</b>
-                </button>
-              ))}
-            </div>
-          ))}
+        <div className="live-strip">
+          <Stat label="פתוחות" value={positions === null ? "—" : `${items.length}${risk?.max_positions ? ` / ${risk.max_positions}` : ""}`} />
+          <Stat label="כסף בסיכון" value={positions === null ? "—" : money(cost)} />
+          <Stat label="רווח/הפסד פתוח" value={signedMoney(open)} sub={open !== null && cost > 0 ? signedPct((open / cost) * 100) : undefined} className={tone(open)} />
+          <Stat label="אם הכול ייצא בסטופ הנוכחי" value={signedMoney(worstCase)} className={tone(worstCase)} />
+          <Stat label="ממומש היום" value={signedMoney(realized)} sub={report?.summary ? `${report.summary.wins ?? 0} ברווח · ${report.summary.losses ?? 0} בהפסד` : undefined} className={tone(realized)} />
+          <div className="live-stat">
+            <span>חשיפה מול תקרה</span>
+            <b className="num">{limit ? `${money(exposure)} / ${money(limit)}` : money(exposure)}</b>
+            <div className="ops-track"><i style={{ width: `${limit ? Math.min(100, (exposure / limit) * 100) : 0}%` }} /></div>
+          </div>
         </div>
 
-        <div className="engine-stages" aria-label="ספר Alpaca">
-          {items && items.length === 0 ? (
-            <button
-              type="button"
-              className="engine-stage"
-              onClick={() =>
-                setOpen({
-                  title: "ספר Alpaca Paper",
-                  does: "זה הספר הרשמי. רשימה ריקה מאשרת שאין חוזה פתוח בחשבון ה-PAPER.",
-                  tools: ["Alpaca positions"],
-                  formula: "פתוח = len(positions)\nרשימה ריקה = 0\nמחיר ThetaData נפרד, ובלי ציטוט אין סימון",
-                })
-              }
-            >
-              <span>Alpaca Paper</span>
-              <b>רשימה ריקה</b>
-            </button>
-          ) : null}
-          {items?.map((item, index) => (
-            <button
+        {positions !== null && items.length === 0 ? (
+          <div className="live-empty">אין פוזיציה פתוחה ב-Alpaca Paper. המערכת ממשיכה לסרוק.</div>
+        ) : null}
+        {failed && positions === null ? <p className="ops-line">השרת לא החזיר את ספר Alpaca.</p> : null}
+
+        <div className="live-grid">
+          {items.map((item) => (
+            <Card
               key={item.symbol}
-              type="button"
-              className="engine-stage"
-              style={{ animationDelay: `${index * 35}ms` }}
-              onClick={() => setOpen(positionExplain(item, orders))}
-            >
-              <span className="num">{item.underlying || item.symbol} · {item.right || "אין נתונים"} · {shown(item.qty)} חוזים</span>
-              <b className="num">{item.current_price && item.unrealized_pl ? money(Number(item.unrealized_pl)) : "אין נתונים"}</b>
-            </button>
+              position={item}
+              trade={tradeOf(item.symbol)}
+              now={now}
+              sessionClose={sessionClose}
+              onOpen={() => setPicked({ position: item, trade: tradeOf(item.symbol) })}
+            />
           ))}
-          {failed && !items ? (
-            <p className="ops-line">אין נתונים. השרת לא החזיר את ספר Alpaca.</p>
-          ) : null}
         </div>
       </section>
 
-      {open ? (
-        <div className="engine-backdrop" onClick={() => setOpen(null)}>
-          <article className="engine-modal" role="dialog" aria-modal="true" aria-labelledby="position-title" onClick={(event) => event.stopPropagation()}>
+      {picked ? (
+        <div className="engine-backdrop" onClick={() => setPicked(null)}>
+          <article className="engine-modal" role="dialog" aria-modal="true" aria-labelledby="live-title" onClick={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <p>פוזיציות · PAPER</p>
-                <h2 id="position-title">{open.title}</h2>
+                <p>פוזיציה פתוחה · PAPER · נפתחה {clock(picked.trade?.opened_at)}</p>
+                <h2 id="live-title">{picked.position.underlying} {picked.position.right} {picked.position.strike}</h2>
               </div>
-              <button type="button" onClick={() => setOpen(null)}>סגור</button>
+              <button type="button" onClick={() => setPicked(null)}>סגור</button>
             </header>
-            <h3>מה הנתון</h3>
-            <p>{open.does}</p>
-            <h3>כלים</h3>
-            <ul>
-              {open.tools.map((tool) => <li key={tool}>{tool}</li>)}
-            </ul>
-            <h3>נוסחה</h3>
-            <pre>{open.formula}</pre>
+            <TradeStory story={picked.trade?.story} />
           </article>
         </div>
       ) : null}
     </Shell>
+  );
+}
+
+function Stat({ label, value, sub, className = "" }: { label: string; value: string; sub?: string; className?: string }) {
+  return (
+    <div className="live-stat">
+      <span>{label}</span>
+      <b className={`num ${className}`}>{value}</b>
+      {sub ? <em className={className}>{sub}</em> : null}
+    </div>
+  );
+}
+
+function Card({ position, trade, now, sessionClose, onOpen }: { position: BrokerPosition; trade: OpenTrade | null; now: number; sessionClose: number | null; onOpen: () => void }) {
+  const levels = trade?.levels?.available ? trade.levels : null;
+  const pnl = num(position.unrealized_pl);
+  const pct = num(position.unrealized_plpc);
+  const current = num(position.current_price);
+  const active = num(levels?.active_exit);
+  const stage = levels?.stage ?? "AT_RISK";
+  const opened = trade?.opened_at ? new Date(trade.opened_at).getTime() : null;
+  const timeExit = levels?.time_exit_at ? new Date(levels.time_exit_at).getTime() : null;
+  const closeExit = sessionClose !== null && levels?.close_exit_minutes != null ? sessionClose - levels.close_exit_minutes * 60000 : null;
+  const room = current !== null && active !== null && current > 0 ? ((current - active) / current) * 100 : null;
+  const atExit = num(levels?.pnl_at_active_exit);
+  return (
+    <article className={`live-card ${stage.toLowerCase()}`}>
+      <header>
+        <div>
+          <h2 className="num">{position.underlying} {position.right} {position.strike}</h2>
+          <p>
+            {position.qty} חוזים · {expiryLabel(levels?.dte)}
+            {opened ? ` · נפתחה ${clock(opened)} (לפני ${span(now - opened)})` : ""}
+          </p>
+        </div>
+        <span className="live-stage" title={STAGES[stage]?.hint}>{STAGES[stage]?.label ?? stage}</span>
+      </header>
+
+      <div className="live-pnl">
+        <b className={`num ${tone(pnl)}`}>{signedMoney(pnl)}</b>
+        <span className={`num ${tone(pct)}`}>{pct === null ? "—" : signedPct(pct * 100)}</span>
+        <em>הושקע {money(num(position.cost_basis) ?? 0)}</em>
+      </div>
+
+      {levels ? <Ladder levels={levels} current={current} /> : <p className="live-note">אין עדיין רמות יציאה לחוזה הזה.</p>}
+
+      <dl className="live-facts">
+        <div><dt>כניסה</dt><dd className="num">{px(position.avg_entry_price)}</dd></div>
+        <div><dt>עכשיו</dt><dd className="num">{px(position.current_price)}</dd></div>
+        <div><dt>שיא</dt><dd className="num">{px(levels?.peak)}</dd></div>
+        <div>
+          <dt>יציאה תופעל ב-</dt>
+          <dd className="num">{px(active)}{room !== null ? <small> · עוד {room.toFixed(1)}%</small> : null}</dd>
+        </div>
+        <div><dt>אם תופעל עכשיו</dt><dd className={`num ${tone(atExit)}`}>{signedMoney(atExit)}</dd></div>
+        <div>
+          <dt>יציאת זמן</dt>
+          <dd className="num">
+            {timeExit ? (levels?.time_exit_passed || timeExit <= now ? "הגיע הזמן · ממתין למחיר" : `${clock(timeExit)} · עוד ${span(timeExit - now)}`) : "אין מגבלת זמן"}
+          </dd>
+        </div>
+        {closeExit ? (
+          <div><dt>יציאה לפני הסגירה</dt><dd className="num">{clock(closeExit)} · עוד {span(closeExit - now)}</dd></div>
+        ) : null}
+      </dl>
+
+      <footer>
+        <button type="button" onClick={onOpen}>למה נכנסנו ומה יוציא אותה</button>
+        {levels && !levels.from_record ? <span className="live-note">רמות מחושבות מהכניסה. אין רשומת מעקב שמורה.</span> : null}
+      </footer>
+    </article>
+  );
+}
+
+function Ladder({ levels, current }: { levels: Levels; current: number | null }) {
+  const marks = [
+    { key: "stop", label: "סטופ", value: num(levels.stop) },
+    { key: "entry", label: "כניסה", value: num(levels.entry) },
+    { key: "protect", label: "הגנה", value: num(levels.protect_at) },
+    { key: "trail", label: "נגרר", value: num(levels.trail_on) },
+  ].filter((mark): mark is { key: string; label: string; value: number } => mark.value !== null);
+  const peak = num(levels.peak);
+  const exit = num(levels.active_exit);
+  const values = [...marks.map((mark) => mark.value), peak, exit, current].filter((value): value is number => value !== null);
+  if (values.length < 2) return null;
+  const low = Math.min(...values) * 0.97;
+  const high = Math.max(...values) * 1.03;
+  const at = (value: number) => `${((value - low) / (high - low)) * 100}%`;
+  const entry = num(levels.entry);
+  return (
+    <div className="live-ladder" aria-label="סולם מחיר">
+      <div className="live-rail">
+        {entry !== null && current !== null ? (
+          <i className={`live-fill ${current >= entry ? "up" : "down"}`} style={{ left: at(Math.min(entry, current)), width: `calc(${at(Math.max(entry, current))} - ${at(Math.min(entry, current))})` }} />
+        ) : null}
+        {marks.map((mark) => (
+          <span key={mark.key} className={`live-mark ${mark.key}`} style={{ left: at(mark.value) }}>
+            <em>{mark.label}</em>
+            <small className="num">{mark.value.toFixed(2)}</small>
+          </span>
+        ))}
+        {exit !== null ? <span className="live-exit" style={{ left: at(exit) }} title={`יציאה ב-${exit.toFixed(2)}`} /> : null}
+        {peak !== null && entry !== null && peak > entry ? <span className="live-peak" style={{ left: at(peak) }} title={`שיא ${peak.toFixed(2)}`} /> : null}
+        {current !== null ? <span className="live-now" style={{ left: at(current) }}><b className="num">{current.toFixed(2)}</b></span> : null}
+      </div>
+    </div>
   );
 }

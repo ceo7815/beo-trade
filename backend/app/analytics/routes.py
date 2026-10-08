@@ -329,6 +329,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             with session_scope() as session:
                 _annotate(session, closed + still_open)
                 _explain(session, closed + still_open, settings.trading())
+                _levels(session, still_open, settings)
                 from app.ai.budget import make_ledger
                 from app.models.store import load_usage
 
@@ -539,6 +540,19 @@ def _entry_recommendation(session, trade: dict) -> dict | None:
         "underlying_price": str(row.underlying_price),
         "ai_reviewed": bool(analysis is not None and analysis.model),
     }
+
+
+def _levels(session, trades: list[dict], settings) -> None:
+    from zoneinfo import ZoneInfo
+
+    from app.analytics.levels import position_levels
+    from app.positions.state import load_open_state
+
+    now = datetime.now(timezone.utc)
+    session_day = now.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+    for trade in trades:
+        state = load_open_state(session, str(trade.get("symbol") or ""))
+        trade["levels"] = position_levels(trade, state, settings.trading(), now, session_day)
 
 
 def _explain(session, trades: list[dict], config) -> None:
