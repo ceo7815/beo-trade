@@ -324,13 +324,42 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
     return trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
 
 
+def entry_window_open(settings: Settings, clock: dict, moment: datetime) -> bool:
+    """A new entry needs the session open and more than entry_cutoff_minutes left before the close."""
+    if clock.get("is_open") is not True:
+        return False
+    close = None
+    raw = clock.get("next_close")
+    if raw:
+        try:
+            close = datetime.fromisoformat(str(raw).replace("Z", "+00:00"))
+        except ValueError:
+            close = None
+    if close is None:
+        from app.core.sessions import session_bounds
+
+        bounds = session_bounds(moment, settings.calendar())
+        close = None if bounds is None else bounds[1]
+    if close is None:
+        return False
+    if close.tzinfo is None:
+        close = close.replace(tzinfo=timezone.utc)
+    return (close - moment).total_seconds() > settings.trading().entry_cutoff_minutes * 60
+
+
 def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     rows = _broker_positions(settings)
     if rows is None:
         return None
+    from app.broker.normalize import parse_option_symbol
+    from app.options.risk_limits import sector_key
+
     book: dict[str, Decimal] = {}
     for row in rows:
-        sector = str(row.get("sector") or "UNCLASSIFIED")
+        symbol = str(row.get("symbol") or "")
+        contract = parse_option_symbol(symbol)
+        underlying = str(row.get("underlying") or (contract or {}).get("underlying") or symbol)
+        sector = str(row.get("sector") or sector_key(underlying))
         raw = row.get("market_value")
         if raw in {None, ""}:
             return None
@@ -376,6 +405,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     try:
         clock = adapter.get_market_clock()
         session_open = clock.get("is_open") is True
+        window_open = entry_window_open(settings, clock, datetime.now(timezone.utc))
         try:
             positions = list(adapter.get_positions())
             open_orders = list(adapter.get_orders("open"))
@@ -397,11 +427,13 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         account = adapter.get_account()
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
-        sector_premium = Decimal(str((sectors or {}).get("UNCLASSIFIED", 0)))
         from app.broker.runtime import broker_risk_snapshot
         from app.models.tables import AuditLog
+        from app.options.risk_limits import sector_key
 
         for row in buys:
+            bucket = sector_key(row.underlying)
+            sector_premium = Decimal(str(sectors.get(bucket, 0)))
             fresh = fresh_news(news, row.underlying, moment, settings.trading().news_max_age_seconds)
             action, _why = regime_trade_policy(regime, row.call_put.value)
             decision = admit_buy(
@@ -459,12 +491,14 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 "news_fresh": news_confirmed(fresh, settings.trading()) or settings.trading().allow_buy_without_news,
                 "regime_allowed": action == "ALLOW",
                 "session_open": session_open,
+                "entry_window_open": window_open,
                 "exposure_ok": exposure_reason(equity, open_premium, added, settings.trading()) is None,
                 "daily_loss_ok": daily_loss_reason(equity, pnl, settings.trading()) is None,
-                "sector_ok": sector_exposure_reason(equity, "UNCLASSIFIED", sectors, added, settings.trading()) is None,
+                "sector_ok": sector_exposure_reason(equity, bucket, sectors, added, settings.trading()) is None,
                 "reference_price": str(row.option_price),
             }
             open_premium += added
+            sectors[bucket] = sector_premium + added
             with session_scope() as session:
                 save_recommendation(session, row, settings.dev_user_id)
                 session.add(

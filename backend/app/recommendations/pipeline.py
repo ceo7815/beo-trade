@@ -9,7 +9,7 @@ from collections.abc import Callable
 from app.ai.budget import BudgetLedger
 from app.ai.fingerprint import decision_fingerprint
 from app.market.regime_policy import regime_trade_policy
-from app.options.risk_limits import daily_loss_reason, sector_exposure_reason
+from app.options.risk_limits import daily_loss_reason, sector_exposure_reason, sector_key
 from app.config.settings import TradingConfig
 from app.news.confirm import fresh_news, news_confirmed
 from app.options.selector import rank_contracts, risk_plan
@@ -176,6 +176,7 @@ def run_scan(
     contracts_checked = 0
     contracts_passed = 0
     option_rejections: dict[str, int] = {}
+    ai_failures: dict[str, int] = {}
     news_passed = 0
     risk_checked = 0
     risk_passed = 0
@@ -242,17 +243,24 @@ def run_scan(
                     claimed = acquire(digest, as_of)
                 except Exception:
                     claimed = False
+            if not claimed:
+                ai_failures["fingerprint_locked"] = ai_failures.get("fingerprint_locked", 0) + 1
             if claimed:
                 ai_calls += 1
                 try:
                     model = analyzer.analyze(packet, as_of)
-                except Exception:
+                except Exception as exc:
                     model = None
+                    status = getattr(getattr(exc, "response", None), "status_code", None)
+                    label = type(exc).__name__ if status is None else f"{type(exc).__name__}:{status}"
+                    ai_failures[label] = ai_failures.get(label, 0) + 1
                 if model is not None and record_ai is not None and not (model.raw or {}).get("cached"):
                     try:
                         record_ai(model, digest, underlying.symbol)
                     except Exception:
                         pass
+        elif model is None and allowed and scan_capped:
+            ai_failures["scan_cap"] = ai_failures.get("scan_cap", 0) + 1
         if model is not None:
             model.input_hash = digest
             seen[digest] = model
@@ -261,7 +269,7 @@ def run_scan(
         if model is not None:
             chosen = next((item for item in shortlist if item.option_symbol == model.option_symbol), None)
         target = chosen or shortlist[0]
-        sector_name = (sector_of or {}).get(underlying.symbol, "UNCLASSIFIED")
+        sector_name = sector_key(underlying.symbol, sector_of)
         book = sector_book or {}
         sector_premium = Decimal(str(book.get(sector_name, 0)))
         open_premium = sum((Decimal(str(value)) for value in book.values()), Decimal("0"))
@@ -334,9 +342,8 @@ def run_scan(
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = "SECTOR_EXPOSURE_LIMIT"
         elif sector_book is not None and recommendation.decision is DecisionKind.BUY:
-            sector = (sector_of or {}).get(underlying.symbol, "UNCLASSIFIED")
             added = target.ask * Decimal(recommendation.quantity) * Decimal(config.contract_multiplier)
-            sector_reason = sector_exposure_reason(cash, sector, sector_book, added, config)
+            sector_reason = sector_exposure_reason(cash, sector_name, sector_book, added, config)
             if sector_reason:
                 recommendation.decision = DecisionKind.SUPPRESS
                 recommendation.suppress_reason = sector_reason
@@ -364,6 +371,7 @@ def run_scan(
                 "risk_checked": risk_checked,
                 "risk_passed": risk_passed,
                 "ai_calls": ai_calls,
+                "ai_failures": ai_failures,
                 "buys": buys,
                 "decisions": len(results),
             }

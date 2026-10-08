@@ -127,6 +127,8 @@ def fresh_quote_reasons(settings: Settings, symbol: str, intent: str, now: datet
         reasons.append("מצב השוק אינו מאפשר כניסה")
     if context.get("session_open") is not True:
         reasons.append("הסשן אינו פתוח")
+    if context.get("entry_window_open") is False:
+        reasons.append("ENTRY_CUTOFF: אין כניסות חדשות בדקות האחרונות לפני הסגירה")
     if context.get("exposure_ok") is not True:
         reasons.append("החשיפה אינה במגבלה")
     if context.get("daily_loss_ok") is not True:

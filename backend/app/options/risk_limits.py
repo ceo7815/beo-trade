@@ -39,6 +39,13 @@ def daily_loss_reason(equity: Decimal, daily_pnl: Decimal, config: TradingConfig
     return None
 
 
+def sector_key(underlying: str, sector_of: dict[str, str] | None = None) -> str:
+    """Without a known sector a name is its own bucket. One shared unknown bucket would cap all exposure at the sector limit."""
+    symbol = str(underlying or "").strip().upper()
+    known = (sector_of or {}).get(symbol)
+    return known if known else f"UNCLASSIFIED:{symbol}"
+
+
 def sector_exposure_reason(
     equity: Decimal,
     sector: str,
@@ -46,7 +53,7 @@ def sector_exposure_reason(
     added_premium: Decimal,
     config: TradingConfig,
 ) -> str | None:
-    """One sector bucket. A name without a sector is UNCLASSIFIED and still counts."""
+    """One sector bucket, keyed by sector_key."""
     if equity <= 0 or added_premium < 0:
         return "SECTOR_EXPOSURE_LIMIT"
     cap = equity * Decimal(str(config.max_sector_exposure_pct))

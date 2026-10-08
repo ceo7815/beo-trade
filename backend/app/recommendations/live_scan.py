@@ -198,6 +198,7 @@ def execute_scan(
         "risk_checked": counts.get("risk_checked", 0),
         "risk_passed": counts.get("risk_passed", 0),
         "ai_calls": counter.calls,
+        "ai_failures": counts.get("ai_failures", {}),
         "buys": counts.get("buys", 0),
         "decisions": len(rows),
         "rejections": len(rejections),

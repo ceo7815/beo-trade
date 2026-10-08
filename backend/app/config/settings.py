@@ -73,6 +73,7 @@ class TradingConfig:
     trailing_pct: float = 0.15
     exit_before_expiration_minutes: int = 20
     session_exit_minutes: int = 15
+    entry_cutoff_minutes: int = 30
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
     max_contracts: int = 100

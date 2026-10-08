@@ -11,6 +11,12 @@ from app.config.settings import Settings, TradingConfig
 CACHE_PATH = Path(__file__).resolve().parents[2] / "data" / "universe_cache.json"
 _MEMORY: dict[str, "UniverseBook"] = {}
 _SYMBOL = re.compile(r"^[A-Z]{1,5}(?:\.[A-Z])?$")
+# Leveraged and inverse funds reset daily and move several times the index. Their options are not sized for that.
+_LEVERAGED = re.compile(
+    r"(?<![\w.])-?\d(?:\.\d+)?x(?![\w])|\bproshares\s+(?:ultra|ultrapro|ultrashort|short)\b|\bleveraged\b|\binverse\b|\bdaily\b.*\b(?:bull|bear)\b",
+    re.IGNORECASE,
+)
+FILTER_VERSION = 2
 FIXED_WATCHLIST = ("NVDA", "TSLA", "AAPL", "AMD", "AMZN", "META", "MSFT", "GOOGL", "NFLX", "AVGO", "COIN", "MSTR", "PLTR", "BA", "JPM")
 
 
@@ -29,6 +35,11 @@ class UniverseBook:
     cursor: int
     detail: str
     liquidity: dict[str, int] | None = None
+    filter_version: int = FILTER_VERSION
+
+
+def is_leveraged_fund(name: str) -> bool:
+    return bool(_LEVERAGED.search(str(name or "")))
 
 
 def reset_universe_state() -> None:
@@ -65,6 +76,8 @@ def filter_optionable_equities(rows: list[dict], exclusions: tuple[str, ...] = (
         if "has_options" not in _attributes(row):
             continue
         if not _SYMBOL.match(symbol) or symbol in blocked:
+            continue
+        if is_leveraged_fund(str(row.get("name") or "")):
             continue
         kept.append(symbol)
     return tuple(dict.fromkeys(kept)), discovered
@@ -127,6 +140,7 @@ def _read_cache(path: Path) -> UniverseBook | None:
         cursor=int(raw.get("cursor") or 0),
         detail=str(raw.get("detail") or ""),
         liquidity={str(key).upper(): int(value) for key, value in (raw.get("liquidity") or {}).items() if int(value) > 0},
+        filter_version=int(raw.get("filter_version") or 0),
     )
     _MEMORY[key] = book
     return book
@@ -146,6 +160,7 @@ def _write_cache(path: Path, book: UniverseBook) -> None:
                 "cursor": book.cursor,
                 "detail": book.detail,
                 "liquidity": book.liquidity or {},
+                "filter_version": book.filter_version,
             }
         ),
         encoding="utf-8",
@@ -231,7 +246,8 @@ def fetch_assets(settings: Settings) -> list[dict]:
 def load_universe(settings: Settings, config: TradingConfig, now: datetime, cache_path: Path | None = None) -> UniverseBook:
     path = cache_path or CACHE_PATH
     cached = _read_cache(path)
-    if cached is not None and _fresh(cached, now, config.universe_refresh_seconds) and cached.symbols:
+    current = cached is not None and cached.filter_version == FILTER_VERSION
+    if current and _fresh(cached, now, config.universe_refresh_seconds) and cached.symbols:
         visible = tuple(symbol for symbol in cached.symbols if symbol not in set(config.universe_exclusions))
         return replace(cached, symbols=visible, filtered=len(visible))
     try:

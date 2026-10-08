@@ -50,6 +50,8 @@ max_contracts = 100
 holding_minutes_0dte = 90
 holding_minutes_1dte = 180
 session_exit_minutes = 15
+# No new entry this close to the bell. It covers the exit window plus the minimum holding time.
+entry_cutoff_minutes = 30
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25
