@@ -42,6 +42,8 @@ _state = _State()
 _bundle: tuple[datetime, dict] | None = None
 # Prior-session bars do not change during a session. Keyed by (kind, symbol, session day).
 _prior: dict[tuple[str, str, date], list[dict]] = {}
+# A month of minute bars per symbol is heavy; rotating symbols beyond this many are refetched.
+MAX_ROTATING_PRIOR = 40
 
 
 def reset_theta_state() -> None:
@@ -251,8 +253,7 @@ class ThetaFeed:
         if cached is not None:
             return cached
         rows = self._get(path, params, required=required)
-        pinned = {item.strip().upper() for item in self.settings.trading().core_symbols}
-        if rows and key[1] in pinned:
+        if rows:
             for stale in [item for item in list(_prior) if item[2] != key[2]]:
                 _prior.pop(stale, None)
             if key[0] == "1m":
@@ -260,6 +261,11 @@ class ThetaFeed:
                     {"timestamp": row.get("timestamp") or row.get("created") or row.get("last_trade"), "volume": row.get("volume")}
                     for row in rows
                 ]
+            pinned = {item.strip().upper() for item in self.settings.trading().core_symbols}
+            if key[1] not in pinned:
+                rotating = [item for item in _prior if item[0] == key[0] and item[1] not in pinned]
+                for oldest in rotating[: max(0, len(rotating) - MAX_ROTATING_PRIOR + 1)]:
+                    _prior.pop(oldest, None)
             _prior[key] = rows
         return rows
 

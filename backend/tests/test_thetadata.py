@@ -626,3 +626,20 @@ def test_http_scan_enters_run_scan_from_terminal_payload(tmp_path, monkeypatch):
         assert status["market_status"]["quote_count"] >= 1
         assert status["market_status"]["last_error"] is None
         assert status["paper_only"] is True
+
+
+def test_rotating_symbols_keep_prior_bars_within_a_cap(monkeypatch):
+    import app.providers.thetadata as theta
+
+    monkeypatch.setattr(theta, "MAX_ROTATING_PRIOR", 2)
+    calls = []
+
+    def handler(request):
+        calls.append(request.url.params["symbol"])
+        return httpx.Response(200, json={"response": [{"timestamp": "2026-09-30T10:00:00", "volume": 5}]})
+
+    feed = ThetaFeed(_settings(), transport=httpx.MockTransport(handler))
+    day = datetime(2026, 10, 1).date()
+    for symbol in ("AAA", "AAA", "BBB", "CCC", "AAA"):
+        feed._prior_rows(("1m", symbol, day), "/v3/stock/history/ohlc", {"symbol": symbol}, required=False)
+    assert calls == ["AAA", "BBB", "CCC", "AAA"]
