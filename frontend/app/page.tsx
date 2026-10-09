@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { PHASES, apiGet, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 
@@ -161,50 +161,34 @@ function Board() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
   const [totals, setTotals] = useState<TradeTotals | null>(null);
-  const [missing, setMissing] = useState("");
+  const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
-    async function load() {
-      const [deskBody, statusBody, accountBody, positionBody, orderBody, todayBody, auditBody, riskBody] = await Promise.allSettled([
-        apiGet<Desk>("/api/v1/desk"),
-        apiGet<SystemStatus>("/api/v1/system"),
-        apiGet<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account"),
-        apiGet<{ items?: Position[] }>("/api/v1/broker/alpaca/positions"),
-        apiGet<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open"),
-        apiGet<TodayReport>("/api/v1/report/trades?period=today"),
-        apiGet<{ items: AuditRow[] }>("/api/v1/audit"),
-        apiGet<Risk>("/api/v1/risk"),
-      ]);
-      if (!alive) return;
-      if (deskBody.status === "fulfilled") setDesk(deskBody.value);
-      if (statusBody.status === "fulfilled") setStatus(statusBody.value);
-      if (accountBody.status === "fulfilled") {
-        setAccount(accountBody.value.account || null);
-        setMissing("");
-      } else setMissing("אין נתוני חשבון");
-      if (positionBody.status === "fulfilled") setPositions(positionBody.value.items || []);
-      if (orderBody.status === "fulfilled") setOrders(orderBody.value.items || []);
-      if (todayBody.status === "fulfilled") setToday(todayBody.value);
-      if (auditBody.status === "fulfilled") setAudit(auditBody.value.items || []);
-      if (riskBody.status === "fulfilled") setRisk(riskBody.value);
-    }
-    function loadTotals() {
-      apiGet<{ summary?: TradeTotals }>("/api/v1/report/trades")
-        .then((body) => alive && setTotals(body.summary ?? null))
-        .catch(() => undefined);
-    }
-    load();
-    loadTotals();
-    const timer = window.setInterval(load, 12000);
-    const totalsTimer = window.setInterval(loadTotals, 60000);
+    const feed = <T,>(path: string, apply: (body: T) => void, everyMs: number) =>
+      poll(async () => {
+        const body = await apiGet<T>(path);
+        if (!alive) return;
+        apply(body);
+        setSyncedAt(Date.now());
+      }, everyMs);
+    const stops = [
+      feed<Desk>("/api/v1/desk", setDesk, 5000),
+      feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => setPositions(body.items || []), 5000),
+      feed<Risk>("/api/v1/risk", setRisk, 8000),
+      feed<TodayReport>("/api/v1/report/trades?period=today", setToday, 10000),
+      feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 10000),
+      feed<SystemStatus>("/api/v1/system", setStatus, 10000),
+      feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 15000),
+      feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => setAccount(body.account || null), 15000),
+      feed<{ summary?: TradeTotals }>("/api/v1/report/trades", (body) => setTotals(body.summary ?? null), 60000),
+    ];
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
-      window.clearInterval(totalsTimer);
-      window.clearInterval(timer);
+      stops.forEach((stop) => stop());
       window.clearInterval(clockTimer);
     };
   }, []);
@@ -220,6 +204,7 @@ function Board() {
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
+  const sync = syncOf(syncedAt, now);
 
   return (
     <section className="ops">
@@ -230,6 +215,7 @@ function Board() {
           <p>מה המערכת עושה עכשיו</p>
         </div>
         <div className="ops-pips">
+          <span className={`ops-pip ${sync.tone}`}><i />{sync.text}</span>
           <span className={`ops-pip ${desk ? (desk.autonomous ? "on" : "off") : "warn"}`}>
             <i />
             {desk ? (desk.autonomous ? "מנוע ON" : "מנוע OFF") : "מנוע"}
@@ -429,7 +415,6 @@ function Board() {
             </div>
           </section>
       </div>
-      {missing ? <p className="ops-line">{missing}</p> : null}
       {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
     </section>
   );
@@ -543,6 +528,13 @@ function Node({ label, value }: { label: string; value: string }) {
       <b className="num">{value}</b>
     </div>
   );
+}
+
+function syncOf(syncedAt: number | null, now: number) {
+  if (syncedAt == null) return { text: "מתחבר", tone: "warn" };
+  const seconds = Math.max(0, Math.round((now - syncedAt) / 1000));
+  if (seconds <= 20) return { text: "חי", tone: "on" };
+  return { text: `עודכן לפני ${ageLabel(seconds)}`, tone: seconds > 90 ? "off" : "warn" };
 }
 
 function liveAge(base: number | null | undefined, beatAt: number | null, now: number) {

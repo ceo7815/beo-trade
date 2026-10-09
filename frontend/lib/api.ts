@@ -136,12 +136,50 @@ export const PHASES: Record<string, string> = {
   DAILY_REPORT: "סיכום יומי",
 };
 
-export async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`/backend${path}`, { cache: "no-store" });
-  if (!response.ok) {
-    throw new Error("הבקשה נכשלה");
+export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
+    if (!response.ok) {
+      throw new Error("הבקשה נכשלה");
+    }
+    return (await response.json()) as T;
+  } finally {
+    clearTimeout(timer);
   }
-  return response.json() as Promise<T>;
+}
+
+export function poll(task: () => Promise<unknown>, everyMs: number): () => void {
+  let stopped = false;
+  let busy = false;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const run = async () => {
+    if (stopped || busy) return;
+    busy = true;
+    try {
+      await task().catch(() => undefined);
+    } finally {
+      busy = false;
+      if (!stopped) timer = setTimeout(run, document.hidden ? everyMs * 3 : everyMs);
+    }
+  };
+  const wake = () => {
+    if (document.hidden || busy) return;
+    clearTimeout(timer);
+    run();
+  };
+  document.addEventListener("visibilitychange", wake);
+  window.addEventListener("online", wake);
+  window.addEventListener("focus", wake);
+  run();
+  return () => {
+    stopped = true;
+    clearTimeout(timer);
+    document.removeEventListener("visibilitychange", wake);
+    window.removeEventListener("online", wake);
+    window.removeEventListener("focus", wake);
+  };
 }
 
 export async function apiDelete(path: string): Promise<void> {

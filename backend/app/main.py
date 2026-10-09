@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -45,6 +46,26 @@ from app.security.auth import user_id_from_header
 from app.security.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
 
 log = structlog.get_logger()
+_feed_refresh = threading.Lock()
+
+
+def _refresh_feeds(provider_set, now: datetime) -> None:
+    if not _feed_refresh.acquire(blocking=False):
+        return
+
+    def run() -> None:
+        try:
+            for feed in (provider_set.macro, provider_set.research):
+                if feed is None:
+                    continue
+                try:
+                    feed.latest(now)
+                except Exception as exc:
+                    log.warning("feed_refresh_failed", feed=getattr(feed, "name", "?"), error=type(exc).__name__)
+        finally:
+            _feed_refresh.release()
+
+    threading.Thread(target=run, name="feed-refresh", daemon=True).start()
 
 
 def _money(value) -> str:
@@ -152,7 +173,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.add_middleware(SecurityHeadersMiddleware)
     # The desk polls several live endpoints. Local use stays well above the
     # production ceiling so a single open tab cannot lock itself out.
-    rate_limit = 120 if current.app_env == "production" else 2000
+    rate_limit = 600 if current.app_env == "production" else 2000
     app.add_middleware(RateLimitMiddleware, limit=rate_limit)
     app.add_middleware(
         CORSMiddleware,
@@ -198,11 +219,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         news_status = provider_set.news_status()
         market_status = provider_set.market_status()
         options_status = provider_set.options_status()
-        if provider_set.macro is not None:
-            provider_set.macro.latest(now)
+        _refresh_feeds(provider_set, now)
         macro_status = provider_set.macro_status()
-        if provider_set.research is not None:
-            provider_set.research.latest(now)
         research_status = provider_set.research_status()
         alerts: list[str] = []
         missing_labels = [

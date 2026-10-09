@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { PHASES, apiGet, apiPost, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, apiPost, poll, type SystemStatus } from "@/lib/api";
 import { LogoLockup } from "@/components/Logo";
 
 type DeskData = { query: string; status: SystemStatus | null };
@@ -110,24 +110,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let alive = true;
-    const load = async () => {
+    let misses = 0;
+    const stop = poll(async () => {
       try {
         const nextStatus = await apiGet<SystemStatus>("/api/v1/system");
         if (!alive) return;
+        misses = 0;
         setStatus(nextStatus);
         setLink("up");
+        setNote((current) => (current === "החיבור לשרת נקטע" ? "" : current));
       } catch {
-        if (alive) {
+        misses += 1;
+        if (alive && misses >= 3) {
           setLink("down");
           setNote("החיבור לשרת נקטע");
         }
       }
-    };
-    load();
-    const timer = setInterval(load, 5000);
+    }, 10000);
     return () => {
       alive = false;
-      clearInterval(timer);
+      stop();
     };
   }, []);
 

@@ -29,7 +29,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if request.url.path in {"/health", "/ready", "/metrics"}:
             return await call_next(request)
         now = time.time()
-        key = request.client.host if request.client else "local"
+        forwarded = request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+        key = forwarded or (request.client.host if request.client else "local")
         recent = [stamp for stamp in self.hits[key] if now - stamp < self.window]
         if len(recent) >= self.limit:
             return JSONResponse({"detail": "יותר מדי בקשות"}, status_code=429)
