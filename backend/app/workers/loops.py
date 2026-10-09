@@ -168,6 +168,10 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
     return {"ok": True, "recommendations": len(result.recommendations), "blocked": ""}
 
 
+# Wide-spread hits for an open contract. One check is not an exit. Reset when the process restarts.
+_liquidity_hits: dict[str, int] = {}
+
+
 def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, now: datetime | None = None, submit: bool = True) -> dict:
     """A mark or an exit exists only when a real quote was supplied or loaded. Nothing is invented."""
     from app.broker.execution import place_order
@@ -175,7 +179,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     from app.broker.store import record_trade_event
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
     from app.models.db import session_scope
-    from app.paper_trading.engine import exit_signal
+    from app.paper_trading.engine import _spread_wide, exit_signal
     from app.schemas.domain import PaperFill
 
     moment = now or datetime.now(timezone.utc)
@@ -207,7 +211,10 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             signal = None
             session_open, session_close = _session_state(settings, adapter, moment)
             if session_open is not None:
-                signal = exit_signal(fill, option, underlying, moment, settings.trading(), session_open, session_close, locked)
+                trading = settings.trading()
+                prior_hits = _liquidity_hits.get(symbol, 0)
+                signal = exit_signal(fill, option, underlying, moment, trading, session_open, session_close, locked, prior_hits)
+                _liquidity_hits[symbol] = prior_hits + 1 if _spread_wide(option, trading) else 0
             if signal is None:
                 continue
             exits.append({"symbol": symbol, "reason": signal.reason, "observed": str(signal.exit_price), "source": "thetadata"})

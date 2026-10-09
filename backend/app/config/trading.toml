@@ -1,9 +1,10 @@
 # All scan, risk, and session thresholds. Change this file, then restart.
 # Fractions are 0–1 unless the name says percent (those are also 0–1 here).
 
-# A quoted contract is eligible. Volume and open interest stay on the record and no longer block a paper entry.
-min_option_volume = 0
-min_open_interest = 0
+# Entry only. A thin contract can pass a 15% spread and then become unsellable, as AGQ and KORU did.
+# Daily volume starts at zero, so these floors must not force an exit.
+min_option_volume = 50
+min_open_interest = 100
 max_bid_ask_spread = 0.15
 # Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
 min_underlying_volume = 1000000
@@ -92,9 +93,11 @@ kill_switch = false
 recommendation_max_age_seconds = 600
 revalidation_max_price_drift = 0.03
 liquidity_exit_spread = 0.25
+# One wide quote is not an exit. The monitor runs about every 15 seconds, so two hits is about half a minute.
+liquidity_exit_confirmations = 2
 scan_strike_range = 15
 # Option chains are read only for the top-ranked names that passed the stock gates. 0 reads every one.
-max_chains_per_scan = 6
+max_chains_per_scan = 12
 min_eod_days = 5
 universe_max_symbols_per_scan = 40
 universe_refresh_seconds = 21600

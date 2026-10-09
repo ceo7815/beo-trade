@@ -74,6 +74,12 @@ def _expiration_due(option: OptionSnapshot, now: datetime, config: TradingConfig
     return 0 <= until_close <= config.exit_before_expiration_minutes
 
 
+def _spread_wide(option: OptionSnapshot, config: TradingConfig) -> bool:
+    if option.bid <= 0 or option.mid <= 0:
+        return False
+    return (option.ask - option.bid) / option.mid > Decimal(str(config.liquidity_exit_spread))
+
+
 def exit_signal(
     fill: PaperFill,
     option: OptionSnapshot,
@@ -83,8 +89,11 @@ def exit_signal(
     session_open: bool,
     session_close: datetime | None = None,
     locked: dict | None = None,
+    liquidity_hits: int = 0,
 ) -> ExitSignal | None:
     """Precedence: kill, session, expiration, invalidation, liquidity, stop, trail, time.
+
+    liquidity_hits is how many earlier checks already saw a wide spread. Volume floors are entry-only.
 
     A bid at or below zero is not an executable quote, so no order is invented.
     Reaching +2R does not close the position by itself.
@@ -110,11 +119,10 @@ def exit_signal(
             return ExitSignal("INVALIDATION", option.bid, option.observed_at)
         if fill.delta_at_entry < 0 and underlying.price >= fill.underlying_at_entry * (Decimal("1") + against):
             return ExitSignal("INVALIDATION", option.bid, option.observed_at)
-    spread = (option.ask - option.bid) / option.mid if option.mid > 0 else None
-    if spread is not None and spread > Decimal(str(config.liquidity_exit_spread)):
-        return ExitSignal("LIQUIDITY", option.bid, option.observed_at)
-    if option.volume < config.min_option_volume or option.open_interest < config.min_open_interest:
-        return ExitSignal("LIQUIDITY", option.bid, option.observed_at)
+    if _spread_wide(option, config):
+        needed = max(1, config.liquidity_exit_confirmations)
+        if liquidity_hits + 1 >= needed:
+            return ExitSignal("LIQUIDITY", option.bid, option.observed_at)
     one_r = fill.entry_price * Decimal(str(config.initial_stop_decline_pct))
     if locked and locked.get("one_r_price"):
         one_r = Decimal(str(locked["one_r_price"]))

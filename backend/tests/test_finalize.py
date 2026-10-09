@@ -86,7 +86,9 @@ def test_exit_rules(tmp_path):
     runner.max_favorable = Decimal("0.70")
     trailing = exit_signal(runner, _option("1.20", "1.24"), underlying, NOW + timedelta(minutes=10), config, True)
     assert trailing.reason == "TRAILING"
-    assert exit_signal(_fill(), _option("1.00", "1.40"), underlying, NOW, config, True).reason == "LIQUIDITY"
+    wide = _option("1.00", "1.40")
+    assert exit_signal(_fill(), wide, underlying, NOW, config, True, liquidity_hits=0) is None
+    assert exit_signal(_fill(), wide, underlying, NOW, config, True, liquidity_hits=1).reason == "LIQUIDITY"
     killed = exit_signal(_fill(), _option("1.00", "1.02"), underlying, NOW, _config(kill_switch=True), True)
     assert killed.reason == "KILL_SWITCH"
     close = datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc)

@@ -117,7 +117,7 @@ def exit_story(trade: dict, config: TradingConfig) -> list[str]:
     elif reason == "INVALIDATION":
         lines.append(f"המניה זזה {config.invalidation_underlying_percent * 100:.0f}% נגד הכיוון שהימרנו עליו. הסיבה שבגללה נכנסנו כבר לא הייתה נכונה, אז יצאנו.")
     elif reason == "LIQUIDITY":
-        lines.append("המסחר בחוזה נהיה דליל, או שהמרווח בין קנייה למכירה גדל מדי. יצאנו לפני שיהיה קשה למכור.")
+        lines.append("המרווח בין קנייה למכירה נשאר רחב בשתי בדיקות רצופות. יצאנו לפני שיהיה קשה למכור.")
     elif reason in {"KILL_SWITCH", "CLOSE_ALL"}:
         lines.append("כל הפוזיציות נסגרו בבקשה ידנית או בעצירת חירום.")
     else:
