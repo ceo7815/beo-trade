@@ -27,6 +27,8 @@ KILL_SWITCH, SESSION_CLOSE, EXPIRATION, INVALIDATION, LIQUIDITY, STOP or PROTECT
 
 Do not widen the stop. One full stop is about 40% of the premium (`initial_stop_decline_pct` 0.40). Protection arms at +1R and moves the stop to entry minus 0.25R. The trail arms at +1.5R and exits 15% off the peak. 0DTE holding limit is 90 minutes. 1DTE is 180. Winners came from the trail and the time stop on liquid names (HOOD, MU, MSTR, SMCI).
 
+A stop is not a guaranteed price, and nothing protects a position held overnight. A resting sell above the bid is moved to the bid after `exit_reprice_seconds`, and on every check inside `exit_reprice_close_minutes` of the close. Before that fix a 15:40 exit limit of 2.34 sat unfilled, expired at the close, and QQQ PUT sold at 0.30 the next open (−$4,620).
+
 ## Liquidity
 
 Entry only: option volume at least 50 and open interest at least 100 (`trading.toml`). Daily volume starts at zero, so those floors must not force an exit.

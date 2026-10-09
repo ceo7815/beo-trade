@@ -245,6 +245,100 @@ def test_holding_time_and_invalidation_use_stored_entry(tmp_path):
     assert signal.reason == "INVALIDATION"
 
 
+def test_resting_exit_above_the_bid_follows_the_bid(tmp_path):
+    from app.models.db import configure_database, init_db, session_scope
+    from app.workers.loops import monitor_once
+
+    settings = _settings(tmp_path)
+    configure_database(settings)
+    init_db(settings)
+    symbol = "NVDA261002C00100000"
+    with session_scope() as session:
+        open_state(
+            session,
+            trade_id="trade-chase",
+            symbol=symbol,
+            underlying="NVDA",
+            entry_price=Decimal("5"),
+            quantity=1,
+            entry_time=NOW - timedelta(minutes=91),
+            config=TradingConfig(),
+            entry_underlying=Decimal("100"),
+            entry_delta=Decimal("0.45"),
+        )
+        session.commit()
+
+    class Adapter:
+        def __init__(self, limit: str, age_seconds: int):
+            self.order = {
+                "broker_order_id": "ord-1",
+                "symbol": symbol,
+                "position_intent": "sell_to_close",
+                "internal_state": "ACCEPTED",
+                "limit_price": limit,
+                "submitted_at": (NOW - timedelta(seconds=age_seconds)).isoformat(),
+            }
+            self.replaced = []
+            self.submitted = []
+
+        def sync_positions(self):
+            return [{"symbol": symbol, "qty": "1", "avg_entry_price": "5", "trade_id": "trade-chase"}]
+
+        def get_market_clock(self):
+            return {"is_open": True}
+
+        def get_orders(self, status="all"):
+            return [self.order]
+
+        def replace_order(self, order_id, body):
+            self.replaced.append((order_id, body))
+            return {"broker_order_id": "ord-2", "symbol": symbol, "limit_price": body["limit_price"], "internal_state": "ACCEPTED"}
+
+        def submit_exit_order(self, body):
+            self.submitted.append(body)
+            return {}
+
+        def close(self):
+            return None
+
+    quotes = {symbol: {"option": _option("5.10", "5.20"), "underlying": _underlying()}}
+
+    stale = Adapter("5.40", 30)
+    result = monitor_once(settings, quotes, stale, NOW)
+    assert stale.replaced == [("ord-1", {"limit_price": "5.10"})]
+    assert stale.submitted == []
+    assert result["exits"][0]["repriced"] == "5.10"
+
+    fresh = Adapter("5.40", 5)
+    monitor_once(settings, quotes, fresh, NOW)
+    assert fresh.replaced == []
+    assert fresh.submitted == []
+
+    at_bid = Adapter("5.10", 30)
+    monitor_once(settings, quotes, at_bid, NOW)
+    assert at_bid.replaced == []
+
+
+def test_exit_follows_the_bid_on_every_check_near_the_close(tmp_path):
+    from types import SimpleNamespace
+
+    from app.models.db import configure_database, init_db, session_scope
+    from app.workers.loops import _reprice_exit
+
+    settings = _settings(tmp_path)
+    configure_database(settings)
+    init_db(settings)
+    calls = []
+    adapter = SimpleNamespace(replace_order=lambda order_id, body: calls.append(body) or {})
+    order = {"broker_order_id": "ord-1", "limit_price": "2.34", "submitted_at": (NOW - timedelta(seconds=5)).isoformat()}
+    signal = SimpleNamespace(exit_price=Decimal("1.57"), reason="EXPIRATION")
+    config = TradingConfig()
+    with session_scope() as session:
+        assert _reprice_exit(adapter, session, "t", order, signal, NOW, NOW + timedelta(minutes=30), config) is None
+        assert _reprice_exit(adapter, session, "t", order, signal, NOW, NOW + timedelta(minutes=3), config) == "1.57"
+    assert calls == [{"limit_price": "1.57"}]
+
+
 def test_aggregate_and_underlying_block_the_buy():
     config = TradingConfig()
     option = _option("4.90", "5.00", expiration=NOW.date() + timedelta(days=2))

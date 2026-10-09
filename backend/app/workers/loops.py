@@ -218,7 +218,14 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             if signal is None:
                 continue
             exits.append({"symbol": symbol, "reason": signal.reason, "observed": str(signal.exit_price), "source": "thetadata"})
+            working = _working_exit(adapter, symbol) if submit else None
             with session_scope() as session:
+                if working is not None:
+                    moved = _reprice_exit(adapter, session, trade_id, working, signal, moment, session_close, settings.trading())
+                    if moved:
+                        exits[-1]["repriced"] = moved
+                    session.commit()
+                    continue
                 record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {signal.exit_price}")
                 if submit:
                     try:
@@ -244,6 +251,58 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     finally:
         if owns_adapter:
             adapter.close()
+
+
+def _working_exit(adapter, symbol: str) -> dict | None:
+    from app.broker.normalize import OPEN_ORDER_STATES
+
+    if not hasattr(adapter, "get_orders"):
+        return None
+    try:
+        rows = adapter.get_orders("open")
+    except Exception:
+        return None
+    for row in rows:
+        if str(row.get("symbol") or "").replace(" ", "") != symbol:
+            continue
+        if row.get("position_intent") == "sell_to_close" and row.get("internal_state") in OPEN_ORDER_STATES:
+            return row
+    return None
+
+
+def _reprice_exit(adapter, session, trade_id: str, order: dict, signal, moment: datetime, session_close: datetime | None, trading) -> str | None:
+    """A resting sell above the bid does not fill. Move it to the bid instead of waiting for the close."""
+    from app.broker.store import record_trade_event, remember_orders
+
+    try:
+        limit = Decimal(str(order.get("limit_price")))
+    except Exception:
+        return None
+    bid = signal.exit_price
+    if bid <= 0 or bid >= limit:
+        return None
+    stamp = str(order.get("submitted_at") or order.get("created_at") or "")
+    try:
+        placed = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+    except ValueError:
+        placed = None
+    age = None if placed is None else (moment - placed).total_seconds()
+    closing = session_close is not None and 0 <= (session_close - moment).total_seconds() / 60 <= trading.exit_reprice_close_minutes
+    if not closing and age is not None and age < trading.exit_reprice_seconds:
+        return None
+    order_id = str(order.get("broker_order_id") or order.get("id") or "")
+    if not order_id:
+        return None
+    try:
+        replaced = adapter.replace_order(order_id, {"limit_price": str(bid)})
+    except Exception as exc:
+        record_trade_event(session, trade_id, "BLOCKED", "beo-trade", f"EXIT_REPRICE {limit} -> {bid}: {str(exc)[:200]}")
+        return None
+    record_trade_event(session, trade_id, "EXIT_REPRICED", "alpaca-paper", f"{signal.reason} {limit} -> {bid}")
+    if replaced:
+        replaced.setdefault("trade_id", trade_id)
+        remember_orders(session, [replaced])
+    return str(bid)
 
 
 def _held_underlyings(positions: list[dict]) -> tuple[str, ...]:

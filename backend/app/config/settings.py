@@ -102,6 +102,8 @@ class TradingConfig:
     revalidation_max_price_drift: float = 0.03
     liquidity_exit_spread: float = 0.25
     liquidity_exit_confirmations: int = 2
+    exit_reprice_seconds: int = 15
+    exit_reprice_close_minutes: int = 5
     scan_strike_range: int = 15
     min_eod_days: int = 5
     universe_max_symbols_per_scan: int = 40

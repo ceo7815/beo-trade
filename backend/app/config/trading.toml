@@ -95,6 +95,10 @@ revalidation_max_price_drift = 0.03
 liquidity_exit_spread = 0.25
 # One wide quote is not an exit. The monitor runs about every 15 seconds, so two hits is about half a minute.
 liquidity_exit_confirmations = 2
+# A resting sell above the bid is moved down to the bid once it is this old. A stale exit limit kept QQQ open overnight.
+exit_reprice_seconds = 15
+# Inside this many minutes before the close a resting exit follows the bid on every check, whatever its age.
+exit_reprice_close_minutes = 5
 scan_strike_range = 15
 # Option chains are read only for the top-ranked names that passed the stock gates. 0 reads every one.
 max_chains_per_scan = 12
