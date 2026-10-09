@@ -1,9 +1,17 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
   title: "Beo-Trade",
   description: "דסק חי להמלצות אופציות ולמעקב רווח. חשבון Alpaca Paper.",
+  appleWebApp: { capable: true, title: "Beo-Trade", statusBarStyle: "black-translucent" },
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  themeColor: "#0b0c0e",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

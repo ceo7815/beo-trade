@@ -44,15 +44,28 @@ type FlowTrade = {
   exit_reason?: string | null;
   held_minutes?: number | null;
   story?: Story | null;
+  plan?: { planned_risk?: string | null } | null;
+  levels?: { pnl_at_active_exit?: string | null } | null;
+};
+
+type DaySummary = {
+  closed_count?: number;
+  wins?: number;
+  losses?: number;
+  realized_pnl?: string;
+  unrealized_pnl?: string;
+  invested_closed?: string;
+  open_invested?: string;
+  open_count?: number;
 };
 
 type TodayReport = {
-  summary?: { closed_count?: number; wins?: number; losses?: number; realized_pnl?: string; unrealized_pnl?: string; total_pnl?: string } | null;
+  summary?: DaySummary | null;
   closed?: FlowTrade[];
   open?: FlowTrade[];
 };
 
-type FlowEvent = { at: string; kind: "entry" | "exit" | "blocked"; trade: FlowTrade | null; text: string };
+type FlowEvent = { at: string; kind: "entry" | "exit" | "blocked"; trade: FlowTrade | null; title: string; lines: string[] };
 
 type BrokerAccount = {
   equity?: string | null;
@@ -108,20 +121,6 @@ function ageLabel(seconds: number | null | undefined) {
   if (seconds === null || seconds === undefined) return "אין פעימה";
   if (seconds < 60) return `${Math.floor(seconds)} שנ׳`;
   return `${Math.floor(seconds / 60)} דק׳`;
-}
-
-function riskOf(positions: Position[] | null): { cost: number; pnl: number } | null {
-  if (positions === null) return null;
-  let cost = 0;
-  let pnl = 0;
-  for (const item of positions) {
-    const basis = Number(item.cost_basis);
-    const gain = Number(item.unrealized_pl);
-    if (!item.current_price || !Number.isFinite(basis) || !Number.isFinite(gain)) return null;
-    cost += Math.abs(basis);
-    pnl += gain;
-  }
-  return { cost, pnl };
 }
 
 function share(value: string | number | null | undefined) {
@@ -214,17 +213,17 @@ function Board() {
     if (desk?.heartbeat_age_seconds != null) setBeatAt(Date.now());
   }, [desk?.heartbeat_age_seconds]);
 
-  const equity = account?.equity ? Number(account.equity) : null;
-  const pnl = risk?.today_pnl == null || risk.today_pnl === "" ? null : Number(risk.today_pnl);
+  const dayPnl = num(risk?.today_pnl);
   const scan = desk?.last_scan ?? null;
   const exposure = exposureOf(positions);
-  const atRisk = riskOf(positions);
+  const stake = stakeOf(today?.open, positions);
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
 
   return (
     <section className="ops">
+      <div className="ops-fit">
       <header className="ops-head">
         <div>
           <h1>לוח ראשי</h1>
@@ -247,16 +246,13 @@ function Board() {
       <p className="ops-line">{narrative}</p>
 
       <div className="ops-book">
-        <Cell label="הון עצמי" hint="Equity" value={money(account?.equity)} />
-        <Cell label="מזומן" hint="Cash" value={money(account?.cash)} />
-        <Cell label="כוח קנייה" hint="Buying Power" value={money(account?.buying_power)} />
-        <Cell label="שווי תיק" hint="Portfolio" value={money(account?.portfolio_value)} />
-        <Cell label="רווח/הפסד היום" hint="P&L" value={pnl === null ? "אין נתונים" : money(pnl)} className={tone(pnl)} />
-        <Cell label="תשואה היום" hint="Return" value={pnl === null || !equity ? "אין נתונים" : `${((pnl / equity) * 100).toFixed(2)}%`} className={tone(pnl)} />
-        <Cell label="כסף בסיכון" hint="Invested" value={atRisk === null ? "אין נתונים" : money(atRisk.cost)} />
-        <Cell label="תשואה על הכסף בסיכון" hint="Return on Risk" value={atRisk === null ? "אין נתונים" : atRisk.cost > 0 ? share((atRisk.pnl / atRisk.cost) * 100) : "—"} className={tone(atRisk === null ? null : atRisk.pnl)} />
-        <Cell label="פוזיציות" value={positions === null ? "אין נתונים" : String(positions.length)} />
-        <Cell label="חשיפה" hint="Exposure" value={exposure === null ? "אין נתונים" : money(exposure)} />
+        <Cell label="רווח/הפסד היום" hint="P&L" value={dayPnl === null ? "אין נתונים" : signedMoney(dayPnl)} className={tone(dayPnl)} />
+        <ResultCell label="סגור היום" book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? "טוען" : "אין עסקה סגורה היום"} />
+        <ResultCell label="פתוח היום" book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? "טוען" : "אין פוזיציה פתוחה"} />
+        <Cell label="כסף בסיכון" hint="עד הסטופ" value={stake === null ? "אין נתונים" : money(stake.dollars)} detail={stake?.note} />
+        <Cell label="הון עצמי" value={money(account?.equity)} />
+        <Cell label="מזומן" value={money(account?.cash)} />
+        <Cell label="כוח קנייה" value={money(account?.buying_power)} />
       </div>
 
       <div className="ops-meters">
@@ -265,11 +261,37 @@ function Board() {
         <Meter label="פוזיציות" used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
       </div>
 
-      <div className="ops-grid">
-        <div className="ops-main">
-          <section className="ops-pane">
-            <h2>פוזיציות פתוחות · Alpaca Paper · {positions === null ? "טוען" : `${positions.length} פתוחות`}</h2>
+      <div className="ops-stage">
+          <section className="ops-pane stage">
+            <header className="ops-pane-head">
+              <h2>פוזיציות פתוחות</h2>
+              <span>Alpaca Paper · {positions === null ? "טוען" : positions.length}</span>
+            </header>
             <div className="ops-scroll">
+              <div className="ops-cards">
+                {positions && positions.length > 0 ? positions.map((item) => (
+                  <button key={item.symbol} type="button" className="ops-card" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
+                    <header>
+                      <b>{item.underlying || "—"}</b>
+                      <small>{item.right || ""}</small>
+                    </header>
+                    <strong className={tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}>
+                      {item.current_price ? money(item.unrealized_pl) : "אין נתונים"}
+                      {item.current_price && item.unrealized_plpc ? <em>{share(Number(item.unrealized_plpc) * 100)}</em> : null}
+                    </strong>
+                    <dl>
+                      <div><dt>חוזים</dt><dd>{contracts(item.qty)}</dd></div>
+                      <div><dt>כניסה</dt><dd>{price(item.avg_entry_price)}</dd></div>
+                      <div><dt>עכשיו</dt><dd>{price(item.current_price)}</dd></div>
+                      <div><dt>הושקע</dt><dd>{money(item.cost_basis)}</dd></div>
+                      <div><dt>שווי</dt><dd>{money(item.market_value)}</dd></div>
+                      <div><dt>נפתחה</dt><dd>{clock(openedAt(today, item.symbol))}</dd></div>
+                    </dl>
+                  </button>
+                )) : (
+                  <p className="ops-card-empty">{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</p>
+                )}
+              </div>
               <table className="ops-table">
                 <thead>
                   <tr>
@@ -309,8 +331,11 @@ function Board() {
             </div>
           </section>
 
-          <section className="ops-pane grow">
-            <h2>זרם פעילות היום · כניסות ויציאות · {todayLine(today)}</h2>
+          <section className="ops-pane stage">
+            <header className="ops-pane-head">
+              <h2>זרם פעילות היום</h2>
+              <span>{todayLine(today)}</span>
+            </header>
             <div className="ops-scroll">
               {flowOf(today, scan).length === 0 ? (
                 <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
@@ -321,19 +346,25 @@ function Board() {
                   title={event.trade ? "לחץ להסבר על העסקה" : undefined}
                   onClick={() => event.trade && setPicked(event.trade)}
                 >
-                  <b className="num">{clock(event.at)}</b>
+                  <b className="num ops-flow-time">{clock(event.at)}</b>
                   <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
-                  <span>{event.text}</span>
+                  <span className="ops-flow-copy">
+                    <bdi dir="ltr">{event.title}</bdi>
+                    {event.lines.map((line) => <em key={line}>{line}</em>)}
+                  </span>
                   {event.kind === "exit" && event.trade ? (
-                    <b className={`num ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
+                    <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
                   ) : event.kind === "entry" && event.trade ? (
-                    <b className="num">{money(event.trade.invested)}</b>
-                  ) : <b />}
+                    <b className="num ops-flow-money">{money(event.trade.invested)}</b>
+                  ) : null}
                 </div>
               ))}
             </div>
           </section>
+      </div>
+      </div>
 
+      <div className="ops-below">
           <section className="ops-pane">
             <h2>צינור המערכת</h2>
             <div className="ops-rail">
@@ -363,9 +394,6 @@ function Board() {
               <Cell label="נטו אחרי AI" value={totals?.net_after_ai != null ? money(totals.net_after_ai) : "אין נתונים"} className={tone(totals?.net_after_ai ? Number(totals.net_after_ai) : null)} />
             </div>
           </section>
-        </div>
-
-        <aside className="ops-side">
           <section className="ops-pane">
             <h2>ערוצי נתונים</h2>
             <Feed label="שוק" row={feedOf(status?.market_status, status?.providers.market, status?.market_status?.quote_count ?? 0)} />
@@ -400,7 +428,6 @@ function Board() {
               {audit && audit.length === 0 ? <div className="ops-feed"><span>אין רשומות ביקורת</span></div> : null}
             </div>
           </section>
-        </aside>
       </div>
       {missing ? <p className="ops-line">{missing}</p> : null}
       {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
@@ -452,14 +479,61 @@ function fromPosition(item: Position): FlowTrade {
   };
 }
 
-function Cell({ label, hint, value, className = "" }: { label: string; hint?: string; value: string; className?: string }) {
+function Cell({ label, hint, value, detail, className = "" }: { label: string; hint?: string; value: string; detail?: string; className?: string }) {
   return (
     <div className="ops-cell">
       <span>{label}{hint ? <em> {hint}</em> : null}</span>
       <b className={className}>{value}</b>
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
+
+function ResultCell({ label, book, empty }: { label: string; book: DayBook | null; empty: string }) {
+  if (book === null) return <Cell label={label} value={empty} />;
+  return <Cell label={label} value={signedMoney(book.profit)} detail={`${share(book.pct)} על ${money(book.invested)}`} className={tone(book.profit)} />;
+}
+
+function dayBook(pnl: string | null | undefined, invested: string | null | undefined): DayBook | null {
+  const profit = num(pnl);
+  const base = num(invested);
+  if (profit === null || base === null || base <= 0) return null;
+  return { profit, invested: base, pct: (profit / base) * 100 };
+}
+
+function stakeOf(open: FlowTrade[] | undefined, positions: Position[] | null): { dollars: number; note: string } | null {
+  const rows = open ?? [];
+  const live = rows
+    .map((row) => {
+      const now = num(row.unrealized_pnl);
+      const atStop = num(row.levels?.pnl_at_active_exit);
+      if (now === null || atStop === null) return null;
+      return Math.max(0, now - atStop);
+    })
+    .filter((value): value is number => value !== null);
+  if (rows.length > 0 && live.length === rows.length) {
+    return { dollars: live.reduce((sum, value) => sum + value, 0), note: "מהמחיר עכשיו עד הסטופ הפעיל" };
+  }
+  const planned = rows.map((row) => num(row.plan?.planned_risk)).filter((value): value is number => value !== null);
+  if (rows.length > 0 && planned.length === rows.length) {
+    return { dollars: planned.reduce((sum, value) => sum + value, 0), note: "ההפסד המתוכנן מהכניסה" };
+  }
+  if (positions === null) return null;
+  const premium = positions.reduce((sum, item) => sum + Math.abs(num(item.cost_basis) ?? 0), 0);
+  return { dollars: premium, note: rows.length === 0 && positions.length === 0 ? "אין פוזיציה פתוחה" : "הפרמיה ששולמה, בלי רמת סטופ" };
+}
+
+function num(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function signedMoney(value: number) {
+  return `${value > 0 ? "+" : value < 0 ? "-" : ""}${money(Math.abs(value))}`;
+}
+
+type DayBook = { profit: number; invested: number; pct: number };
 
 function Node({ label, value }: { label: string; value: string }) {
   const waiting = value.startsWith("ממתין");
@@ -518,6 +592,16 @@ function price(value: string | null | undefined) {
   return Number.isFinite(number) ? number.toFixed(2) : "—";
 }
 
+function contracts(value: number | string | null | undefined) {
+  const parsed = num(value);
+  if (parsed === null) return "—";
+  return Number.isInteger(parsed) ? String(parsed) : parsed.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
+function clauses(reason: string) {
+  return reason.split(";").map((part) => part.trim()).filter(Boolean);
+}
+
 function contractLabel(trade: FlowTrade) {
   const side = trade.right === "PUT" ? "PUT" : trade.right === "CALL" ? "CALL" : "";
   return `${trade.underlying || trade.symbol} ${side}`.trim();
@@ -534,16 +618,34 @@ function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[]
     const entryKey = `${trade.symbol}-${trade.opened_at}`;
     if (trade.opened_at && !seen.has(entryKey)) {
       seen.add(entryKey);
-      events.push({ at: trade.opened_at, kind: "entry", trade, text: `${contractLabel(trade)} · ${trade.qty_open ?? trade.qty ?? "—"} חוזים · ${price(trade.entry_price)}` });
+      events.push({
+        at: trade.opened_at,
+        kind: "entry",
+        trade,
+        title: contractLabel(trade),
+        lines: [`${contracts(trade.qty_open ?? trade.qty)} חוזים`, `כניסה ${price(trade.entry_price)}`],
+      });
     }
     if (trade.closed_at) {
-      events.push({ at: trade.closed_at, kind: "exit", trade, text: `${contractLabel(trade)} · ${price(trade.entry_price)} → ${price(trade.exit_price)} · ${exitLabel(trade.exit_reason)}` });
+      events.push({
+        at: trade.closed_at,
+        kind: "exit",
+        trade,
+        title: contractLabel(trade),
+        lines: [`כניסה ${price(trade.entry_price)}`, `יציאה ${price(trade.exit_price)}`, exitLabel(trade.exit_reason)],
+      });
     }
   }
   const blocked = (scan?.stages?.buy_outcomes ?? []).filter((item) => item.result === "blocked");
   if (blocked.length > 0 && scan?.finished_at) {
     for (const item of blocked) {
-      events.push({ at: scan.finished_at, kind: "blocked", trade: null, text: `${item.symbol.replace(/\s+/g, " ")} · ${item.reason}` });
+      events.push({
+        at: scan.finished_at,
+        kind: "blocked",
+        trade: null,
+        title: item.symbol.replace(/\s+/g, " "),
+        lines: clauses(item.reason),
+      });
     }
   }
   return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());

@@ -95,6 +95,11 @@ function num(value: string | null | undefined) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function count(value: string | null | undefined) {
+  const parsed = num(value);
+  return parsed === null ? "—" : parsed.toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+
 function dollars(value: string | null | undefined) {
   const parsed = num(value);
   return parsed === null ? "אין נתונים" : money(parsed);
@@ -324,7 +329,7 @@ export default function HistoryPage() {
         <section className="ops-pane">
           <h2>פוזיציות פתוחות · {live.length}</h2>
           <div className="ops-scroll">
-            <table className="ops-table">
+            <table className="ops-table ops-cardify">
               <thead>
                 <tr>
                   <th>נפתחה</th>
@@ -350,7 +355,7 @@ export default function HistoryPage() {
                     <td className="num">{trade.right ?? "—"}</td>
                     <td className="num">{trade.strike ?? "—"}</td>
                     <td className="num">{trade.expiration ?? "—"}</td>
-                    <td className="num">{trade.qty_open ?? trade.qty}</td>
+                    <td className="num">{count(trade.qty_open ?? trade.qty)}</td>
                     <td className="num">${trade.entry_price}</td>
                     <td className="num">{trade.current_price ? `$${trade.current_price}` : "—"}</td>
                     <td className="num">{dollars(trade.invested)}</td>
@@ -372,7 +377,7 @@ export default function HistoryPage() {
         <section className="ops-pane">
           <h2>עסקאות שנסגרו · {closed.length}</h2>
           <div className="ops-scroll">
-            <table className="ops-table">
+            <table className="ops-table ops-cardify">
               <thead>
                 <tr>
                   <th>נסגרה</th>
@@ -397,7 +402,7 @@ export default function HistoryPage() {
                     <td className="num">{trade.underlying}</td>
                     <td className="num">{trade.right ?? "—"}</td>
                     <td className="num">{trade.strike ?? "—"}</td>
-                    <td className="num">{trade.qty}</td>
+                    <td className="num">{count(trade.qty)}</td>
                     <td className="num">${trade.entry_price}</td>
                     <td className="num">${trade.exit_price}</td>
                     <td className="num">{dollars(trade.invested)}</td>
@@ -435,7 +440,7 @@ function TradeModal({ trade, onClose }: { trade: Trade; onClose: () => void }) {
     ["חוזה", trade.symbol],
     ["כיוון", side(trade)],
     ["סטרייק · פקיעה", `${trade.strike ?? "—"} · ${trade.expiration ?? "—"}${trade.dte_at_entry != null ? ` (${trade.dte_at_entry} ימים לפקיעה בכניסה)` : ""}`],
-    ["כמות", `${trade.qty} חוזים (${Number(trade.qty) * 100} מניות)`],
+    ["כמות", `${count(trade.qty)} חוזים (${Number(trade.qty) * 100} מניות)`],
     ["נפתחה", when(trade.opened_at)],
     ["נסגרה", isOpen ? "עדיין פתוחה" : when(trade.closed_at)],
     ["זמן החזקה", held(trade.held_minutes)],
