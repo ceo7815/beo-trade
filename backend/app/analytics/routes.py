@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -19,6 +19,7 @@ from app.models.tables import AIRequestLog, BrokerTradeEvent
 
 LAST_SCAN = Path(__file__).resolve().parents[2] / "data" / "last_scan.json"
 HEARTBEAT = Path(__file__).resolve().parents[2] / "data" / "worker_heartbeat.txt"
+_lab_cache: dict[tuple, dict] = {}
 
 
 def write_last_scan(payload: dict) -> None:
@@ -365,6 +366,95 @@ def register(app: FastAPI, settings: Settings) -> None:
             "orphan_sells": report["orphan_sells"],
             "paper_limitation": "מחירי מילוי Paper אופטימיים ביחס ללייב. רווח Paper אינו ראיה לרווח בכסף אמיתי.",
         }
+
+    @app.get("/api/v1/learning/trades")
+    def learning_trades(authorization: str | None = Header(default=None), period: str = "all"):
+        from app.analytics import learning
+
+        report = trades_report(authorization=authorization, period=period, start="", end="")
+        if not report.get("available"):
+            return report
+        config = settings.trading()
+        closed = report["closed"]
+        paths = learning.load_paths(closed, config)
+        rules = learning.current_rules(config)
+        rows = []
+        for trade in closed:
+            points = paths.get(learning._key(trade), [])
+            replay = learning.simulate(trade, points, rules, config) if points else None
+            rows.append(
+                {
+                    **trade,
+                    "path": learning.excursions(trade, points, config),
+                    "current_rules": None if replay is None else {**replay, "pnl": str(replay["pnl"])},
+                }
+            )
+        return {
+            "environment": "PAPER",
+            "available": True,
+            "window": report["window"],
+            "trades": rows,
+            "covered": sum(1 for row in rows if row["path"].get("covered")),
+            "backfill": dict(learning.BACKFILL),
+            "rules": rules.label(),
+        }
+
+    @app.get("/api/v1/learning/path")
+    def learning_path(authorization: str | None = Header(default=None), symbol: str = "", opened_at: str = "", closed_at: str = ""):
+        from app.main import user_id_from_header
+        from app.analytics import learning
+
+        user_id_from_header(settings, authorization)
+        opened = _parsed_time(opened_at)
+        closed = _parsed_time(closed_at)
+        if not symbol or opened is None or closed is None or not database_ready():
+            return {"available": False, "points": []}
+        end = learning.session_end(closed.astimezone(learning.EXCHANGE).date())
+        with session_scope() as session:
+            points = learning.path_points(learning.marks_for(session, symbol, opened - timedelta(minutes=1), end))
+        return {
+            "available": True,
+            "symbol": symbol,
+            "points": [
+                {"at": point.at.isoformat(), "bid": str(point.bid), "ask": None if point.ask is None else str(point.ask), "underlying": None if point.underlying is None else str(point.underlying), "source": point.source}
+                for point in points
+            ],
+        }
+
+    @app.get("/api/v1/learning/lab")
+    def learning_lab(authorization: str | None = Header(default=None), period: str = "all"):
+        from app.analytics import learning
+
+        report = trades_report(authorization=authorization, period=period, start="", end="")
+        if not report.get("available"):
+            return report
+        config = settings.trading()
+        paths = learning.load_paths(report["closed"], config)
+        key = (period, len(report["closed"]), sum(len(points) for points in paths.values()))
+        cached = _lab_cache.get(key)
+        if cached is None:
+            cached = learning.lab(report["closed"], paths, config)
+            _lab_cache.clear()
+            _lab_cache[key] = cached
+        return {"environment": "PAPER", "available": True, "window": report["window"], **cached}
+
+    @app.get("/api/v1/learning/backfill")
+    def learning_backfill_status(authorization: str | None = Header(default=None)):
+        from app.main import user_id_from_header
+        from app.analytics import learning
+
+        user_id_from_header(settings, authorization)
+        return dict(learning.BACKFILL)
+
+    @app.post("/api/v1/learning/backfill")
+    def learning_backfill(authorization: str | None = Header(default=None), period: str = "all"):
+        from app.analytics import learning
+
+        report = trades_report(authorization=authorization, period=period, start="", end="")
+        if not report.get("available"):
+            return report
+        started = learning.start_backfill(settings, report["closed"])
+        return {"started": started, **learning.BACKFILL}
 
     @app.get("/api/v1/ai/summary")
     def ai_summary(authorization: str | None = Header(default=None)):

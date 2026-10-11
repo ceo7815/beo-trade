@@ -193,6 +193,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     try:
         positions = adapter.sync_positions()
         _retire_closed_states({str(row.get("symbol") or "") for row in positions})
+        live = quotes is None
         if quotes is None and positions:
             quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
         bundles = quotes if quotes is not None else {}
@@ -212,6 +213,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                 signal = SimpleNamespace(reason="SESSION_CLOSE", exit_price=price)
                 source = "alpaca-mark"
             else:
+                _record_path(symbol, option, underlying, moment, "monitor")
                 signal, session_close = _theta_exit(settings, adapter, symbol, trade_id, entry, position, option, underlying, moment)
                 source = "thetadata"
             if signal is None:
@@ -246,10 +248,44 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                     except Exception as exc:
                         record_trade_event(session, trade_id, "BLOCKED", "beo-trade", str(exc))
                 session.commit()
+        if live and submit:
+            _shadow_marks(settings, adapter, moment, {str(row.get("symbol") or "").replace(" ", "").upper() for row in positions})
         return {"positions": len(positions), "exits": exits}
     finally:
         if owns_adapter:
             adapter.close()
+
+
+def _record_path(symbol: str, option, underlying, moment: datetime, source: str) -> None:
+    from app.analytics.learning import record_mark
+
+    try:
+        record_mark(symbol, getattr(option, "observed_at", None) or moment, option.bid, option.ask, getattr(underlying, "price", None), source)
+    except Exception:
+        pass
+
+
+def _shadow_marks(settings: Settings, adapter, moment: datetime, held: set[str]) -> None:
+    """Contracts exited today keep being quoted until the close, so a later replay knows what holding would have done."""
+    from app.analytics.learning import shadow_due, shadow_symbols
+    from app.broker.normalize import parse_option_symbol
+
+    try:
+        session_open, session_close = _session_state(settings, adapter, moment)
+        if not session_open or session_close is None or moment >= session_close or not shadow_due(moment):
+            return
+        symbols = shadow_symbols(moment, held)
+        contracts = [parse_option_symbol(symbol) for symbol in symbols]
+        underlyings = tuple(dict.fromkeys(str(contract["underlying"]).upper() for contract in contracts if contract))
+        if not underlyings:
+            return
+        bundles = _loaded_bundles(settings, moment, underlyings)
+        for symbol in symbols:
+            bundle = bundles.get(symbol)
+            if bundle:
+                _record_path(symbol, bundle["option"], bundle["underlying"], moment, "shadow")
+    except Exception:
+        pass
 
 
 def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, position: dict, option, underlying, moment: datetime):

@@ -452,6 +452,20 @@ class BrokerActivityRecord(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class TradeMark(Base):
+    """One observed quote on a traded contract: while held, for the rest of the session after the exit, or from ThetaData history."""
+
+    __tablename__ = "trade_marks"
+    __table_args__ = (Index("ix_trade_marks_symbol_at", "symbol", "at"),)
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    symbol: Mapped[str] = mapped_column(String(64), nullable=False)
+    at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    bid: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    ask: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    underlying_price: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    source: Mapped[str] = mapped_column(String(24), nullable=False, default="monitor")
+
+
 class PositionState(Base):
     """Authoritative open-position memory. A quote refresh must not replace entry facts."""
 

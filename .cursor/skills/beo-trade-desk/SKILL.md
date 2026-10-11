@@ -31,6 +31,8 @@ No new entry inside `entry_cutoff_minutes` (80) of the close, so every buy has a
 
 Read `/learning` ("מה עובד") before claiming what wins. It groups closed trades by DTE, entry hour, weekday, overnight, exit reason, side, and name. A handful of trades per group is a direction, not proof.
 
+Every held contract's bid is stored in `trade_marks` each monitor check (at most one per 15s), and contracts exited today keep a mark per minute until the close (`shadow`). `/api/v1/learning/trades` gives each trade's peak, trough, giveback, and best bid after the exit. `/api/v1/learning/lab` replays stop / trail-arm / trail / invalidation combinations on those bids, closing at the forced session exit; "partial" means the path ended before any rule fired and the actual exit was kept. `POST /api/v1/learning/backfill` pulls ThetaData minute quotes (`/v3/option/history/quote`) for older trades as `history` marks; an empty result can mean the subscription lacks option history. Change exit rules only from many covered trades and with the user's approval.
+
 A stop is not a guaranteed price, and nothing protects a position held overnight. A resting sell above the bid is moved to the bid after `exit_reprice_seconds`, and on every check inside `exit_reprice_close_minutes` of the close. Before that fix a 15:40 exit limit of 2.34 sat unfilled, expired at the close, and QQQ PUT sold at 0.30 the next open (−$4,620).
 
 ## Liquidity
