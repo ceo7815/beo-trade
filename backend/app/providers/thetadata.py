@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
@@ -45,8 +46,10 @@ _bundle: tuple[datetime, dict] | None = None
 _prior: dict[tuple[str, str, date], list[dict]] = {}
 # A month of minute bars per symbol is heavy; rotating symbols beyond this many are refetched.
 MAX_ROTATING_PRIOR = 40
-# Minute bars not fetched within this budget wait for a later scan; the cache fills across scans.
+# Minute bars not fetched within this budget are fetched in the background for the next scan.
 INTRADAY_BUDGET_SECONDS = 45
+_warm_lock = threading.Lock()
+_warm_thread: threading.Thread | None = None
 
 
 def reset_theta_state() -> None:
@@ -254,6 +257,26 @@ class ThetaFeed:
         _bundle = (as_of, bundle)
         return bundle
 
+    def _warm_in_background(self, pending: list[tuple[tuple[str, str, date], dict]]) -> None:
+        """One worker at a time, on its own feed, so the scan's request stats and budget are untouched."""
+        global _warm_thread
+        with _warm_lock:
+            if _warm_thread is not None and _warm_thread.is_alive():
+                return
+            warmer = type(self)(self.settings, self.transport)
+
+            def run() -> None:
+                for key, params in pending:
+                    if key in _prior:
+                        continue
+                    try:
+                        warmer._prior_rows(key, "/v3/stock/history/ohlc", params, required=False)
+                    except ProviderUnavailable:
+                        return
+
+            _warm_thread = threading.Thread(target=run, name="theta-warm", daemon=True)
+            _warm_thread.start()
+
     def _prior_rows(self, key: tuple[str, str, date], path: str, params: dict, required: bool) -> list[dict]:
         cached = _prior.get(key)
         if cached is not None:
@@ -374,26 +397,25 @@ class ThetaFeed:
             today = session_day.strftime("%Y%m%d")
             end_clock = cutoff.strftime("%H:%M:%S")
             deadline = time.monotonic() + INTRADAY_BUDGET_SECONDS
-            skipped = 0
+            skipped: list[tuple[tuple[str, str, date], dict]] = []
             for symbol in stocks:
                 if symbol not in ohlc and symbol not in trades:
                     continue
-                if time.monotonic() > deadline and ("1m", symbol, session_day) not in _prior:
-                    skipped += 1
+                key = ("1m", symbol, session_day)
+                params = {"symbol": symbol, "start_date": start, "end_date": end, "interval": "1m", "start_time": "09:30:00", "end_time": "16:00:00"}
+                if time.monotonic() > deadline and key not in _prior:
+                    skipped.append((key, params))
                     continue
-                earlier = self._prior_rows(
-                    ("1m", symbol, session_day),
-                    "/v3/stock/history/ohlc",
-                    {"symbol": symbol, "start_date": start, "end_date": end, "interval": "1m", "start_time": "09:30:00", "end_time": "16:00:00"},
-                    required=False,
-                )
+                earlier = self._prior_rows(key, "/v3/stock/history/ohlc", params, required=False)
                 current = self._get(
                     "/v3/stock/history/ohlc",
                     {"symbol": symbol, "start_date": today, "end_date": today, "interval": "1m", "start_time": "09:30:00", "end_time": end_clock},
                     required=False,
                 )
                 intraday[symbol] = [*_on_days(earlier, session_day, before=True), *_on_days(current, session_day, before=False)]
-            self.request_stats["intraday_skipped"] = {"count": skipped}
+            self.request_stats["intraday_skipped"] = {"count": len(skipped)}
+            if skipped:
+                self._warm_in_background(skipped)
         underlyings = []
         context: dict[str, dict] = {}
         newest: datetime | None = None

@@ -191,6 +191,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       title: "כספים",
       items: [
         { href: "/finance", label: "בקרת כספים", icon: icons.performance },
+        { href: "/learning", label: "מה עובד", icon: icons.performance },
         { href: "/risk", label: "בקרת סיכון", icon: icons.performance },
       ],
     },

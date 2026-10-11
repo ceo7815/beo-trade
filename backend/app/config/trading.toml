@@ -9,6 +9,9 @@ max_bid_ask_spread = 0.15
 # Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
 min_underlying_volume = 1000000
 max_expiration_days = 21
+# Contracts past this many days rank lower per extra day. Week of Oct 7: 1-2 DTE made +$3,167 on 11 trades, 7-9 DTE lost $2,736 on 10.
+preferred_max_dte = 3
+long_dte_penalty = 0.15
 min_expiration_days = 0
 min_delta = 0.15
 max_delta = 0.75
@@ -51,8 +54,12 @@ max_contracts = 100
 holding_minutes_0dte = 90
 holding_minutes_1dte = 180
 session_exit_minutes = 15
-# No new entry this close to the bell. It covers the exit window plus the minimum holding time.
-entry_cutoff_minutes = 30
+# No new entry this close to the bell: an hour to work before the 0/1DTE exit 20 minutes before the close.
+# Three 1DTE buys at 15:10 had 30 minutes before that exit and lost about $1,540, and one stuck overnight.
+entry_cutoff_minutes = 80
+# At most this many new CALLs (or PUTs) in the window. Six calls on one Friday were one bet on a rising market.
+max_same_direction_entries = 2
+same_direction_window_minutes = 30
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25
@@ -99,6 +106,8 @@ liquidity_exit_confirmations = 2
 exit_reprice_seconds = 15
 # Inside this many minutes before the close a resting exit follows the bid on every check, whatever its age.
 exit_reprice_close_minutes = 5
+# No ThetaData quote inside the session exit window: sell this far below Alpaca's mark rather than hold overnight.
+fallback_exit_discount = 0.10
 scan_strike_range = 15
 # Option chains are read only for the top-ranked names that passed the stock gates. 0 reads every one.
 max_chains_per_scan = 12

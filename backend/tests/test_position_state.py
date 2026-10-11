@@ -339,6 +339,76 @@ def test_exit_follows_the_bid_on_every_check_near_the_close(tmp_path):
     assert calls == [{"limit_price": "1.57"}]
 
 
+def test_position_without_a_thetadata_quote_is_sold_off_the_alpaca_mark_before_the_close(tmp_path):
+    from app.models.db import configure_database, init_db
+    from app.workers.loops import fallback_exit_price, monitor_once
+
+    settings = _settings(tmp_path)
+    configure_database(settings)
+    init_db(settings)
+    symbol = "QQQ261002P00745000"
+
+    class Adapter:
+        def __init__(self):
+            self.submitted = []
+
+        def sync_positions(self):
+            return [{"symbol": symbol, "qty": "20", "avg_entry_price": "2.61", "current_price": "2.34", "trade_id": "trade-dark"}]
+
+        def get_market_clock(self):
+            return {"is_open": True}
+
+        def get_orders(self, status="all"):
+            return []
+
+        def get_account(self):
+            return {"status": "ACTIVE"}
+
+        def get_asset(self, symbol):
+            return {"tradable": True, "status": "active"}
+
+        def get_order_by_client_id(self, client_order_id):
+            return None
+
+        def submit_exit_order(self, body):
+            self.submitted.append(body)
+            return {}
+
+        def close(self):
+            return None
+
+    close = datetime(2026, 10, 2, 20, 0, tzinfo=timezone.utc)
+    midday = Adapter()
+    assert monitor_once(settings, {}, midday, close - timedelta(hours=3))["exits"] == []
+    assert midday.submitted == []
+
+    late = Adapter()
+    result = monitor_once(settings, {}, late, close - timedelta(minutes=10))
+    assert result["exits"] == [{"symbol": symbol, "reason": "SESSION_CLOSE", "observed": "2.10", "source": "alpaca-mark"}]
+    from app.models.db import session_scope
+    from app.models.tables import BrokerTradeEvent
+    from sqlalchemy import select
+
+    with session_scope() as session:
+        events = [(row.state, row.reason) for row in session.scalars(select(BrokerTradeEvent))]
+    assert len(late.submitted) == 1, events
+    assert str(late.submitted[0].get("limit_price")) == "2.10"
+    assert fallback_exit_price({"current_price": "0.30"}, close - timedelta(minutes=1), close, TradingConfig()) == Decimal("0.27")
+    assert fallback_exit_price({}, close - timedelta(minutes=1), close, TradingConfig()) is None
+
+
+def test_short_dated_contract_ranks_ahead_of_a_week_out_with_better_liquidity():
+    from dataclasses import replace
+
+    from app.options.selector import rank_contracts
+
+    config = TradingConfig()
+    short = _option("1.95", "2.00", expiration=NOW.date() + timedelta(days=2))
+    week = replace(_option("1.95", "2.00", expiration=NOW.date() + timedelta(days=7)), option_symbol="NVDA261009C00100000", volume=2000, open_interest=2000)
+    ranked = rank_contracts([week, short], _underlying(), config, NOW)
+    assert [item.option_symbol for item in ranked] == [short.option_symbol, week.option_symbol]
+
+
 def test_aggregate_and_underlying_block_the_buy():
     config = TradingConfig()
     option = _option("4.90", "5.00", expiration=NOW.date() + timedelta(days=2))

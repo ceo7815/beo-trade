@@ -22,7 +22,8 @@ def rank_contracts(
         volume_score = min(option.volume, 5000) / 5000
         oi_score = min(option.open_interest, 5000) / 5000
         gamma_score = min(abs(float(option.gamma or 0)), 0.2) / 0.2
-        return volume_score + oi_score + gamma_score * 0.5 - spread * 3 - delta_gap - moneyness - dte * 0.02
+        long_dated = max(0, dte - config.preferred_max_dte) * config.long_dte_penalty
+        return volume_score + oi_score + gamma_score * 0.5 - spread * 3 - delta_gap - moneyness - dte * 0.02 - long_dated
 
     ordered = sorted(options, key=score, reverse=True)
     return ordered[: config.shortlist_size]

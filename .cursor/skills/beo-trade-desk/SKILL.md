@@ -27,6 +27,10 @@ KILL_SWITCH, SESSION_CLOSE, EXPIRATION, INVALIDATION, LIQUIDITY, STOP or PROTECT
 
 Do not widen the stop. One full stop is about 40% of the premium (`initial_stop_decline_pct` 0.40). Protection arms at +1R and moves the stop to entry minus 0.25R. The trail arms at +1.5R and exits 15% off the peak. 0DTE holding limit is 90 minutes. 1DTE is 180. Winners came from the trail and the time stop on liquid names (HOOD, MU, MSTR, SMCI).
 
+No new entry inside `entry_cutoff_minutes` (80) of the close, so every buy has an hour before the 0/1DTE exit. At most `max_same_direction_entries` (2) new CALLs or PUTs per `same_direction_window_minutes` (30): same-direction buys at one minute are one bet. A held contract with no ThetaData quote inside the session exit window is sold `fallback_exit_discount` below Alpaca's mark. Contracts past `preferred_max_dte` (3) rank lower.
+
+Read `/learning` ("מה עובד") before claiming what wins. It groups closed trades by DTE, entry hour, weekday, overnight, exit reason, side, and name. A handful of trades per group is a direction, not proof.
+
 A stop is not a guaranteed price, and nothing protects a position held overnight. A resting sell above the bid is moved to the bid after `exit_reprice_seconds`, and on every check inside `exit_reprice_close_minutes` of the close. Before that fix a 15:40 exit limit of 2.34 sat unfilled, expired at the close, and QQQ PUT sold at 0.30 the next open (−$4,620).
 
 ## Liquidity

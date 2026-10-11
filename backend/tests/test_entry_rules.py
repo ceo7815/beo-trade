@@ -37,16 +37,41 @@ def test_a_known_sector_still_groups_its_names():
 
 @pytest.mark.parametrize(
     ("minutes_left", "is_open", "allowed"),
-    [(45, True, True), (31, True, True), (30, True, False), (20, True, False), (5, True, False), (120, False, False)],
+    [(120, True, True), (81, True, True), (80, True, False), (50, True, False), (5, True, False), (120, False, False)],
 )
-def test_no_new_entry_in_the_last_half_hour(minutes_left, is_open, allowed):
+def test_no_new_entry_without_an_hour_before_the_forced_exit(minutes_left, is_open, allowed):
     clock = {"is_open": is_open, "next_close": (NOW + timedelta(minutes=minutes_left)).isoformat().replace("+00:00", "Z")}
     assert entry_window_open(_settings(), clock, NOW) is allowed
 
 
-def test_the_entry_cutoff_covers_the_exit_window_and_the_minimum_hold():
+def test_recent_buys_are_counted_by_direction_inside_the_window(tmp_path):
+    from app.models.db import configure_database, init_db, session_scope
+    from app.models.tables import BrokerOrderRecord
+    from app.workers.loops import recent_entries_by_right
+
+    settings = Settings(app_env="local", trading_mode="PAPER", auth_required=False, database_url="sqlite:///" + (tmp_path / "beo.db").as_posix(), auto_create_tables=True)
+    configure_database(settings)
+    init_db(settings)
+    rows = [
+        ("QQQ261009P00745000", "buy_to_open", "filled", 5),
+        ("NVDA261009P00230000", "buy_to_open", "accepted", 10),
+        ("TSLA261009P00370000", "buy_to_open", "canceled", 12),
+        ("PLTR261009C00197500", "buy_to_open", "filled", 20),
+        ("MU261009P01070000", "buy_to_open", "filled", 45),
+        ("HOOD261009P00110000", "sell_to_close", "filled", 3),
+    ]
+    with session_scope() as session:
+        for symbol, intent, status, minutes_ago in rows:
+            session.add(BrokerOrderRecord(symbol=symbol, side="buy", position_intent=intent, status=status, created_at=NOW - timedelta(minutes=minutes_ago)))
+        session.commit()
+    assert recent_entries_by_right(NOW, 30) == {"PUT": 2, "CALL": 1}
+    assert _settings().trading().max_same_direction_entries == 2
+
+
+def test_the_entry_cutoff_leaves_an_hour_before_every_forced_exit():
     config = _settings().trading()
-    assert config.entry_cutoff_minutes >= config.session_exit_minutes + config.holding_window_min_minutes
+    forced = max(config.session_exit_minutes, config.exit_before_expiration_minutes)
+    assert config.entry_cutoff_minutes - forced >= 60
 
 
 @pytest.mark.parametrize(

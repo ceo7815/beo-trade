@@ -50,6 +50,42 @@ def test_system_status_never_waits_for_a_slow_feed(tmp_path, monkeypatch):
         release.set()
 
 
+def test_feed_card_shows_the_worker_counters_when_they_are_newer(tmp_path, monkeypatch):
+    import json
+    from types import SimpleNamespace
+
+    from app.providers.registry import merged_feed_statuses
+
+    path = tmp_path / "feed_status.json"
+    monkeypatch.setattr("app.ops.paths.FEED_STATUS", path)
+    empty = {"provider": "thetadata", "last_fetch": None, "quote_count": 0}
+    local = SimpleNamespace(
+        feed_statuses=lambda: {
+            "market_status": empty,
+            "options_status": empty,
+            "news_status": {"provider": "benzinga", "last_fetch": "2026-10-09T15:00:00-04:00", "article_count": 3},
+            "macro_status": {"provider": "fred", "last_fetch": None},
+            "research_status": {"provider": "sec", "last_fetch": None},
+        }
+    )
+    assert merged_feed_statuses(local)["market_status"] == empty
+    path.write_text(
+        json.dumps(
+            {
+                "market_status": {"provider": "thetadata", "last_fetch": "2026-10-09T15:58:06-04:00", "quote_count": 40},
+                "news_status": {"provider": "benzinga", "last_fetch": "2026-10-09T14:00:00-04:00", "article_count": 1},
+                "macro_status": {"provider": "unconfigured", "last_fetch": "2026-10-09T15:00:00-04:00"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    merged = merged_feed_statuses(local)
+    assert merged["market_status"]["quote_count"] == 40
+    assert merged["news_status"]["article_count"] == 3
+    assert merged["macro_status"]["provider"] == "fred"
+    assert merged["options_status"] == empty
+
+
 def test_dashboard_api_exposes_buys_only(tmp_path, monkeypatch):
     monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
     database = tmp_path / "beo.db"

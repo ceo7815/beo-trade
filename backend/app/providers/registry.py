@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.integrations.secrets import resolve_secret
@@ -73,6 +75,57 @@ class ProviderSet:
                 "last_error": None,
             }
         return self.research.status_detail()
+
+    def feed_statuses(self) -> dict[str, dict]:
+        return {
+            "market_status": self.market_status(),
+            "options_status": self.options_status(),
+            "news_status": self.news_status(),
+            "macro_status": self.macro_status(),
+            "research_status": self.research_status(),
+        }
+
+
+def write_feed_status(provider_set: ProviderSet) -> None:
+    """Feed counters live in the worker process. The API process reads them from this file."""
+    from app.ops.paths import FEED_STATUS
+
+    try:
+        FEED_STATUS.parent.mkdir(parents=True, exist_ok=True)
+        temporary = FEED_STATUS.with_suffix(".tmp")
+        temporary.write_text(json.dumps(provider_set.feed_statuses(), ensure_ascii=False, default=str), encoding="utf-8")
+        temporary.replace(FEED_STATUS)
+    except (OSError, TypeError, ValueError):
+        pass
+
+
+def merged_feed_statuses(provider_set: ProviderSet) -> dict[str, dict]:
+    """The API's own counters, replaced by the worker's when the worker fetched more recently."""
+    from app.ops.paths import FEED_STATUS
+
+    local = provider_set.feed_statuses()
+    try:
+        worker = json.loads(FEED_STATUS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return local
+    if not isinstance(worker, dict):
+        return local
+    merged = dict(local)
+    for key, mine in local.items():
+        theirs = worker.get(key)
+        if not isinstance(theirs, dict) or theirs.get("provider") != mine.get("provider"):
+            continue
+        if _fetched_at(theirs) >= _fetched_at(mine):
+            merged[key] = theirs
+    return merged
+
+
+def _fetched_at(status: dict) -> datetime:
+    try:
+        moment = datetime.fromisoformat(str(status.get("last_fetch") or ""))
+    except ValueError:
+        return datetime.min.replace(tzinfo=timezone.utc)
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def _empty_status(provider: str) -> dict:

@@ -3,12 +3,13 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from types import SimpleNamespace
 
 from app.ai.budget import BudgetLedger, make_ledger
 from app.config.settings import Settings
 from app.infra.redis_client import publish_quiet
 from app.providers.base import ProviderNotConfigured, ProviderUnavailable
-from app.providers.registry import build_providers
+from app.providers.registry import build_providers, write_feed_status
 from app.recommendations.live_scan import MarketDataMissing, execute_scan
 
 
@@ -117,8 +118,10 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             progress=progress,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
+        write_feed_status(providers)
         record_scan_blocked(moment, str(exc))
         return {"ok": False, "blocked": str(exc)}
+    write_feed_status(providers)
     publish_quiet("scan.completed", str(len(result.recommendations)))
     for row in result.recommendations:
         if row.decision.value == "BUY":
@@ -179,8 +182,6 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     from app.broker.store import record_trade_event
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
     from app.models.db import session_scope
-    from app.paper_trading.engine import _spread_wide, exit_signal
-    from app.schemas.domain import PaperFill
 
     moment = now or datetime.now(timezone.utc)
     owns_adapter = adapter is None
@@ -198,26 +199,24 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
         exits = []
         for position in positions:
             symbol = str(position.get("symbol") or "").replace(" ", "")
-            bundle = bundles.get(symbol)
-            if not bundle:
-                continue
+            bundle = bundles.get(symbol) or {}
             option = bundle.get("option")
             underlying = bundle.get("underlying")
             entry = position.get("avg_entry_price")
-            if option is None or underlying is None or entry in {None, ""}:
-                continue
             trade_id = str(position.get("trade_id") or symbol)
-            fill, locked = _position_fill(settings, symbol, trade_id, entry, position, option, underlying, moment)
-            signal = None
-            session_open, session_close = _session_state(settings, adapter, moment)
-            if session_open is not None:
-                trading = settings.trading()
-                prior_hits = _liquidity_hits.get(symbol, 0)
-                signal = exit_signal(fill, option, underlying, moment, trading, session_open, session_close, locked, prior_hits)
-                _liquidity_hits[symbol] = prior_hits + 1 if _spread_wide(option, trading) else 0
+            if option is None or underlying is None or entry in {None, ""}:
+                _session_open, session_close = _session_state(settings, adapter, moment)
+                price = fallback_exit_price(position, moment, session_close, settings.trading())
+                if price is None:
+                    continue
+                signal = SimpleNamespace(reason="SESSION_CLOSE", exit_price=price)
+                source = "alpaca-mark"
+            else:
+                signal, session_close = _theta_exit(settings, adapter, symbol, trade_id, entry, position, option, underlying, moment)
+                source = "thetadata"
             if signal is None:
                 continue
-            exits.append({"symbol": symbol, "reason": signal.reason, "observed": str(signal.exit_price), "source": "thetadata"})
+            exits.append({"symbol": symbol, "reason": signal.reason, "observed": str(signal.exit_price), "source": source})
             working = _working_exit(adapter, symbol) if submit else None
             with session_scope() as session:
                 if working is not None:
@@ -226,7 +225,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                         exits[-1]["repriced"] = moved
                     session.commit()
                     continue
-                record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {signal.exit_price}")
+                record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {signal.exit_price} {source}")
                 if submit:
                     try:
                         place_order(
@@ -251,6 +250,37 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
     finally:
         if owns_adapter:
             adapter.close()
+
+
+def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, position: dict, option, underlying, moment: datetime):
+    from app.paper_trading.engine import _spread_wide, exit_signal
+
+    fill, locked = _position_fill(settings, symbol, trade_id, entry, position, option, underlying, moment)
+    signal = None
+    session_open, session_close = _session_state(settings, adapter, moment)
+    if session_open is not None:
+        trading = settings.trading()
+        prior_hits = _liquidity_hits.get(symbol, 0)
+        signal = exit_signal(fill, option, underlying, moment, trading, session_open, session_close, locked, prior_hits)
+        _liquidity_hits[symbol] = prior_hits + 1 if _spread_wide(option, trading) else 0
+    return signal, session_close
+
+
+def fallback_exit_price(position: dict, moment: datetime, session_close: datetime | None, trading) -> Decimal | None:
+    """Without a ThetaData quote near the close, sell below Alpaca's mark so the position cannot be held overnight."""
+    if session_close is None:
+        return None
+    if (session_close - moment).total_seconds() > trading.session_exit_minutes * 60:
+        return None
+    try:
+        mark = Decimal(str(position.get("current_price")))
+    except Exception:
+        return None
+    if mark <= 0:
+        return None
+    tick = Decimal("0.05") if mark >= 3 else Decimal("0.01")
+    price = (mark * (Decimal("1") - Decimal(str(trading.fallback_exit_discount))) / tick).to_integral_value(rounding="ROUND_FLOOR") * tick
+    return max(price, Decimal("0.01"))
 
 
 def _working_exit(adapter, symbol: str) -> dict | None:
@@ -459,6 +489,38 @@ def entry_window_open(settings: Settings, clock: dict, moment: datetime) -> bool
     return (close - moment).total_seconds() > settings.trading().entry_cutoff_minutes * 60
 
 
+DEAD_ORDER_STATES = {"rejected", "canceled", "cancelled", "expired", "blocked"}
+
+
+def recent_entries_by_right(moment: datetime, window_minutes: int) -> dict[str, int]:
+    """Buys placed in the window, by CALL or PUT. Three puts at 15:10 were one bet on a falling market."""
+    from sqlalchemy import select
+
+    from app.broker.normalize import parse_option_symbol
+    from app.models.db import database_ready, session_scope
+    from app.models.tables import BrokerOrderRecord
+
+    if window_minutes <= 0 or not database_ready():
+        return {}
+    since = moment - timedelta(minutes=window_minutes)
+    counts: dict[str, int] = {}
+    with session_scope() as session:
+        rows = session.scalars(
+            select(BrokerOrderRecord)
+            .where(BrokerOrderRecord.position_intent == "buy_to_open")
+            .order_by(BrokerOrderRecord.created_at.desc())
+            .limit(50)
+        )
+        for row in rows:
+            placed = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)
+            if placed < since or str(row.status or "").lower() in DEAD_ORDER_STATES:
+                continue
+            contract = parse_option_symbol(row.symbol)
+            if contract is not None:
+                counts[contract["right"]] = counts.get(contract["right"], 0) + 1
+    return counts
+
+
 def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     rows = _broker_positions(settings)
     if rows is None:
@@ -555,7 +617,18 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         from app.models.tables import AuditLog
         from app.options.risk_limits import sector_key
 
+        trading = settings.trading()
+        same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
         for row in buys:
+            side = row.call_put.value
+            if same_side.get(side, 0) >= trading.max_same_direction_entries:
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "DIRECTION_CONCENTRATION", row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "DIRECTION_CONCENTRATION"})
+                continue
             bucket = sector_key(row.underlying)
             sector_premium = Decimal(str(sectors.get(bucket, 0)))
             fresh = fresh_news(news, row.underlying, moment, settings.trading().news_max_age_seconds)
@@ -655,6 +728,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         quotes,
                     )
                     outcomes.append({"symbol": row.option_symbol, "result": "submitted", "reason": ""})
+                    same_side[side] = same_side.get(side, 0) + 1
                 except Exception as exc:
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
                 session.commit()

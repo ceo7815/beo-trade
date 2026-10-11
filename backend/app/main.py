@@ -36,7 +36,7 @@ from app.models.tables import AIUsage, RecommendationRow
 from app.ai.budget import make_ledger
 from app.providers.base import ProviderUnavailable
 from app.providers.benzinga import BenzingaError
-from app.providers.registry import build_providers
+from app.providers.registry import build_providers, merged_feed_statuses
 from app.recommendations.live_scan import MarketDataMissing, execute_scan
 from app.schemas.domain import REASON_HEBREW, DecisionKind
 from app.ops.paths import HEARTBEAT
@@ -216,12 +216,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bounds = session_bounds(now, calendar)
         provider_set = build_providers(current)
         providers = provider_set.status()
-        news_status = provider_set.news_status()
-        market_status = provider_set.market_status()
-        options_status = provider_set.options_status()
         _refresh_feeds(provider_set, now)
-        macro_status = provider_set.macro_status()
-        research_status = provider_set.research_status()
+        feeds = merged_feed_statuses(provider_set)
+        news_status = feeds["news_status"]
+        market_status = feeds["market_status"]
+        options_status = feeds["options_status"]
+        macro_status = feeds["macro_status"]
+        research_status = feeds["research_status"]
         alerts: list[str] = []
         missing_labels = [
             label

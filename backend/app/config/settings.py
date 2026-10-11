@@ -73,7 +73,12 @@ class TradingConfig:
     trailing_pct: float = 0.15
     exit_before_expiration_minutes: int = 20
     session_exit_minutes: int = 15
-    entry_cutoff_minutes: int = 30
+    entry_cutoff_minutes: int = 80
+    fallback_exit_discount: float = 0.10
+    preferred_max_dte: int = 3
+    long_dte_penalty: float = 0.15
+    max_same_direction_entries: int = 2
+    same_direction_window_minutes: int = 30
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
     max_contracts: int = 100

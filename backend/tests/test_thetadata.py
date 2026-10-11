@@ -372,6 +372,22 @@ def test_prior_history_for_a_core_name_is_read_once_per_session():
     assert second["NVDA"].prior_close == first["NVDA"].prior_close
 
 
+def test_minute_bars_past_the_budget_are_fetched_in_the_background_for_the_next_scan(monkeypatch):
+    import app.providers.thetadata as theta
+
+    monkeypatch.setattr(theta, "INTRADAY_BUDGET_SECONDS", -1)
+    handler, _seen = _handler()
+    market = ThetaMarketProvider(_feed(handler))
+    first = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+    assert first["NVDA"].rv_method == "unavailable"
+    assert theta._warm_thread is not None
+    theta._warm_thread.join(5)
+    session_day = AS_OF.astimezone(EXCHANGE).date()
+    assert ("1m", "NVDA", session_day) in theta._prior
+    second = {item.symbol: item for item in market.load_underlyings(AS_OF + timedelta(seconds=60))}
+    assert second["NVDA"].rv_method == "time_of_day_cumulative"
+
+
 def test_fresh_providers_quote_the_held_and_bought_contracts(monkeypatch):
     from types import SimpleNamespace
 
