@@ -65,7 +65,7 @@ def test_recent_buys_are_counted_by_direction_inside_the_window(tmp_path):
             session.add(BrokerOrderRecord(symbol=symbol, side="buy", position_intent=intent, status=status, created_at=NOW - timedelta(minutes=minutes_ago)))
         session.commit()
     assert recent_entries_by_right(NOW, 30) == {"PUT": 2, "CALL": 1}
-    assert _settings().trading().max_same_direction_entries == 2
+    assert _settings().trading().max_same_direction_entries == 0
 
 
 def test_the_entry_cutoff_leaves_an_hour_before_every_forced_exit():

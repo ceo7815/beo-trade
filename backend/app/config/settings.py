@@ -77,7 +77,7 @@ class TradingConfig:
     fallback_exit_discount: float = 0.10
     preferred_max_dte: int = 3
     long_dte_penalty: float = 0.15
-    max_same_direction_entries: int = 2
+    max_same_direction_entries: int = 0
     same_direction_window_minutes: int = 30
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
@@ -101,6 +101,7 @@ class TradingConfig:
     max_daily_loss_pct: float = 0.04
     max_sector_exposure_pct: float = 0.10
     ai_max_calls_per_scan: int = 8
+    ai_parallel_calls: int = 8
     ai_decision_ttl_seconds: int = 900
     kill_switch: bool = False
     recommendation_max_age_seconds: int = 180

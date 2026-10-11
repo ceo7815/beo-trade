@@ -57,8 +57,9 @@ session_exit_minutes = 15
 # No new entry this close to the bell: an hour to work before the 0/1DTE exit 20 minutes before the close.
 # Three 1DTE buys at 15:10 had 30 minutes before that exit and lost about $1,540, and one stuck overnight.
 entry_cutoff_minutes = 80
-# At most this many new CALLs (or PUTs) in the window. Six calls on one Friday were one bet on a rising market.
-max_same_direction_entries = 2
+# At most this many new CALLs (or PUTs) in the window; 0 is off. At 2 per 30 minutes the week of Oct 7 would have
+# blocked AMZN +$2,660 and SOFI +$168 to save $230.
+max_same_direction_entries = 0
 same_direction_window_minutes = 30
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
@@ -66,6 +67,8 @@ protective_stop_r = 0.25
 trail_activate_r = 1.5
 winner_run_r = 2.0
 ai_max_calls_per_scan = 8
+# Decisions for one scan are requested together; one after another they took 138s and prices drifted past the limit.
+ai_parallel_calls = 8
 ai_decision_ttl_seconds = 900
 contract_multiplier = 100
 risk_free_rate = 0.04

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 from datetime import date, datetime
@@ -253,9 +254,11 @@ class _CountingAnalyzer:
     def __init__(self, inner: Analyzer | None) -> None:
         self.inner = inner
         self.calls = 0
+        self._lock = threading.Lock()
 
     def analyze(self, packet, as_of):
-        self.calls += 1
+        with self._lock:
+            self.calls += 1
         if self.inner is None:
             return None
         return self.inner.analyze(packet, as_of)

@@ -149,6 +149,36 @@ def test_scan_call_cap_does_not_call_ai():
     assert rows[0].suppress_reason == "AI_BUDGET_EXCEEDED"
 
 
+def test_decisions_for_one_scan_are_requested_together():
+    import threading
+    import time
+
+    underlying, option, news = sample_market()
+    names = ["TEST", "TSTA", "TSTB", "TSTC"]
+    underlyings = [replace(underlying, symbol=name) for name in names]
+    options = [replace(option, underlying=name, option_symbol=option.option_symbol.replace("TEST", name)) for name in names]
+    peak = {"now": 0, "max": 0}
+    lock = threading.Lock()
+
+    class Slow(StubAI):
+        def analyze(self, packet, as_of):
+            with lock:
+                peak["now"] += 1
+                peak["max"] = max(peak["max"], peak["now"])
+            time.sleep(0.3)
+            with lock:
+                peak["now"] -= 1
+            return StubAI().analyze(packet, as_of)
+
+    started = time.monotonic()
+    rows = run_scan(underlyings, options, news, loose_config(), Slow(), ledger(), AS_OF, AS_OF.date(), Decimal("50000"), set())
+    elapsed = time.monotonic() - started
+    assert len(rows) == 4
+    assert all(row.audit_hash for row in rows)
+    assert peak["max"] == 4
+    assert elapsed < 1.0
+
+
 def test_fingerprint_changes_when_the_quote_changes():
     first = decision_fingerprint({"underlying": {"symbol": "TEST", "price": 100}, "shortlist": [{"option_symbol": "X", "bid": 1, "ask": 1.1}]})
     second = decision_fingerprint({"underlying": {"symbol": "TEST", "price": 100}, "shortlist": [{"option_symbol": "X", "bid": 1, "ask": 1.4}]})

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
@@ -196,6 +197,7 @@ def run_scan(
     news_passed = 0
     risk_checked = 0
     risk_passed = 0
+    prepared: list[tuple] = []
     for underlying in underlyings:
         if reject_underlying(underlying, config, as_of):
             continue
@@ -243,43 +245,68 @@ def run_scan(
         company = None if research is None else (research.get("companies") or {}).get(underlying.symbol)
         symbol_research = None if not company else {"source": "sec", "company": company}
         packet = _packet(underlying, shortlist, symbol_news, events, scenario_map, regime, macro, symbol_research)
-        digest = decision_fingerprint(packet)
-        model = seen.get(digest)
+        prepared.append((underlying, events, symbol_news, confirmed, shortlist, packet, decision_fingerprint(packet)))
+
+    blocked_digests: set[str] = set()
+    pending: list[tuple[str, dict, str]] = []
+    for underlying, _events, _news, _confirmed, _shortlist, packet, digest in prepared:
+        if digest in seen or any(digest == item[0] for item in pending):
+            continue
         allowed = ledger.allow("decision", as_of)
-        scan_capped = ai_calls >= config.ai_max_calls_per_scan
-        if model is None and allowed and reuse is not None:
+        model = None
+        if allowed and reuse is not None:
             try:
                 model = reuse(digest, as_of)
             except Exception:
                 model = None
-        if model is None and allowed and not scan_capped and analyzer is not None:
-            claimed = True
-            if acquire is not None:
+        if model is not None:
+            seen[digest] = model
+            continue
+        if not allowed:
+            blocked_digests.add(digest)
+            continue
+        if ai_calls >= config.ai_max_calls_per_scan:
+            ai_failures["scan_cap"] = ai_failures.get("scan_cap", 0) + 1
+            blocked_digests.add(digest)
+            continue
+        if analyzer is None:
+            continue
+        claimed = True
+        if acquire is not None:
+            try:
+                claimed = acquire(digest, as_of)
+            except Exception:
+                claimed = False
+        if not claimed:
+            ai_failures["fingerprint_locked"] = ai_failures.get("fingerprint_locked", 0) + 1
+            continue
+        ai_calls += 1
+        pending.append((digest, packet, underlying.symbol))
+
+    if pending and analyzer is not None:
+        with ThreadPoolExecutor(max_workers=max(1, min(len(pending), config.ai_parallel_calls))) as pool:
+            futures = [(digest, symbol, pool.submit(analyzer.analyze, packet, as_of)) for digest, packet, symbol in pending]
+            for digest, symbol, future in futures:
                 try:
-                    claimed = acquire(digest, as_of)
-                except Exception:
-                    claimed = False
-            if not claimed:
-                ai_failures["fingerprint_locked"] = ai_failures.get("fingerprint_locked", 0) + 1
-            if claimed:
-                ai_calls += 1
-                try:
-                    model = analyzer.analyze(packet, as_of)
+                    model = future.result()
                 except Exception as exc:
-                    model = None
                     label = ai_failure_label(exc)
                     ai_failures[label] = ai_failures.get(label, 0) + 1
-                if model is not None and record_ai is not None and not (model.raw or {}).get("cached"):
+                    continue
+                if model is None:
+                    continue
+                seen[digest] = model
+                if record_ai is not None and not (model.raw or {}).get("cached"):
                     try:
-                        record_ai(model, digest, underlying.symbol)
+                        record_ai(model, digest, symbol)
                     except Exception:
                         pass
-        elif model is None and allowed and scan_capped:
-            ai_failures["scan_cap"] = ai_failures.get("scan_cap", 0) + 1
+
+    for underlying, events, symbol_news, confirmed, shortlist, packet, digest in prepared:
+        model = seen.get(digest)
         if model is not None:
             model.input_hash = digest
-            seen[digest] = model
-        budget_blocked = model is None and (not allowed or scan_capped)
+        budget_blocked = model is None and digest in blocked_digests
         chosen = None
         if model is not None:
             chosen = next((item for item in shortlist if item.option_symbol == model.option_symbol), None)

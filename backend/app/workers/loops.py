@@ -122,6 +122,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
         record_scan_blocked(moment, str(exc))
         return {"ok": False, "blocked": str(exc)}
     write_feed_status(providers)
+    _record_candidates(result.recommendations)
     publish_quiet("scan.completed", str(len(result.recommendations)))
     for row in result.recommendations:
         if row.decision.value == "BUY":
@@ -263,6 +264,17 @@ def _record_path(symbol: str, option, underlying, moment: datetime, source: str)
         record_mark(symbol, getattr(option, "observed_at", None) or moment, option.bid, option.ask, getattr(underlying, "price", None), source)
     except Exception:
         pass
+
+
+def _record_candidates(recommendations) -> None:
+    """Every contract a scan priced, bought or not, so a later study can ask what the skipped ones did."""
+    from app.analytics.learning import record_mark
+
+    for row in recommendations:
+        try:
+            record_mark(row.option_symbol, row.timestamp, row.bid, row.ask, row.underlying_price, "candidate")
+        except Exception:
+            pass
 
 
 def _shadow_marks(settings: Settings, adapter, moment: datetime, held: set[str]) -> None:
@@ -657,7 +669,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
         for row in buys:
             side = row.call_put.value
-            if same_side.get(side, 0) >= trading.max_same_direction_entries:
+            if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
                     from app.broker.store import record_trade_event
 
