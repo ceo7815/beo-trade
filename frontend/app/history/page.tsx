@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { Fragment, useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet } from "@/lib/api";
@@ -127,7 +127,40 @@ function when(iso: string | null | undefined) {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit", timeZone: "Asia/Dubai" }).format(date);
+  return new Intl.DateTimeFormat("en-GB", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Dubai" }).format(date).replace(",", " ·");
+}
+
+const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+function tradingDay(iso: string | null | undefined) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "America/New_York" }).format(date);
+}
+
+function dayLabel(day: string | null | undefined) {
+  if (!day) return "";
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  const weekday = new Date(Date.UTC(year, month - 1, date)).getUTCDay();
+  return `יום ${WEEKDAYS[weekday]} · ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+}
+
+function byDay(trades: Trade[]) {
+  const sorted = [...trades].sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
+  const groups: { day: string; trades: Trade[]; pnl: number }[] = [];
+  for (const trade of sorted) {
+    const day = tradingDay(trade.closed_at);
+    let group = groups[groups.length - 1];
+    if (!group || group.day !== day) {
+      group = { day, trades: [], pnl: 0 };
+      groups.push(group);
+    }
+    group.trades.push(trade);
+    group.pnl += num(trade.pnl) ?? 0;
+  }
+  return groups;
 }
 
 function held(minutes: number | null | undefined) {
@@ -152,7 +185,7 @@ function side(trade: Trade) {
 
 const PERIODS: { id: Period; label: string }[] = [
   { id: "today", label: "היום" },
-  { id: "yesterday", label: "אתמול" },
+  { id: "yesterday", label: "יום המסחר הקודם" },
   { id: "month", label: "מתחילת החודש" },
   { id: "range", label: "טווח תאריכים" },
   { id: "all", label: "מההתחלה" },
@@ -162,8 +195,8 @@ function span(report: Report | null) {
   const frame = report?.window;
   if (!frame || frame.period === "all") return "כל העסקאות";
   if (!frame.start && !frame.end) return "בחר תאריכים";
-  if (frame.start === frame.end) return frame.start ?? "";
-  return `${frame.start ?? "…"} עד ${frame.end ?? "…"}`;
+  if (frame.start === frame.end) return dayLabel(frame.start);
+  return `${dayLabel(frame.start) || "…"} עד ${dayLabel(frame.end) || "…"}`;
 }
 
 export default function HistoryPage() {
@@ -396,7 +429,15 @@ export default function HistoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {closed.length > 0 ? closed.map((trade) => (
+                {closed.length > 0 ? byDay(closed).map((group) => (
+                  <Fragment key={group.day}>
+                    <tr className="ops-day">
+                      <td colSpan={13}>
+                        <b>{dayLabel(group.day) || "תאריך לא ידוע"}</b> · {group.trades.length} עסקאות ·{" "}
+                        <b className={`num ${group.pnl > 0 ? "up" : group.pnl < 0 ? "down" : ""}`}>{signed(String(group.pnl))}</b>
+                      </td>
+                    </tr>
+                    {group.trades.map((trade) => (
                   <tr key={`${trade.symbol}-${trade.closed_at}`} onClick={() => setOpen(trade)} style={{ cursor: "pointer" }}>
                     <td className="num">{when(trade.closed_at)}</td>
                     <td className="num">{trade.underlying}</td>
@@ -412,6 +453,8 @@ export default function HistoryPage() {
                     <td className="num">{held(trade.held_minutes)}</td>
                     <td>{reason(trade)}</td>
                   </tr>
+                    ))}
+                  </Fragment>
                 )) : (
                   <tr><td colSpan={13}>{report ? "אין עסקה שנסגרה בתקופה הזו" : "טוען"}</td></tr>
                 )}

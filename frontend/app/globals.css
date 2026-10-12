@@ -2133,6 +2133,8 @@ button.engine-cube { cursor: pointer; }
   .ops-cardify td:nth-child(2)::before,
   .ops-cardify td[colspan]::before { content: none; }
   .ops-cardify td[colspan] { grid-column: 1 / -1; color: var(--muted); }
+  .ops-cardify tr.ops-day { border: 0; background: transparent; margin: 18px 8px 0; padding: 0; }
+  .ops-cardify tr.ops-day td { color: var(--text); font-size: 15px; }
   .ops-cardify td.up, .ops-cardify td.down { font-size: 17px; font-weight: 800; }
   .ops-cardify td:last-child:not(.num) { grid-column: 1 / -1; }
 }
@@ -2151,3 +2153,5 @@ button.engine-cube { cursor: pointer; }
   .live i, .colon, .buy-card, .panel, .metric, .int-card,
   .ops > *, .ops-pip.on i, .ops-line::after, .ops-track i, .ops-node.wait b { animation: none; transition: none; }
 }
+
+.ops-table tr.ops-day td { background: var(--panel); color: var(--text); border-top: 1px solid var(--line); padding-top: 14px; }
