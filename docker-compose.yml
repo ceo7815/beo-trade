@@ -150,6 +150,11 @@ services:
       BACKEND_URL: http://api:8000
       PORT: "3000"
       HOSTNAME: 0.0.0.0
+      # Only the login and the internal API key reach the web container, not the broker or data secrets.
+      API_ADMIN_KEY: ${API_ADMIN_KEY:-}
+      DASHBOARD_USER: ${DASHBOARD_USER:-}
+      DASHBOARD_PASSWORD: ${DASHBOARD_PASSWORD:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
     ports:
       - "${WEB_PORT:-3000}:3000"
     networks:

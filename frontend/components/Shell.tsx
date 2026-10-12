@@ -337,6 +337,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
                 {closing ? "סוגר" : "סגור פוזיציות"}
               </button>
+              <button
+                type="button"
+                className="halt-btn run"
+                onClick={() => fetch("/api/auth/logout", { method: "POST" }).finally(() => (window.location.href = "/login"))}
+              >
+                יציאה
+              </button>
             </div>
           </header>
           {note ? <p className="px-6 pt-3 text-sm text-[var(--rose)]">{note}</p> : null}

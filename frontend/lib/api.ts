@@ -136,11 +136,17 @@ export const PHASES: Record<string, string> = {
   DAILY_REPORT: "סיכום יומי",
 };
 
+function toLogin(response: Response) {
+  if (response.status !== 401 || typeof window === "undefined" || window.location.pathname === "/login") return;
+  window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
+}
+
 export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
+    toLogin(response);
     if (!response.ok) {
       throw new Error("הבקשה נכשלה");
     }
@@ -184,6 +190,7 @@ export function poll(task: () => Promise<unknown>, everyMs: number): () => void 
 
 export async function apiDelete(path: string): Promise<void> {
   const response = await fetch(`/backend${path}`, { method: "DELETE" });
+  toLogin(response);
   if (!response.ok) throw new Error("הבקשה נכשלה");
 }
 
@@ -193,6 +200,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
   });
+  toLogin(response);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(typeof payload.detail === "string" ? payload.detail : "הבקשה נכשלה");

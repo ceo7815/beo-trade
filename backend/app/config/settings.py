@@ -196,6 +196,8 @@ class Settings(BaseSettings):
     options_data_provider: str = "unconfigured"
     news_provider: str = "unconfigured"
     openai_api_key: str = ""
+    api_admin_key: str = ""
+    api_read_key: str = ""
     openai_model: str = "gpt-6.1-sol"
     trading_mode: str = "PAPER"
     paper_only: bool = True

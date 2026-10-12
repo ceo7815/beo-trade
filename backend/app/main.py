@@ -43,7 +43,7 @@ from app.ops.paths import HEARTBEAT
 from app.ops.readiness import build_health, build_ready
 from app.ops.safety import assert_boot_safe
 from app.security.auth import user_id_from_header
-from app.security.middleware import RateLimitMiddleware, SecurityHeadersMiddleware
+from app.security.middleware import ApiKeyMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 log = structlog.get_logger()
 _feed_refresh = threading.Lock()
@@ -175,11 +175,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # production ceiling so a single open tab cannot lock itself out.
     rate_limit = 600 if current.app_env == "production" else 2000
     app.add_middleware(RateLimitMiddleware, limit=rate_limit)
+    app.add_middleware(ApiKeyMiddleware, admin_key=current.api_admin_key.strip(), read_key=current.api_read_key.strip())
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[item.strip() for item in current.cors_origins.split(",") if item.strip()],
         allow_methods=["GET", "POST", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
+        allow_headers=["Authorization", "Content-Type", "X-Beo-Key"],
     )
 
     @app.get("/health")
