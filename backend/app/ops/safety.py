@@ -7,7 +7,7 @@ PAPER_HOST = "https://paper-api.alpaca.markets"
 OFFICIAL_POLICY = {
     "paper_policy_name": "AGGRESSIVE",
     "risk_policy_version": "aggressive-1",
-    "exit_policy_version": "aggressive-exit-1",
+    "exit_policy_version": "aggressive-exit-2",
     "risk_per_trade_pct": 0.02,
     "normal_position_capital_pct": 0.07,
     "hard_position_capital_pct": 0.10,
@@ -23,7 +23,7 @@ OFFICIAL_POLICY = {
     "initial_stop_decline_pct": 0.40,
     "protect_at_r": 1.0,
     "protective_stop_r": 0.25,
-    "trail_activate_r": 1.5,
+    "trail_activate_r": 1.0,
     "winner_run_r": 2.0,
     "trailing_enabled": True,
     "trailing_pct": 0.15,

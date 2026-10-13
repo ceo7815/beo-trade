@@ -4,7 +4,7 @@ from decimal import Decimal
 from app.config.settings import TradingConfig
 from app.models.tables import PositionState
 from app.paper_trading.engine import exit_signal
-from app.positions.admission import admit_buy
+from app.positions.admission import admit_buy, exit_blocks_reentry, names_blocked_after_exit
 from app.positions.state import apply_quote, load_open_state, open_state
 from app.schemas.domain import OptionRight, OptionSnapshot, UnderlyingSnapshot
 from app.broker.normalize import execution_pnl
@@ -433,6 +433,27 @@ def test_aggregate_and_underlying_block_the_buy():
     capped = admit_buy(option, EQUITY, 10, config, positions=[], orders=[], state_risk={"OTHER": Decimal("15000")}, open_premium=Decimal("0"), sector_premium=Decimal("0"), buying_power=EQUITY, open_positions=1)
     assert capped.quantity == 0
     assert capped.reason == "AGGREGATE_RISK_LIMIT"
+
+
+def test_a_stop_or_invalidation_blocks_the_same_name_for_the_session():
+    assert exit_blocks_reentry("STOP 1.75 thetadata")
+    assert exit_blocks_reentry("INVALIDATION 2.07 thetadata")
+    assert not exit_blocks_reentry("PROTECTED_STOP 13.5 thetadata")
+    assert not exit_blocks_reentry("TRAILING 18 thetadata")
+    assert not exit_blocks_reentry("SESSION_CLOSE 0.82 thetadata")
+    blocked = names_blocked_after_exit(
+        [("msft-id", "STOP 1.75 thetadata"), ("pltr-call", "INVALIDATION 2.07 thetadata"), ("mu-id", "PROTECTED_STOP 13.5 thetadata")],
+        {"msft-id": "MSFT", "pltr-call": "PLTR", "mu-id": "MU"},
+    )
+    assert blocked == {"MSFT", "PLTR"}
+    config = TradingConfig()
+    option = _option("4.90", "5.00", expiration=NOW.date() + timedelta(days=2))
+    decision = admit_buy(
+        option, EQUITY, 10, config, positions=[], orders=[], state_risk={}, open_premium=Decimal("0"),
+        sector_premium=Decimal("0"), buying_power=EQUITY, open_positions=0, failed_underlyings={"NVDA"},
+    )
+    assert decision.quantity == 0
+    assert decision.reason == "REENTRY_AFTER_EXIT"
 
 
 def test_admitted_quantity_stays_inside_every_cap():

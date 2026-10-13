@@ -138,14 +138,12 @@ def open_story(trade: dict, config: TradingConfig) -> list[str]:
     if entry is None or entry <= 0:
         return ["אין מחיר כניסה, ולכן אין חישוב של רמות היציאה."]
     one_r = entry * Decimal(str(config.initial_stop_decline_pct))
-    protect = entry + one_r * Decimal(str(config.protect_at_r))
     protected_stop = entry - one_r * Decimal(str(config.protective_stop_r))
     trail_on = entry + one_r * Decimal(str(config.trail_activate_r))
     lines = [
         "העסקה עדיין פתוחה. מה יוציא אותה:",
         f"ירידה ל-{_price(entry - one_r)}: יציאה בהפסד מתוכנן.",
-        f"עלייה ל-{_price(protect)}: הסטופ עולה ל-{_price(protected_stop)}, כמעט מחיר הכניסה.",
-        f"עלייה ל-{_price(trail_on)}: מתחיל סטופ נגרר. יציאה אם המחיר יורד {config.trailing_pct * 100:.0f}% מהשיא.",
+        f"עלייה ל-{_price(trail_on)}: מתחיל סטופ נגרר. יציאה אם המחיר יורד {config.trailing_pct * 100:.0f}% מהשיא. רצפה אם המחיר צונח: {_price(protected_stop)}.",
         f"זמן: עד {_minutes(config.holding_minutes_1dte)} לחוזה שפוקע מחר, ויציאה לפני סוף יום המסחר אם הוא פוקע היום או מחר.",
     ]
     current = _dec(trade.get("current_price"))

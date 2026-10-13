@@ -650,12 +650,13 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         from sqlalchemy import select
 
         from app.models.tables import PositionState
-        from app.positions.admission import admit_buy
+        from app.positions.admission import admit_buy, underlyings_stopped_today
 
         state_risk: dict[str, Decimal] = {}
         with session_scope() as session:
             for stored in session.scalars(select(PositionState).where(PositionState.status == "open")):
                 state_risk[stored.symbol.replace(" ", "")] = Decimal(str(stored.planned_risk))
+            failed_underlyings = underlyings_stopped_today(session, moment)
         account = adapter.get_account()
         if account.get("equity") not in {None, ""}:
             equity = Decimal(str(account["equity"]))
@@ -693,6 +694,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 sector_premium=sector_premium,
                 buying_power=buying,
                 open_positions=len(positions),
+                failed_underlyings=failed_underlyings,
             )
             snapshot = broker_risk_snapshot(
                 account,

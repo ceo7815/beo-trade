@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from decimal import Decimal
+from zoneinfo import ZoneInfo
 
 from app.broker.normalize import parse_option_symbol
 from app.config.settings import TradingConfig
@@ -11,6 +13,9 @@ from app.policy.sizing import size_position
 from app.schemas.domain import OptionSnapshot
 
 OPEN_ORDER_STATES = {"NEW", "ACCEPTED", "PENDING_NEW", "PARTIALLY_FILLED", "SUBMITTED", "OPEN"}
+# A full stop or an invalidation closes the name for the rest of the New York session.
+# A protected stop, a trail, and the session close do not: those exits can still be winners.
+REENTRY_BLOCK_REASONS = frozenset({"STOP", "INVALIDATION"})
 
 
 @dataclass(frozen=True)
@@ -59,6 +64,46 @@ def book_planned_risk(positions: list[dict], orders: list[dict], states: dict[st
     return total
 
 
+def exit_blocks_reentry(reason: str) -> bool:
+    return (reason or "").split(" ", 1)[0] in REENTRY_BLOCK_REASONS
+
+
+def names_blocked_after_exit(events: list[tuple[str, str]], underlying_of: dict[str, str]) -> set[str]:
+    """events are (trade id, exit reason). A trade id that is itself an option symbol still resolves."""
+    blocked: set[str] = set()
+    for trade_id, reason in events:
+        if not exit_blocks_reentry(reason):
+            continue
+        name = underlying_of.get(trade_id) or contract_underlying(trade_id)
+        if name:
+            blocked.add(name.strip().upper())
+    return blocked
+
+
+def underlyings_stopped_today(session, moment: datetime) -> set[str]:
+    from sqlalchemy import select
+
+    from app.models.tables import BrokerTradeEvent, PositionState
+
+    started = moment.astimezone(ZoneInfo("America/New_York")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    rows = session.scalars(select(BrokerTradeEvent).where(BrokerTradeEvent.state == "EXIT_TRIGGERED"))
+    events: list[tuple[str, str]] = []
+    underlying_of: dict[str, str] = {}
+    for event in rows:
+        created = event.created_at
+        if created is None:
+            continue
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=timezone.utc)
+        if created < started:
+            continue
+        events.append((event.trade_id, event.reason or ""))
+        state = session.get(PositionState, event.trade_id)
+        if state is not None and state.underlying:
+            underlying_of[event.trade_id] = state.underlying
+    return names_blocked_after_exit(events, underlying_of)
+
+
 def underlying_taken(underlying: str, positions: list[dict], orders: list[dict]) -> bool:
     name = underlying.strip().upper()
     if not name:
@@ -92,8 +137,11 @@ def admit_buy(
     sector_premium: Decimal,
     buying_power: Decimal | None,
     open_positions: int,
+    failed_underlyings: set[str] | None = None,
 ) -> Admission:
     underlying = option.underlying.strip().upper()
+    if underlying in {name.strip().upper() for name in (failed_underlyings or set())}:
+        return Admission(0, "REENTRY_AFTER_EXIT")
     if underlying_taken(underlying, positions, orders):
         return Admission(0, "UNDERLYING_POSITION_LIMIT")
     planned_open = book_planned_risk(positions, orders, state_risk, config)

@@ -110,3 +110,12 @@ def test_exit_modes():
     assert exit_signal(_fill(), _option(), underlying, close - timedelta(minutes=10), config, True, close).reason == "SESSION_CLOSE"
     invalid = exit_signal(_fill(), _option(), _underlying("98"), NOW, config, True)
     assert invalid.reason == "INVALIDATION"
+
+
+def test_a_forty_percent_gain_trails_fifteen_percent_off_the_peak():
+    config = TradingConfig()
+    # Entry 5, favorable 2 is +40%, so the peak is 7 and 15% off it is 5.95.
+    # 5.90 is still above the -10% floor at 4.50, so the trail is what closes it.
+    trailed = exit_signal(_fill(favorable="2.00"), _option("6.00", "5.90"), _underlying(), NOW, config, True)
+    assert trailed is not None and trailed.reason == "TRAILING"
+    assert exit_signal(_fill(favorable="2.00"), _option("6.30", "6.20"), _underlying(), NOW, config, True) is None

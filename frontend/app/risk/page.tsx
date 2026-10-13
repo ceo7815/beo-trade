@@ -290,7 +290,7 @@ export default function RiskPage() {
               <dt>Stop ראשוני</dt><dd>−1R · ברירת מחדל {pct(policy?.initial_stop_decline_pct)} מהפרמיה</dd>
               <dt>ב-+1R</dt><dd>{policy ? "מצב הגנה" : "אין נתונים"}</dd>
               <dt>Stop מוגן</dt><dd className="num">{policy ? `−${policy.protective_stop_r}R` : "אין נתונים"}</dd>
-              <dt>ב-+1.5R</dt><dd>{policy ? "Trailing פעיל" : "אין נתונים"}</dd>
+              <dt>ב-+1R</dt><dd>{policy ? "Trailing פעיל" : "אין נתונים"}</dd>
               <dt>ב-+2R</dt><dd>{policy ? "Winner Run" : "אין נתונים"}</dd>
               <dt>Trailing</dt><dd className="num">{policy ? `${pct(policy.trailing_pct)} מהשיא` : "אין נתונים"}</dd>
               <dt>0DTE</dt><dd className="num">{policy ? `עד ${policy.holding_minutes_0dte} דקות` : "אין נתונים"}</dd>

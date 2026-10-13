@@ -42,10 +42,11 @@ def test_a_stored_peak_turns_on_the_trailing_stop_and_locks_profit():
     assert levels["from_record"] is True
 
 
-def test_a_gain_past_one_r_protects_the_position_without_a_record():
+def test_a_gain_past_one_r_starts_the_trail_without_a_record():
     levels = position_levels(_trade("4.30"), None, TradingConfig(), NOW, TODAY)
-    assert levels["stage"] == "PROTECTED"
-    assert levels["active_exit"] == "2.69"
+    assert levels["stage"] == "TRAILING"
+    assert levels["active_exit"] == "3.66"
+    assert levels["pnl_at_active_exit"] == "1130.50"
 
 
 def test_no_entry_price_means_no_levels():

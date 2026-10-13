@@ -25,7 +25,7 @@ Do not install the `thetadata` package. Do not upgrade httpx. No Redis. Runtime 
 
 KILL_SWITCH, SESSION_CLOSE, EXPIRATION, INVALIDATION, LIQUIDITY, STOP or PROTECTED_STOP, TRAILING, TIME_STOP.
 
-Do not widen the stop. One full stop is about 40% of the premium (`initial_stop_decline_pct` 0.40). Protection arms at +1R and moves the stop to entry minus 0.25R. The trail arms at +1.5R and exits 15% off the peak. 0DTE holding limit is 90 minutes. 1DTE is 180. Winners came from the trail and the time stop on liquid names (HOOD, MU, MSTR, SMCI).
+Do not widen the stop. One full stop is about 40% of the premium (`initial_stop_decline_pct` 0.40). Protection and the trail both arm at +1R (+40%). The trail exits 15% off the peak; the -10% floor remains only if the bid gaps through that trail. `min_delta` is 0.35. A STOP or INVALIDATION blocks another entry in that underlying for the rest of the New York session (`REENTRY_AFTER_EXIT`); a protected stop, a trail, and the session close do not. 0DTE holding limit is 90 minutes. 1DTE is 180. Winners came from the trail and the time stop on liquid names (HOOD, MU, MSTR, SMCI).
 
 No new entry inside `entry_cutoff_minutes` (80) of the close, so every buy has an hour before the 0/1DTE exit. `max_same_direction_entries` is 0 (off): at 2 per 30 minutes the week of Oct 7 would have blocked AMZN +$2,660 to save $230. The user wants 5–10 entries a day; prefer ranking over new blocking rules. AI decisions for a scan run together (`ai_parallel_calls`); one after another they took 138s. A held contract with no ThetaData quote inside the session exit window is sold `fallback_exit_discount` below Alpaca's mark. Contracts past `preferred_max_dte` (3) rank lower.
 

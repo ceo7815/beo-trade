@@ -13,7 +13,8 @@ max_expiration_days = 21
 preferred_max_dte = 3
 long_dte_penalty = 0.15
 min_expiration_days = 0
-min_delta = 0.15
+# Oct 12: MSFT delta 0.30 lost $1,845 and PLTR PUT delta 0.24 lost $800. SOFI 0.68, META 0.41 and MU 0.37 stayed in.
+min_delta = 0.35
 max_delta = 0.75
 target_delta = 0.40
 min_gamma = 0.0005
@@ -36,7 +37,7 @@ max_risk_percent = 0.02
 max_capital_per_trade = 0
 paper_policy_name = "AGGRESSIVE"
 risk_policy_version = "aggressive-1"
-exit_policy_version = "aggressive-exit-1"
+exit_policy_version = "aggressive-exit-2"
 risk_per_trade_pct = 0.02
 normal_position_capital_pct = 0.07
 hard_position_capital_pct = 0.10
@@ -64,7 +65,8 @@ same_direction_window_minutes = 30
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25
-trail_activate_r = 1.5
+# Trail arms with protection, at +40%. Oct 12: META peaked +54% and closed +4%; MU peaked +44% and the -10% floor sold it at a loss. A 15% trail from that peak kept SOFI, which never pulled back that far.
+trail_activate_r = 1.0
 winner_run_r = 2.0
 ai_max_calls_per_scan = 8
 # Decisions for one scan are requested together; one after another they took 138s and prices drifted past the limit.
