@@ -86,7 +86,7 @@ def test_sub_million_volume_is_kept_for_the_option_chain():
     assert rejections == []
 
 
-def test_volume_below_one_million_stays_eligible_and_ranks_behind_stronger_names():
+def test_volume_below_one_million_stays_eligible_and_a_bigger_move_ranks_first():
     config = TradingConfig()
     thin = _snap("FWONA", volume=93_329, relative_volume=Decimal("2.56"), change_percent=Decimal("4.5"))
     stronger = _snap("LIQ", volume=2_000_000, relative_volume=Decimal("3.1"), change_percent=Decimal("1.1"))
@@ -99,4 +99,7 @@ def test_volume_below_one_million_stays_eligible_and_ranks_behind_stronger_names
     assert reject_underlying(quiet, config, NOW) == "relative_volume"
     assert reject_underlying(_snap("EMPTY", volume=0), config, NOW) == "underlying_liquidity"
     ranked = rank_underlyings([ordinary, thin, stronger], NOW, config.relative_volume_priority)
-    assert [item.symbol for item in ranked] == ["LIQ", "FWONA", "NAKA"]
+    assert [item.symbol for item in ranked] == ["NAKA", "FWONA", "LIQ"]
+    live = _snap("LIVE", change_percent=Decimal("1.2"), price=Decimal("105"), high=Decimal("105.1"), low=Decimal("100"))
+    pulled_back = _snap("BACK", change_percent=Decimal("4.5"), price=Decimal("100"), high=Decimal("108"), low=Decimal("99"))
+    assert [item.symbol for item in rank_underlyings([pulled_back, live], NOW)] == ["LIVE", "BACK"]

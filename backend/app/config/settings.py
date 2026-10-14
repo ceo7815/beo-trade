@@ -53,7 +53,7 @@ class TradingConfig:
     initial_stop_decline_pct: float = 0.40
     protect_at_r: float = 1.0
     protective_stop_r: float = 0.25
-    trail_activate_r: float = 1.0
+    trail_activate_r: float = 0.75
     winner_run_r: float = 2.0
     invalidation_underlying_percent: float = 0.01
     iv_crush_percent: float = 0.20
@@ -86,7 +86,7 @@ class TradingConfig:
     max_daily_loss_dollars: float = 0
     paper_policy_name: str = "AGGRESSIVE"
     risk_policy_version: str = "aggressive-1"
-    exit_policy_version: str = "aggressive-exit-2"
+    exit_policy_version: str = "aggressive-exit-3"
     risk_per_trade_pct: float = 0.02
     normal_position_capital_pct: float = 0.07
     hard_position_capital_pct: float = 0.10

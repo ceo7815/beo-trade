@@ -4,6 +4,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.config.settings import TradingConfig
+from app.quant.events import continuation
 from app.schemas.domain import OptionSnapshot, UnderlyingSnapshot
 
 
@@ -39,15 +40,20 @@ def rank_underlyings(
     as_of: datetime,
     priority: float = 1.8,
 ) -> list[UnderlyingSnapshot]:
-    """Stage B. RV at or above the priority mark first, then RV, move, freshness, liquidity."""
+    """Stage B. A name still at the day's high or low is scanned first, then the larger move.
+
+    Distance from yesterday's close is not enough: a 1% gap that has already pulled back was
+    bought ahead of a name still running. Relative volume only breaks a tie.
+    """
 
     def key(item: UnderlyingSnapshot) -> tuple:
         age = quote_age_seconds(item.observed_at, as_of)
         relative = float(item.relative_volume)
         return (
+            0 if continuation(item) else 1,
+            -abs(float(item.change_percent)),
             0 if relative >= priority else 1,
             -relative,
-            -abs(float(item.change_percent)),
             age,
             -int(item.volume),
             item.symbol,

@@ -58,7 +58,7 @@ type Risk = { max_positions?: number | null; exposure_limit?: string | null };
 const STAGES: Record<string, { label: string; hint: string }> = {
   AT_RISK: { label: "בסיכון", hint: "עדיין לא הגיעה לרווח של R אחד. הסטופ המקורי פעיל." },
   PROTECTED: { label: "מוגנת", hint: "הרוויחה R אחד. הסטופ הועלה לקרבת מחיר הכניסה." },
-  TRAILING: { label: "סטופ נגרר", hint: "הרוויחה 40%. היציאה יושבת 15% מתחת לשיא." },
+  TRAILING: { label: "סטופ נגרר", hint: "הרוויחה 30%. היציאה יושבת 15% מתחת לשיא." },
 };
 
 function num(value: string | number | null | undefined) {

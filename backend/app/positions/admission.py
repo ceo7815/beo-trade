@@ -80,6 +80,26 @@ def names_blocked_after_exit(events: list[tuple[str, str]], underlying_of: dict[
     return blocked
 
 
+def realized_session_pnl(session, moment: datetime) -> Decimal:
+    """Closed paper P&L since New York midnight. Open marks are not included."""
+    from sqlalchemy import select
+
+    from app.models.tables import PaperTrade
+
+    started = moment.astimezone(ZoneInfo("America/New_York")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    total = Decimal("0")
+    for trade in session.scalars(select(PaperTrade).where(PaperTrade.exit_at.is_not(None))):
+        closed = trade.exit_at
+        if closed is None or trade.pnl_dollars is None:
+            continue
+        if closed.tzinfo is None:
+            closed = closed.replace(tzinfo=timezone.utc)
+        if closed < started:
+            continue
+        total += Decimal(str(trade.pnl_dollars))
+    return total
+
+
 def underlyings_stopped_today(session, moment: datetime) -> set[str]:
     from sqlalchemy import select
 

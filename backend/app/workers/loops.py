@@ -109,7 +109,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             moment.date(),
             cash,
             _open_symbols(settings),
-            daily_pnl=_measured_pnl(settings),
+            daily_pnl=_entry_pnl(settings),
             sector_book=_measured_sectors(settings),
             enforce_loss=True,
             enforce_exposure=True,
@@ -493,6 +493,20 @@ def _broker_positions(settings: Settings) -> list[dict] | None:
         adapter.close()
 
 
+def _entry_pnl(settings: Settings) -> Decimal | None:
+    """Block new buys on the worse of the account mark and closed P&L since midnight in New York."""
+    from app.models.db import database_ready, session_scope
+    from app.options.risk_limits import entry_pnl
+    from app.positions.admission import realized_session_pnl
+
+    mark = _measured_pnl(settings)
+    realized = None
+    if database_ready():
+        with session_scope() as session:
+            realized = realized_session_pnl(session, datetime.now(timezone.utc))
+    return entry_pnl(mark, realized)
+
+
 def _measured_pnl(settings: Settings) -> Decimal | None:
     from app.analytics.finance import trading_day_pnl
     from app.broker.runtime import open_paper_broker
@@ -621,7 +635,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
-    pnl = _measured_pnl(settings)
+    pnl = _entry_pnl(settings)
     sectors = _measured_sectors(settings)
     if equity is None or pnl is None or sectors is None:
         blocked_all("ACCOUNT_DATA_MISSING")

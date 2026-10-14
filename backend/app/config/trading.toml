@@ -25,7 +25,7 @@ scan_interval_seconds = 60
 monitor_interval_seconds = 15
 shortlist_size = 4
 min_relative_volume = 0.50
-# Ranking tier only. A name at or above this is scanned first. It does not reject a stock.
+# Ranking tier only, after the size of the move. A name at or above this breaks a tie. It does not reject a stock.
 relative_volume_priority = 1.8
 min_underlying_move_percent = 0.6
 min_option_price = 0.30
@@ -37,7 +37,7 @@ max_risk_percent = 0.02
 max_capital_per_trade = 0
 paper_policy_name = "AGGRESSIVE"
 risk_policy_version = "aggressive-1"
-exit_policy_version = "aggressive-exit-2"
+exit_policy_version = "aggressive-exit-3"
 risk_per_trade_pct = 0.02
 normal_position_capital_pct = 0.07
 hard_position_capital_pct = 0.10
@@ -65,8 +65,9 @@ same_direction_window_minutes = 30
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25
-# Trail arms with protection, at +40%. Oct 12: META peaked +54% and closed +4%; MU peaked +44% and the -10% floor sold it at a loss. A 15% trail from that peak kept SOFI, which never pulled back that far.
-trail_activate_r = 1.0
+# Trail arms at +30% of premium (0.75R). Protection still arms at +40%.
+# Oct 13: MU peaked +39.6% and closed +4%; META peaked +38.8% and closed -2%; AAPL peaked +30% and then stopped at -40%.
+trail_activate_r = 0.75
 winner_run_r = 2.0
 ai_max_calls_per_scan = 8
 # Decisions for one scan are requested together; one after another they took 138s and prices drifted past the limit.

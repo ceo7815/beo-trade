@@ -281,17 +281,24 @@ def register(app: FastAPI, settings: Settings) -> None:
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
+        from app.options.risk_limits import daily_loss_state, entry_pnl
+        from app.positions.admission import realized_session_pnl
+
+        realized = None
+        if database_ready():
+            with session_scope() as session:
+                realized = realized_session_pnl(session, datetime.now(timezone.utc))
+        counted = entry_pnl(measured, realized)
         loss_used = None
-        if daily is not None and Decimal(daily) < 0:
-            loss_used = str(abs(Decimal(daily)))
-        elif daily is not None:
+        counted_text = None if counted is None else str(counted.quantize(Decimal("0.01")))
+        if counted_text is not None and Decimal(counted_text) < 0:
+            loss_used = str(abs(Decimal(counted_text)))
+        elif counted_text is not None:
             loss_used = "0.00"
         count = None if positions is None else len(positions)
         stopped = False
         warning = False
-        from app.options.risk_limits import daily_loss_state
-
-        level = "ok" if equity is None or measured is None else daily_loss_state(equity, measured, trading)
+        level = "ok" if equity is None or counted is None else daily_loss_state(equity, counted, trading)
         if level in {"entry_stop", "hard_stop"}:
             stopped = True
         elif level == "warning":
@@ -300,7 +307,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             warning = True
         if equity is None:
             state = "אין נתוני חשבון"
-        elif daily is None:
+        elif counted is None:
             state = "אין בסיס הפסד יומי"
         elif stopped:
             state = "עצור"

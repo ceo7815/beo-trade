@@ -58,7 +58,7 @@ def test_an_open_trade_lists_the_levels_that_would_close_it():
     text = " ".join(story["exit"])
     assert story["closed"] is False
     assert "1.35" in text
-    assert "3.15" in text
+    assert "2.92" in text
     assert "15%" in text
     assert "2.02" in text
     assert "3.10" in text

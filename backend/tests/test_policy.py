@@ -83,7 +83,14 @@ def test_property_caps_hold_across_premiums_and_equity():
             assert plan.quantity * plan.contract_cost + Decimal("0") <= equity * Decimal("0.35")
 
 
-def test_daily_levels():
+def test_a_closed_loss_blocks_a_new_buy_even_when_the_open_book_is_green():
+    from app.options.risk_limits import entry_pnl
+
+    config = TradingConfig()
+    counted = entry_pnl(Decimal("800"), Decimal("-3605"))
+    assert counted == Decimal("-3605")
+    assert daily_loss_reason(Decimal("89211"), counted, config) == "DAILY_LOSS_LIMIT_REACHED"
+    assert entry_pnl(Decimal("-5000"), Decimal("-1000")) == Decimal("-5000")
     config = TradingConfig()
     assert daily_loss_state(EQUITY, Decimal("-2500"), config) == "warning"
     assert daily_loss_reason(EQUITY, Decimal("-2500"), config) is None
@@ -112,7 +119,12 @@ def test_exit_modes():
     assert invalid.reason == "INVALIDATION"
 
 
-def test_a_forty_percent_gain_trails_fifteen_percent_off_the_peak():
+def test_a_thirty_percent_gain_trails_fifteen_percent_off_the_peak():
+    config = TradingConfig()
+    # Entry 5, favorable 1.50 is +30%. Peak is 6.50 and 15% off it is 5.525.
+    trailed = exit_signal(_fill(favorable="1.50"), _option("5.60", "5.50"), _underlying(), NOW, config, True)
+    assert trailed is not None and trailed.reason == "TRAILING"
+    assert exit_signal(_fill(favorable="1.50"), _option("5.80", "5.70"), _underlying(), NOW, config, True) is None
     config = TradingConfig()
     # Entry 5, favorable 2 is +40%, so the peak is 7 and 15% off it is 5.95.
     # 5.90 is still above the -10% floor at 4.50, so the trail is what closes it.

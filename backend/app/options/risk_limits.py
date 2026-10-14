@@ -29,6 +29,12 @@ def daily_loss_state(equity: Decimal, daily_pnl: Decimal, config: TradingConfig)
     return "ok"
 
 
+def entry_pnl(mark: Decimal | None, realized: Decimal | None) -> Decimal | None:
+    """Use whichever figure is worse. A green open position must not hide a loss that is already closed."""
+    values = [item for item in (mark, realized) if item is not None]
+    return None if not values else min(values)
+
+
 def daily_loss_reason(equity: Decimal, daily_pnl: Decimal, config: TradingConfig) -> str | None:
     """Block a new buy at the entry stop. The hard stop also blocks buys and still allows sells."""
     state = daily_loss_state(equity, daily_pnl, config)
