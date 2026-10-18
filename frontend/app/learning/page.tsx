@@ -170,7 +170,7 @@ export default function LearningPage() {
 
   return (
     <Shell>
-      <section className="engine">
+      <section className="engine book">
         <header className="ops-head">
           <div>
             <h1>מה עובד</h1>
@@ -206,22 +206,14 @@ export default function LearningPage() {
                   <h2>{view.title}</h2>
                   <span>{view.note}</span>
                 </header>
-                <table className="ops-table ops-cardify">
-                  <thead>
-                    <tr><th>קבוצה</th><th>עסקאות</th><th>מרוויחות</th><th>רווח/הפסד</th><th>ממוצע לעסקה</th></tr>
-                  </thead>
-                  <tbody>
-                    {groupBy(trades, view.key).map((group) => (
-                      <tr key={group.name}>
-                        <td><bdi>{group.name}</bdi></td>
-                        <td className="num">{group.trades}</td>
-                        <td className="num">{Math.round((group.wins / group.trades) * 100)}%</td>
-                        <td className={`num ${tone(group.pnl)}`}>{money(group.pnl)}</td>
-                        <td className="num">{money(group.pnl / group.trades)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <div className="plain-list">
+                  {groupBy(trades, view.key).map((group) => (
+                    <div className="plain-row" key={group.name}>
+                      <b><bdi>{group.name}</bdi><small>{group.trades} עסקאות · {Math.round((group.wins / group.trades) * 100)}% מרוויחות</small></b>
+                      <strong className={`num ${tone(group.pnl)}`}>{money(group.pnl)}</strong>
+                    </div>
+                  ))}
+                </div>
               </section>
             ))
           : null}
@@ -241,39 +233,18 @@ function TradesView({ trades, onOpen }: { trades: LearnedTrade[]; onOpen: (trade
         <span>שיא ושפל לפי ה-bid בזמן ההחזקה · ויתרנו = שיא פחות מחיר היציאה · לחיצה פותחת גרף</span>
       </header>
       <p className="ops-line">סך הכל ויתרנו על {money(giveback)} בין השיא ליציאה בעסקאות שיש להן שיא ידוע.</p>
-      <table className="ops-table ops-cardify">
-        <thead>
-          <tr>
-            <th>עסקה</th><th>כניסה</th><th>רווח/הפסד</th><th>שיא</th><th>שפל</th><th>ויתרנו</th><th>אחרי היציאה</th><th>יציאה</th><th>לפי הכללים היום</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => {
-            const pnl = Number(row.pnl);
-            const path = row.path;
-            const replay = row.current_rules;
-            return (
-              <tr key={`${row.symbol}-${row.opened_at}`} onClick={() => onOpen(row)} style={{ cursor: "pointer" }}>
-                <td><bdi>{row.underlying} {row.right} {row.strike}</bdi></td>
-                <td className="num">{nyTime(row.opened_at)}</td>
-                <td className={`num ${tone(pnl)}`}>{Number.isFinite(pnl) ? money(pnl) : "—"}</td>
-                <td className="num up">
-                  {pctText(path.peak_pct)}
-                  {path.peak_minutes != null ? <small> · {Math.round(path.peak_minutes)} דק׳</small> : null}
-                  {path.peak_source === "position_state" ? <small> · ללא מסלול</small> : null}
-                </td>
-                <td className="num down">{pctText(path.trough_pct)}</td>
-                <td className="num">{path.giveback != null ? money(Number(path.giveback)) : "—"}</td>
-                <td className="num">{path.after_best_pct != null ? `עד ${pctText(path.after_best_pct)}` : "—"}</td>
-                <td>{exitLabel(row.exit_reason)}</td>
-                <td className={`num ${replay ? tone(Number(replay.pnl)) : ""}`}>
-                  {replay ? `${money(Number(replay.pnl))}${replay.complete ? "" : " (חלקי)"}` : "אין מסלול"}
-                </td>
-              </tr>
-            );
-          })}
-        </tbody>
-      </table>
+      <div className="plain-list">
+        {rows.map((row) => {
+          const pnl = Number(row.pnl);
+          const path = row.path;
+          return (
+            <button key={`${row.symbol}-${row.opened_at}`} type="button" className="plain-row" onClick={() => onOpen(row)}>
+              <b><bdi>{row.underlying} {row.right} {row.strike}</bdi><small>{nyTime(row.opened_at)} · {exitLabel(row.exit_reason)} · שיא {pctText(path.peak_pct)} · ויתרנו {path.giveback != null ? money(Number(path.giveback)) : "—"}</small></b>
+              <strong className={`num ${tone(pnl)}`}>{Number.isFinite(pnl) ? money(pnl) : "—"}</strong>
+            </button>
+          );
+        })}
+      </div>
     </section>
   );
 }
@@ -359,30 +330,18 @@ function LabView({ period, backfill }: { period: string; backfill?: Backfill }) 
                   : `${lab.trades_covered} מתוך ${lab.trades_total} עסקאות עם מסלול · בפועל ${money(actual)} · הכללים הנוכחיים בסימולציה ${current ? money(Number(current.pnl)) : "—"} (מקום ${current?.rank ?? "—"} מתוך ${lab.combinations}). "חלקי" = המסלול נגמר לפני שכלל נורה, ונשאר מחיר היציאה בפועל.`}
         </p>
         {lab?.best?.length ? (
-          <table className="ops-table ops-cardify">
-            <thead>
-              <tr><th>מקום</th><th>סטופ</th><th>נגרר מופעל ב-</th><th>מרחק נגרר</th><th>ביטול לפי מניה</th><th>רווח/הפסד</th><th>מול הנוכחי</th><th>מרוויחות</th><th>מלאות</th></tr>
-            </thead>
-            <tbody>
-              {[...lab.best, ...(current && !lab.best.some((row) => row.current) ? [current] : [])].map((row) => {
-                const pnl = Number(row.pnl);
-                const delta = current ? pnl - Number(current.pnl) : 0;
-                return (
-                  <tr key={`${row.rank}`} className={row.current ? "on" : ""}>
-                    <td className="num">{row.rank}{row.current ? " · נוכחי" : ""}</td>
-                    <td className="num">−{share(row.stop_pct)}</td>
-                    <td className="num">+{share(row.trail_arm_pct)}</td>
-                    <td className="num">{share(row.trail_pct)}</td>
-                    <td className="num">{row.invalidation_pct ? share(row.invalidation_pct) : "כבוי"}</td>
-                    <td className={`num ${tone(pnl)}`}>{money(pnl)}</td>
-                    <td className={`num ${tone(delta)}`}>{row.current ? "—" : money(delta)}</td>
-                    <td className="num">{row.wins}/{row.trades}</td>
-                    <td className="num">{row.complete}/{row.trades}</td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+          <div className="plain-list">
+            {[...lab.best, ...(current && !lab.best.some((row) => row.current) ? [current] : [])].map((row) => {
+              const pnl = Number(row.pnl);
+              const delta = current ? pnl - Number(current.pnl) : 0;
+              return (
+                <div className="plain-row" key={`${row.rank}`}>
+                  <b>מקום {row.rank}{row.current ? " · נוכחי" : ""}<small>סטופ −{share(row.stop_pct)} · נגרר +{share(row.trail_arm_pct)} במרחק {share(row.trail_pct)} · ביטול {row.invalidation_pct ? share(row.invalidation_pct) : "כבוי"} · {row.wins}/{row.trades} מרוויחות</small></b>
+                  <strong className={`num ${tone(pnl)}`}>{money(pnl)}{row.current ? "" : ` · ${money(delta)}`}</strong>
+                </div>
+              );
+            })}
+          </div>
         ) : null}
         <p className="ops-line">מעט עסקאות עם מסלול = כיוון בלבד. לא משנים סטופים לפני שיש מספיק עסקאות ואישור שלך.</p>
       </section>

@@ -39,6 +39,7 @@ const icons = {
   paper: "M7 3h8l4 4v14H7zM15 3v4h4",
   positions: "M4 7h16M4 12h16M4 17h10",
   history: "M12 7v6l4 2M12 21a9 9 0 1 0-9-9",
+  decisions: "M9 6h11M9 12h11M9 18h11M4 6h.01M4 12h.01M4 18h.01",
   performance: "M4 19V10M10 19V5M16 19v-7M22 19H2",
   ai: "M12 3l1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8z",
   status: "M4 12h3l2-5 4 10 2-5h5",
@@ -75,6 +76,11 @@ function useClock(timeZone: string) {
   }, [timeZone]);
   const [hour, minute, second] = value.time.split(":");
   return { hour, minute, second, date: value.date };
+}
+
+function MobileClock() {
+  const clock = useClock("America/New_York");
+  return <b className="num">{clock.hour}:{clock.minute}</b>;
 }
 
 function Clock({ timeZone, label }: { timeZone: string; label: string }) {
@@ -221,7 +227,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/status", label: "בריאות המערכת", icon: icons.status },
         { href: "/audit", label: "ביקורת מערכת", icon: icons.history },
-        { href: "/backtests", label: "בדיקות עבר", icon: icons.scan },
         { href: "/settings", label: "הגדרות", icon: icons.settings },
         { href: "/versions", label: "גרסאות", icon: icons.version },
       ],
@@ -239,7 +244,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
     { href: "/", label: "לוח", icon: icons.desk },
     { href: "/positions", label: "פוזיציות", icon: icons.positions },
     { href: "/history", label: "עסקאות", icon: icons.history },
-    { href: "/engine", label: "מנוע", icon: icons.scan },
+    { href: "/decisions", label: "החלטות", icon: icons.decisions },
   ];
   const inTabs = tabs.some((tab) => active(tab.href));
   const title = groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
@@ -316,8 +321,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <b>{title}</b>
               <span>
                 <i className={`dot ${link}`} />
-                {phase} · PAPER
-                <Link href="/versions">{release?.current ? ` · גרסה ${release.current}` : " · גרסאות"}</Link>
+                {phase}
+                <MobileClock />
               </span>
             </div>
             <button
@@ -345,7 +350,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <div className="bar-actions">
               <button
                 type="button"
-                className={`halt-btn ${halted ? "run" : "stop"}`}
+                className={`halt-btn ${halted ? "halted" : "stop"}`}
                 aria-pressed={halted}
                 disabled={switching}
                 onClick={toggleTrading}

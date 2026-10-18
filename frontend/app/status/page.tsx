@@ -59,9 +59,6 @@ export default function StatusPage() {
       does: key === "STREAM_CONNECTED" ? "עובר רק אחרי בדיקת זרם אמיתית. מפתח שמור לבד אינו זרם." : "דגל מבדיקת Alpaca Paper. PASS רק אחרי קריאה שהצליחה.",
     })),
   ];
-  const lines = [];
-  for (let index = 0; index < cubes.length; index += 4) lines.push(cubes.slice(index, index + 4));
-
   return (
     <Shell>
       <section className="engine">
@@ -72,16 +69,12 @@ export default function StatusPage() {
           </div>
           <span className={`ops-pip ${failed ? "off" : status ? "on" : "warn"}`}><i />{failed ? "אין נתונים" : status ? "נבדק" : "טוען"}</span>
         </header>
-        <div className="engine-board">
-          {lines.map((line, rowIndex) => (
-            <div className="engine-row fit" key={line[0]?.label ?? rowIndex}>
-              {line.map((item) => (
-                <button key={item.label} type="button" className="engine-cube stat" onClick={() => setOpen({ title: item.label, does: item.does })}>
-                  <span>{item.label}</span>
-                  <b>{item.value}</b>
-                </button>
-              ))}
-            </div>
+        <div className="plain-list">
+          {cubes.map((item) => (
+            <button key={item.label} type="button" className="plain-row" onClick={() => setOpen({ title: item.label, does: item.does })}>
+              <b>{item.label}</b>
+              <strong className={item.value === "תקין" || item.value === "PASS" ? "ok" : item.value === "תקלה" || item.value === "FAIL" ? "bad" : item.value === "אזהרה" ? "warn" : ""}>{item.value}</strong>
+            </button>
           ))}
         </div>
         {open ? (

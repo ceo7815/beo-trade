@@ -88,6 +88,8 @@ type Position = {
   cost_basis?: string | null;
 };
 
+type ClosedLite = { closed_at?: string | null; pnl?: string | null };
+
 type TradeTotals = {
   total_pnl: string;
   total_return_pct: string | null;
@@ -161,6 +163,7 @@ function Board() {
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [risk, setRisk] = useState<Risk | null>(null);
   const [totals, setTotals] = useState<TradeTotals | null>(null);
+  const [book, setBook] = useState<ClosedLite[] | null>(null);
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
@@ -183,7 +186,10 @@ function Board() {
       feed<SystemStatus>("/api/v1/system", setStatus, 10000),
       feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 15000),
       feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => setAccount(body.account || null), 15000),
-      feed<{ summary?: TradeTotals }>("/api/v1/report/trades", (body) => setTotals(body.summary ?? null), 60000),
+      feed<{ summary?: TradeTotals; closed?: ClosedLite[] }>("/api/v1/report/trades?period=all", (body) => {
+        setTotals(body.summary ?? null);
+        setBook(body.closed ?? []);
+      }, 60000),
     ];
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
@@ -205,151 +211,106 @@ function Board() {
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
   const sync = syncOf(syncedAt, now);
+  const days = recentDays(book);
+  const lastDay = days?.[0] ?? null;
+  const showLast = closed && (dayPnl === null || dayPnl === 0) && lastDay !== null;
 
   return (
-    <section className="ops">
-      <div className="ops-fit">
-      <header className="ops-head">
-        <div>
-          <h1>לוח ראשי</h1>
-          <p>מה המערכת עושה עכשיו</p>
+    <section className="desk-home">
+      <header className="desk-hero">
+        <div className="desk-hero-top">
+          <span>{phase}</span>
+          <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{sync.text}</span>
         </div>
-        <div className="ops-pips">
-          <span className={`ops-pip ${sync.tone}`}><i />{sync.text}</span>
-          <span className={`ops-pip ${desk ? (desk.autonomous ? "on" : "off") : "warn"}`}>
-            <i />
-            {desk ? (desk.autonomous ? "מנוע ON" : "מנוע OFF") : "מנוע"}
-          </span>
-          <span className="ops-pip">PAPER</span>
-          <span className="ops-pip">Alpaca</span>
-          <span className={`ops-pip ${status?.health === "ok" ? "on" : "warn"}`}>{status?.health === "ok" ? "פעיל" : status ? "מוגבל" : "מצב"}</span>
-          <span className="ops-pip">פעימה {ageLabel(liveAge(desk?.heartbeat_age_seconds, beatAt, now))}</span>
-          <span className="ops-pip">{phase}</span>
-          <span className="ops-pip num">{status?.now_display || "—"}</span>
-        </div>
+        <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : "היום"}</p>
+        <p className={`desk-hero-pnl num ${tone(showLast && lastDay ? lastDay.pnl : dayPnl)}`}>{showLast && lastDay ? signedMoney(lastDay.pnl) : dayPnl === null ? "—" : signedMoney(dayPnl)}</p>
+        <p className="desk-hero-note">{showLast ? "השוק סגור. זה יום המסחר האחרון." : narrative}</p>
       </header>
-
-      <p className="ops-line">{narrative}</p>
-
-      <div className="ops-book">
-        <Cell label="רווח/הפסד היום" hint="P&L" value={dayPnl === null ? "אין נתונים" : signedMoney(dayPnl)} className={tone(dayPnl)} />
-        <ResultCell label="סגור היום" book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? "טוען" : "אין עסקה סגורה היום"} />
-        <ResultCell label="פתוח היום" book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? "טוען" : "אין פוזיציה פתוחה"} />
-        <Cell label="כסף בסיכון" hint="עד הסטופ" value={stake === null ? "אין נתונים" : money(stake.dollars)} detail={stake?.note} />
-        <Cell label="הון עצמי" value={money(account?.equity)} />
-        <Cell label="מזומן" value={money(account?.cash)} />
-        <Cell label="כוח קנייה" value={money(account?.buying_power)} />
-      </div>
-
-      <div className="ops-meters">
-        <Meter label="הפסד יומי" used={risk?.daily_loss_used} limit={risk?.daily_loss_limit} />
-        <Meter label="חשיפה מול מגבלה" used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
-        <Meter label="פוזיציות" used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
-      </div>
 
       <div className="ops-stage">
           <section className="ops-pane stage">
             <header className="ops-pane-head">
               <h2>פוזיציות פתוחות</h2>
-              <span>Alpaca Paper · {positions === null ? "טוען" : positions.length}</span>
+              <span>{positions === null ? "טוען" : `${positions.length} פתוחות`}</span>
             </header>
-            <div className="ops-scroll">
-              <div className="ops-cards">
-                {positions && positions.length > 0 ? positions.map((item) => (
-                  <button key={item.symbol} type="button" className="ops-card" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
-                    <header>
-                      <b>{item.underlying || "—"}</b>
-                      <small>{item.right || ""}</small>
-                    </header>
-                    <strong className={tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}>
-                      {item.current_price ? money(item.unrealized_pl) : "אין נתונים"}
-                      {item.current_price && item.unrealized_plpc ? <em>{share(Number(item.unrealized_plpc) * 100)}</em> : null}
-                    </strong>
-                    <dl>
-                      <div><dt>חוזים</dt><dd>{contracts(item.qty)}</dd></div>
-                      <div><dt>כניסה</dt><dd>{price(item.avg_entry_price)}</dd></div>
-                      <div><dt>עכשיו</dt><dd>{price(item.current_price)}</dd></div>
-                      <div><dt>הושקע</dt><dd>{money(item.cost_basis)}</dd></div>
-                      <div><dt>שווי</dt><dd>{money(item.market_value)}</dd></div>
-                      <div><dt>נפתחה</dt><dd>{clock(openedAt(today, item.symbol))}</dd></div>
-                    </dl>
-                  </button>
-                )) : (
-                  <p className="ops-card-empty">{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</p>
-                )}
-              </div>
-              <table className="ops-table">
-                <thead>
-                  <tr>
-                    <th>נכס</th>
-                    <th>חוזה</th>
-                    <th>צד</th>
-                    <th>כמות</th>
-                    <th>נפתחה</th>
-                    <th>כניסה</th>
-                    <th>עכשיו</th>
-                    <th>הושקע</th>
-                    <th>שווי</th>
-                    <th>רווח/הפסד</th>
-                    <th>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {positions && positions.length > 0 ? positions.map((item) => (
-                    <tr key={item.symbol} className="ops-pick" title="לחץ להסבר על העסקה" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
-                      <td className="num">{item.underlying || "—"}</td>
-                      <td className="num">{item.symbol}</td>
-                      <td className="num">{item.right || "—"}</td>
-                      <td className="num">{item.qty || "—"}</td>
-                      <td className="num">{clock(openedAt(today, item.symbol))}</td>
-                      <td className="num">{price(item.avg_entry_price)}</td>
-                      <td className="num">{price(item.current_price)}</td>
-                      <td className="num">{money(item.cost_basis)}</td>
-                      <td className="num">{money(item.market_value)}</td>
-                      <td className={`num ${tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}`}>{item.current_price ? money(item.unrealized_pl) : "אין נתונים"}</td>
-                      <td className={`num ${tone(item.unrealized_plpc ? Number(item.unrealized_plpc) : null)}`}>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : "—"}</td>
-                    </tr>
-                  )) : (
-                    <tr><td colSpan={11}>{positions === null ? "טוען" : "אין פוזיציה פתוחה בברוקר"}</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </section>
-
-          <section className="ops-pane stage">
-            <header className="ops-pane-head">
-              <h2>זרם פעילות היום</h2>
-              <span>{todayLine(today)}</span>
-            </header>
-            <div className="ops-scroll">
-              {flowOf(today, scan).length === 0 ? (
-                <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
-              ) : flowOf(today, scan).map((event, index) => (
-                <div
-                  className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
-                  key={`${event.at}-${event.kind}-${index}`}
-                  title={event.trade ? "לחץ להסבר על העסקה" : undefined}
-                  onClick={() => event.trade && setPicked(event.trade)}
-                >
-                  <b className="num ops-flow-time">{clock(event.at)}</b>
-                  <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
-                  <span className="ops-flow-copy">
-                    <bdi dir="ltr">{event.title}</bdi>
-                    {event.lines.map((line) => <em key={line}>{line}</em>)}
-                  </span>
-                  {event.kind === "exit" && event.trade ? (
-                    <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
-                  ) : event.kind === "entry" && event.trade ? (
-                    <b className="num ops-flow-money">{money(event.trade.invested)}</b>
-                  ) : null}
-                </div>
-              ))}
+            <div className="desk-blotter">
+              {positions && positions.length > 0 ? positions.map((item) => (
+                <button key={item.symbol} type="button" className="desk-pos" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
+                  <b>{item.underlying || "—"}</b>
+                  <span>{item.right || "—"} · {contracts(item.qty)}</span>
+                  <span className="num">{price(item.avg_entry_price)} → {price(item.current_price)}</span>
+                  <strong className={`num ${tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}`}>
+                    {item.current_price ? money(item.unrealized_pl) : "—"}
+                    <small>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : ""}</small>
+                  </strong>
+                </button>
+              )) : (
+                <p className="desk-empty">{positions === null ? "טוען" : "אין פוזיציה פתוחה"}</p>
+              )}
             </div>
           </section>
       </div>
-      </div>
 
+      <section className="desk-days">
+        <header className="ops-pane-head">
+          <h2>ימים</h2>
+          <a href="/history">כל העסקאות</a>
+        </header>
+        <div className="desk-day-row">
+          {days === null ? <p className="desk-empty">טוען</p> : days.length === 0 ? <p className="desk-empty">עוד אין יום מסחר סגור</p> : days.map((group) => (
+            <a key={group.day} className="desk-day" href="/history">
+              <span>{dayTitle(group.day)}</span>
+              <b className={`num ${tone(group.pnl)}`}>{signedMoney(group.pnl)}</b>
+              <small>{group.wins} מתוך {group.trades} ברווח</small>
+            </a>
+          ))}
+        </div>
+      </section>
+
+      <details className="desk-system">
+        <summary>המערכת</summary>
+      <div className="desk-stats">
+        <ResultStat label="סגור" book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? "טוען" : "אין סגירה"} />
+        <ResultStat label="פתוח" book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? "טוען" : "אין פוזיציה"} />
+        <Stat label="הון" value={money(account?.equity)} />
+        <Stat label="מזומן" value={money(account?.cash)} />
+        <Stat label="בסיכון" value={stake === null ? "—" : money(stake.dollars)} />
+      </div>
+      <div className="ops-meters">
+        <Meter label="הפסד יומי" used={risk?.daily_loss_used} limit={risk?.daily_loss_limit} />
+        <Meter label="חשיפה" used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
+        <Meter label="פוזיציות" used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
+      </div>
+      <section className="ops-pane stage">
+        <header className="ops-pane-head">
+          <h2>זרם פעילות היום</h2>
+          <span>{todayLine(today)}</span>
+        </header>
+        <div className="ops-scroll">
+          {flowOf(today, scan).length === 0 ? (
+            <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
+          ) : flowOf(today, scan).map((event, index) => (
+            <div
+              className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
+              key={`${event.at}-${event.kind}-${index}`}
+              title={event.trade ? "לחץ להסבר על העסקה" : undefined}
+              onClick={() => event.trade && setPicked(event.trade)}
+            >
+              <b className="num ops-flow-time">{clock(event.at)}</b>
+              <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
+              <span className="ops-flow-copy">
+                <bdi dir="ltr">{event.title}</bdi>
+                {event.lines.map((line) => <em key={line}>{line}</em>)}
+              </span>
+              {event.kind === "exit" && event.trade ? (
+                <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
+              ) : event.kind === "entry" && event.trade ? (
+                <b className="num ops-flow-money">{money(event.trade.invested)}</b>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </section>
       <div className="ops-below">
           <section className="ops-pane">
             <h2>צינור המערכת</h2>
@@ -415,6 +376,7 @@ function Board() {
             </div>
           </section>
       </div>
+      </details>
       {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
     </section>
   );
@@ -472,6 +434,45 @@ function Cell({ label, hint, value, detail, className = "" }: { label: string; h
       {detail ? <small>{detail}</small> : null}
     </div>
   );
+}
+
+function Stat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
+  return (
+    <div className="desk-stat">
+      <span>{label}</span>
+      <b className={`num ${className}`}>{value}</b>
+    </div>
+  );
+}
+
+function ResultStat({ label, book, empty }: { label: string; book: DayBook | null; empty: string }) {
+  if (book === null) return <Stat label={label} value={empty} />;
+  return <Stat label={label} value={signedMoney(book.profit)} className={tone(book.profit)} />;
+}
+
+const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+function dayTitle(day: string) {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, date)).getUTCDay()] ?? "";
+  return `${weekday} ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
+}
+
+function recentDays(rows: ClosedLite[] | null) {
+  if (rows === null) return null;
+  const groups = new Map<string, { day: string; pnl: number; trades: number; wins: number }>();
+  for (const row of rows) {
+    const profit = num(row.pnl);
+    if (!row.closed_at || profit === null) continue;
+    const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(row.closed_at));
+    const group = groups.get(day) ?? { day, pnl: 0, trades: 0, wins: 0 };
+    group.pnl += profit;
+    group.trades += 1;
+    if (profit > 0) group.wins += 1;
+    groups.set(day, group);
+  }
+  return [...groups.values()].sort((a, b) => (a.day < b.day ? 1 : -1)).slice(0, 8);
 }
 
 function ResultCell({ label, book, empty }: { label: string; book: DayBook | null; empty: string }) {

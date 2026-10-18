@@ -61,8 +61,6 @@ export default function SettingsPage() {
       explain: COPY[key] || { title: key, does: "סף מקובץ ההגדרות.", formula: key },
     }));
   const cubes = [...head, ...thresholds];
-  const lines = [];
-  for (let index = 0; index < cubes.length; index += 4) lines.push(cubes.slice(index, index + 4));
 
   return (
     <Shell>
@@ -74,16 +72,12 @@ export default function SettingsPage() {
           </div>
           <span className={`ops-pip ${settings ? "on" : "warn"}`}><i />{settings ? "קובץ ההגדרות" : "טוען"}</span>
         </header>
-        <div className="engine-board">
-          {lines.map((line, rowIndex) => (
-            <div className="engine-row fit" key={line[0]?.label ?? rowIndex}>
-              {line.map((item) => (
-                <button key={item.label} type="button" className="engine-cube stat" onClick={() => setOpen(item.explain)}>
-                  <span>{item.label}</span>
-                  <b className="num">{item.value}</b>
-                </button>
-              ))}
-            </div>
+        <div className="plain-list">
+          {cubes.map((item) => (
+            <button key={item.label} type="button" className="plain-row" onClick={() => setOpen(item.explain)}>
+              <b>{item.label}</b>
+              <strong className="num">{item.value}</strong>
+            </button>
           ))}
         </div>
         {open ? (

@@ -87,6 +87,13 @@ function ratio(value: string | null | undefined) {
   return number <= 1 ? `${(number * 100).toFixed(0)}%` : String(value);
 }
 
+function near(used: string | null | undefined, limit: string | null | undefined) {
+  const left = Number(used);
+  const right = Number(limit);
+  if (!Number.isFinite(left) || !Number.isFinite(right) || right <= 0) return false;
+  return left / right >= 0.8;
+}
+
 function pair(used: string, limit: string) {
   if (used === "אין נתונים" && limit === "אין נתונים") return "אין נתונים";
   return `${used} / ${limit}`;
@@ -230,7 +237,6 @@ export default function RiskPage() {
       },
     },
   ];
-  const rows = [cubes.slice(0, 4), cubes.slice(4)];
   const tone = body?.state === "עצור" ? "off" : body?.state === "אזהרה" || failed ? "warn" : body ? "on" : "warn";
 
   return (
@@ -247,25 +253,23 @@ export default function RiskPage() {
           </span>
         </header>
 
-        <div className="engine-board" aria-label="מגבלות סיכון">
-          {rows.map((row, rowIndex) => (
-            <div className="engine-row fit" key={row[0]?.label ?? rowIndex}>
-              {row.map((item, index) => (
-                <button
-                  key={item.label}
-                  type="button"
-                  className="engine-cube stat"
-                  style={{ animationDelay: `${(rowIndex * 4 + index) * 40}ms` }}
-                  onClick={() => setOpen(item.explain)}
-                >
-                  <span>{item.label}</span>
-                  <b className="num">{item.value}</b>
-                </button>
-              ))}
-            </div>
-          ))}
+        <div className="plain-list">
+          <button type="button" className="plain-row" onClick={() => setOpen(cubes[3].explain)}>
+            <b>הפסד היום</b>
+            <strong className={`num ${near(body?.daily_loss_used, body?.daily_loss_limit) ? "bad" : ""}`}>{pair(money(body?.daily_loss_used), money(body?.daily_loss_limit))}</strong>
+          </button>
+          <button type="button" className="plain-row" onClick={() => setOpen(cubes[4].explain)}>
+            <b>פוזיציות</b>
+            <strong className={`num ${near(body?.open_positions == null ? null : String(body.open_positions), body?.max_positions == null ? null : String(body.max_positions)) ? "bad" : ""}`}>{positions}</strong>
+          </button>
+          <button type="button" className="plain-row" onClick={() => setOpen(cubes[2].explain)}>
+            <b>חשיפה</b>
+            <strong className={`num ${near(exposure, body?.exposure_limit) ? "bad" : ""}`}>{pair(money(exposure), money(body?.exposure_limit))}</strong>
+          </button>
         </div>
 
+        <details className="desk-system">
+        <summary>מדיניות</summary>
         <div className="policy-sheet">
           <article>
             <h2>מדיניות הסיכון</h2>
@@ -332,6 +336,7 @@ export default function RiskPage() {
             )) : <p>אין עדיין עסקה</p>}
           </article>
         </div>
+        </details>
       </section>
 
       {open ? (

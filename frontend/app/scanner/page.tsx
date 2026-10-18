@@ -109,7 +109,6 @@ function Board({ title, hint, pip, cubes, open, setOpen }: {
   open: Explain | null;
   setOpen: (item: Explain | null) => void;
 }) {
-  const rows = [cubes.slice(0, 4), cubes.slice(4, 8), cubes.slice(8)];
   return (
     <section className="engine">
       <header className="ops-head">
@@ -119,16 +118,12 @@ function Board({ title, hint, pip, cubes, open, setOpen }: {
         </div>
         <span className={`ops-pip ${pip === "טוען" || pip === "ממתין" ? "warn" : "on"}`}><i />{pip}</span>
       </header>
-      <div className="engine-board">
-        {rows.filter((row) => row.length > 0).map((row, rowIndex) => (
-          <div className="engine-row fit" key={row[0]?.label ?? rowIndex}>
-            {row.map((item) => (
-              <button key={item.label} type="button" className="engine-cube stat" onClick={() => setOpen(item.explain)}>
-                <span>{item.label}</span>
-                <b className="num">{item.value}</b>
-              </button>
-            ))}
-          </div>
+      <div className="plain-list">
+        {cubes.map((item) => (
+          <button key={item.label} type="button" className="plain-row" onClick={() => setOpen(item.explain)}>
+            <b>{item.label}</b>
+            <strong className="num">{item.value}</strong>
+          </button>
         ))}
       </div>
       {open ? <Dialog item={open} onClose={() => setOpen(null)} kicker={hint} /> : null}

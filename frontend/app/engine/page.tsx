@@ -165,26 +165,17 @@ export default function EnginePage() {
         </header>
         <p className="ops-line">ביצוע Paper אינו משחזר השפעת שוק, מיקום בתור, דליפת מידע או slippage של לייב. רווח Paper אינו ראיה לרווח בלייב.</p>
 
-        <div className="engine-row" aria-label="מוני סריקה">
-          {counts.map(([label, value], index) => (
-            <article className="engine-cube stat" key={label} style={{ animationDelay: `${index * 40}ms` }}>
-              <span>{label}</span>
-              <b className="num">{value == null ? "אין נתונים" : value}</b>
-            </article>
+        <div className="plain-list" aria-label="מוני סריקה">
+          {counts.map(([label, value]) => (
+            <div className="plain-row" key={label}>
+              <b>{label}</b>
+              <strong className="num">{value == null ? "אין נתונים" : value}</strong>
+            </div>
           ))}
-        </div>
-
-        <div className="engine-stages" aria-label="שלבי המנוע">
-          {STAGES.map((stage, index) => (
-            <button
-              key={stage.id}
-              type="button"
-              className="engine-stage"
-              style={{ animationDelay: `${120 + index * 35}ms` }}
-              onClick={() => setOpen(stage)}
-            >
-              <span>{stage.title}</span>
-              <b>{scan?.blocked ? "חסום" : "אין נתונים"}</b>
+          {STAGES.map((stage) => (
+            <button key={stage.id} type="button" className="plain-row" onClick={() => setOpen(stage)}>
+              <b>{stage.title}</b>
+              <strong>{scan?.blocked ? "חסום" : "פירוט"}</strong>
             </button>
           ))}
         </div>

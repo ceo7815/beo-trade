@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet, type SystemStatus } from "@/lib/api";
+import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
 type BrokerPosition = {
@@ -44,6 +45,7 @@ type Levels = {
 type OpenTrade = {
   symbol: string;
   opened_at?: string | null;
+  closed_at?: string | null;
   levels?: Levels | null;
   story?: Story | null;
 };
@@ -51,6 +53,23 @@ type OpenTrade = {
 type Report = {
   open?: OpenTrade[];
   summary?: { realized_pnl?: string; closed_count?: number; wins?: number; losses?: number } | null;
+};
+
+type ClosedTrade = {
+  symbol: string;
+  underlying?: string | null;
+  right?: string | null;
+  strike?: string | null;
+  qty?: string | null;
+  entry_price?: string | null;
+  exit_price?: string | null;
+  pnl?: string | null;
+  return_pct?: string | null;
+  opened_at?: string | null;
+  closed_at?: string | null;
+  exit_reason?: string | null;
+  held_minutes?: number | null;
+  story?: Story | null;
 };
 
 type Risk = { max_positions?: number | null; exposure_limit?: string | null };
@@ -101,6 +120,38 @@ function span(ms: number) {
   return `${hours} ש׳ ${minutes % 60} דק׳`;
 }
 
+const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
+
+function nyDay(iso: string | null | undefined) {
+  if (!iso) return "";
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return "";
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+}
+
+function dayTitle(day: string) {
+  const [year, month, date] = day.split("-").map(Number);
+  if (!year || !month || !date) return day;
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, date)).getUTCDay()] ?? "";
+  return `${weekday} ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
+}
+
+function tradingDays(rows: ClosedTrade[] | null) {
+  if (rows === null) return [];
+  const groups = new Map<string, { day: string; pnl: number; trades: number; wins: number }>();
+  for (const row of rows) {
+    const profit = num(row.pnl);
+    const day = nyDay(row.closed_at);
+    if (!day || profit === null) continue;
+    const group = groups.get(day) ?? { day, pnl: 0, trades: 0, wins: 0 };
+    group.pnl += profit;
+    group.trades += 1;
+    if (profit > 0) group.wins += 1;
+    groups.set(day, group);
+  }
+  return [...groups.values()].sort((a, b) => (a.day < b.day ? 1 : -1));
+}
+
 function expiryLabel(dte: number | null | undefined) {
   if (dte === null || dte === undefined) return "פקיעה לא ידועה";
   if (dte <= 0) return "פוקע היום";
@@ -117,6 +168,8 @@ export default function PositionsPage() {
   const [updated, setUpdated] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [picked, setPicked] = useState<{ position: BrokerPosition; trade: OpenTrade | null } | null>(null);
+  const [book, setBook] = useState<ClosedTrade[] | null>(null);
+  const [choice, setChoice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -142,15 +195,23 @@ export default function PositionsPage() {
         if (statusBody.status === "fulfilled") setStatus(statusBody.value);
       });
     };
+    const history = () => {
+      apiGet<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all")
+        .then((body) => alive && setBook(body.closed ?? []))
+        .catch(() => undefined);
+    };
     fast();
     slow();
+    history();
     const fastTimer = window.setInterval(fast, 8000);
     const slowTimer = window.setInterval(slow, 20000);
+    const historyTimer = window.setInterval(history, 60000);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
       window.clearInterval(fastTimer);
       window.clearInterval(slowTimer);
+      window.clearInterval(historyTimer);
       window.clearInterval(tick);
     };
   }, []);
@@ -175,6 +236,11 @@ export default function PositionsPage() {
   const atStops = items.map((item) => num(tradeOf(item.symbol)?.levels?.pnl_at_active_exit)).filter((value): value is number => value !== null);
   const worstCase = atStops.length === items.length && items.length > 0 ? atStops.reduce((sum, value) => sum + value, 0) : null;
   const realized = num(report?.summary?.realized_pnl);
+  const days = tradingDays(book);
+  const active = choice ?? (positions !== null && positions.length === 0 && days[0] ? days[0].day : "live");
+  const dayTrades = active === "live" ? [] : (book ?? []).filter((trade) => nyDay(trade.closed_at) === active).sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
+  const dayPnl = dayTrades.reduce((sum, trade) => sum + (num(trade.pnl) ?? 0), 0);
+  const dayWins = dayTrades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length;
   const sessionClose = status?.session_close ? new Date(status.session_close).getTime() : null;
   const age = updated === null ? null : Math.max(0, Math.round((now - updated) / 1000));
 
@@ -196,7 +262,56 @@ export default function PositionsPage() {
           </div>
         </header>
 
-        <div className="live-strip">
+        <div className="desk-day-row" role="tablist" aria-label="יום מסחר">
+          <button type="button" className={`desk-day${active === "live" ? " on" : ""}`} onClick={() => setChoice("live")}>
+            <span>פתוח עכשיו</span>
+            <b className="num">{positions === null ? "—" : items.length}</b>
+            <small>פוזיציות</small>
+          </button>
+          {days.map((group) => (
+            <button key={group.day} type="button" className={`desk-day${active === group.day ? " on" : ""}`} onClick={() => setChoice(group.day)}>
+              <span>{dayTitle(group.day)}</span>
+              <b className={`num ${tone(group.pnl)}`}>{signedMoney(group.pnl)}</b>
+              <small>{group.wins} מתוך {group.trades}</small>
+            </button>
+          ))}
+        </div>
+
+        {active !== "live" ? (
+          <section className="desk-days">
+            <header className="ops-pane-head">
+              <h2>{dayTitle(active)}</h2>
+              <span className={`num ${tone(dayPnl)}`}>{signedMoney(dayPnl)} · {dayWins} מתוך {dayTrades.length} ברווח</span>
+            </header>
+            <div className="desk-blotter">
+              {dayTrades.length === 0 ? <p className="desk-empty">אין עסקה שנסגרה ביום הזה</p> : dayTrades.map((trade) => (
+                <button
+                  key={`${trade.symbol}-${trade.closed_at}`}
+                  type="button"
+                  className="desk-pos"
+                  onClick={() => setPicked({
+                    position: {
+                      symbol: trade.symbol,
+                      underlying: trade.underlying ?? undefined,
+                      right: trade.right ?? undefined,
+                      strike: trade.strike ?? undefined,
+                      qty: trade.qty ?? undefined,
+                      avg_entry_price: trade.entry_price ?? undefined,
+                      current_price: trade.exit_price ?? undefined,
+                    },
+                    trade: { symbol: trade.symbol, opened_at: trade.opened_at, story: trade.story ?? null, closed_at: trade.closed_at },
+                  })}
+                >
+                  <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
+                  <span>{px(trade.entry_price)} → {px(trade.exit_price)} · {exitLabel(trade.exit_reason)}</span>
+                  <strong className={`num ${tone(num(trade.pnl))}`}>{signedMoney(num(trade.pnl))}<small>{signedPct(num(trade.return_pct))}</small></strong>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {active === "live" ? <div className="live-strip">
           <Stat label="פתוחות" value={positions === null ? "—" : `${items.length}${risk?.max_positions ? ` / ${risk.max_positions}` : ""}`} />
           <Stat label="כסף בסיכון" value={positions === null ? "—" : money(cost)} />
           <Stat label="רווח/הפסד פתוח" value={signedMoney(open)} sub={open !== null && cost > 0 ? signedPct((open / cost) * 100) : undefined} className={tone(open)} />
@@ -207,14 +322,14 @@ export default function PositionsPage() {
             <b className="num">{limit ? `${money(exposure)} / ${money(limit)}` : money(exposure)}</b>
             <div className="ops-track"><i style={{ width: `${limit ? Math.min(100, (exposure / limit) * 100) : 0}%` }} /></div>
           </div>
-        </div>
+        </div> : null}
 
-        {positions !== null && items.length === 0 ? (
+        {active === "live" && positions !== null && items.length === 0 ? (
           <div className="live-empty">אין פוזיציה פתוחה ב-Alpaca Paper. המערכת ממשיכה לסרוק.</div>
         ) : null}
         {failed && positions === null ? <p className="ops-line">השרת לא החזיר את ספר Alpaca.</p> : null}
 
-        <div className="live-grid">
+        {active === "live" ? <div className="live-grid">
           {items.map((item) => (
             <Card
               key={item.symbol}
@@ -225,7 +340,7 @@ export default function PositionsPage() {
               onOpen={() => setPicked({ position: item, trade: tradeOf(item.symbol) })}
             />
           ))}
-        </div>
+        </div> : null}
       </section>
 
       {picked ? (
@@ -233,7 +348,7 @@ export default function PositionsPage() {
           <article className="engine-modal" role="dialog" aria-modal="true" aria-labelledby="live-title" onClick={(event) => event.stopPropagation()}>
             <header>
               <div>
-                <p>פוזיציה פתוחה · PAPER · נפתחה {clock(picked.trade?.opened_at)}</p>
+                <p>{picked.trade?.closed_at ? "עסקה סגורה" : "פוזיציה פתוחה"} · PAPER · נפתחה {clock(picked.trade?.opened_at)}</p>
                 <h2 id="live-title">{picked.position.underlying} {picked.position.right} {picked.position.strike}</h2>
               </div>
               <button type="button" onClick={() => setPicked(null)}>סגור</button>

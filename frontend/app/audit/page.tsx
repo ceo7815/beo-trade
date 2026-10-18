@@ -42,9 +42,7 @@ export default function AuditPage() {
     key: `${item.trade_id}-${index}`,
     explain: { title: item.state || "אירוע", does: "מעבר מצב שנשמר אחרי בדיקה, שליחה או מילוי.", formula: `מקור ${item.source || "אין נתונים"}\nסיבה ${item.reason || "אין נתונים"}\nזמן ${item.created_at || "אין נתונים"}\nמזהה ${item.trade_id || "אין נתונים"}` },
   }));
-  const lines = [];
   const all = [...cubes.map((item, index) => ({ ...item, key: `sum-${index}` })), ...events];
-  for (let index = 0; index < all.length; index += 4) lines.push(all.slice(index, index + 4));
 
   return (
     <Shell>
@@ -56,16 +54,12 @@ export default function AuditPage() {
           </div>
           <span className={`ops-pip ${items ? "on" : "warn"}`}><i />{items ? "המסד" : "טוען"}</span>
         </header>
-        <div className="engine-board">
-          {lines.map((line, rowIndex) => (
-            <div className="engine-row fit" key={line[0]?.key ?? rowIndex}>
-              {line.map((item) => (
-                <button key={item.key} type="button" className="engine-cube" onClick={() => setOpen(item.explain)}>
-                  <span>{item.label}</span>
-                  <b>{item.value}</b>
-                </button>
-              ))}
-            </div>
+        <div className="plain-list">
+          {all.map((item) => (
+            <button key={item.key} type="button" className="plain-row" onClick={() => setOpen(item.explain)}>
+              <b>{item.label}</b>
+              <strong>{item.value}</strong>
+            </button>
           ))}
         </div>
         {open ? (

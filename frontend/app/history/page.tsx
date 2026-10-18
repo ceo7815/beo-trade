@@ -1,6 +1,6 @@
 "use client";
 
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet } from "@/lib/api";
@@ -123,6 +123,17 @@ function tone(value: string | null | undefined) {
   return parsed > 0 ? "up" : "down";
 }
 
+function mark(value: number) {
+  if (value > 0) return "up";
+  if (value < 0) return "down";
+  return "";
+}
+
+function px(value: string | null | undefined) {
+  const parsed = num(value);
+  return parsed === null ? "—" : parsed.toFixed(2);
+}
+
 function when(iso: string | null | undefined) {
   if (!iso) return "—";
   const date = new Date(iso);
@@ -139,12 +150,12 @@ function tradingDay(iso: string | null | undefined) {
   return new Intl.DateTimeFormat("en-CA", { year: "numeric", month: "2-digit", day: "2-digit", timeZone: "America/New_York" }).format(date);
 }
 
-function dayLabel(day: string | null | undefined) {
+function dayTitle(day: string | null | undefined) {
   if (!day) return "";
   const [year, month, date] = day.split("-").map(Number);
   if (!year || !month || !date) return day;
-  const weekday = new Date(Date.UTC(year, month - 1, date)).getUTCDay();
-  return `יום ${WEEKDAYS[weekday]} · ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}/${year}`;
+  const weekday = WEEKDAYS[new Date(Date.UTC(year, month - 1, date)).getUTCDay()] ?? "";
+  return `${weekday} ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
 }
 
 function byDay(trades: Trade[]) {
@@ -183,41 +194,17 @@ function side(trade: Trade) {
   return "—";
 }
 
-const PERIODS: { id: Period; label: string }[] = [
-  { id: "today", label: "היום" },
-  { id: "yesterday", label: "יום המסחר הקודם" },
-  { id: "month", label: "מתחילת החודש" },
-  { id: "range", label: "טווח תאריכים" },
-  { id: "all", label: "מההתחלה" },
-];
-
-function span(report: Report | null) {
-  const frame = report?.window;
-  if (!frame || frame.period === "all") return "כל העסקאות";
-  if (!frame.start && !frame.end) return "בחר תאריכים";
-  if (frame.start === frame.end) return dayLabel(frame.start);
-  return `${dayLabel(frame.start) || "…"} עד ${dayLabel(frame.end) || "…"}`;
-}
-
 export default function HistoryPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [failed, setFailed] = useState(false);
   const [open, setOpen] = useState<Trade | null>(null);
-  const [period, setPeriod] = useState<Period>("today");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [view, setView] = useState<"all" | "open" | "closed">("all");
-  const [day, setDay] = useState<string | null>(null);
+  const [choice, setChoice] = useState<string | null>(null);
+  const [menu, setMenu] = useState(false);
 
   useEffect(() => {
     let alive = true;
-    const query = new URLSearchParams({ period });
-    if (period === "range") {
-      if (start) query.set("start", start);
-      if (end) query.set("end", end);
-    }
     const load = () => {
-      apiGet<Report>(`/api/v1/report/trades?${query.toString()}`)
+      apiGet<Report>("/api/v1/report/trades?period=all")
         .then((body) => {
           if (!alive) return;
           setReport(body);
@@ -225,70 +212,50 @@ export default function HistoryPage() {
         })
         .catch(() => alive && setFailed(true));
     };
-    setReport(null);
     load();
-    const timer = window.setInterval(load, 30000);
+    const timer = window.setInterval(load, 60000);
     return () => {
       alive = false;
       window.clearInterval(timer);
     };
-  }, [period, start, end]);
+  }, []);
 
   useEffect(() => {
-    setDay(null);
-  }, [period, start, end]);
-
-  useEffect(() => {
-    if (!open) return;
+    if (!open && !menu) return;
     const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(null);
+      if (event.key !== "Escape") return;
+      if (open) setOpen(null);
+      else setMenu(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [open]);
+  }, [open, menu]);
 
   const summary = report?.summary;
   const closed = report?.closed ?? [];
   const live = report?.open ?? [];
   const days = byDay(closed);
-  const shown = day ? days.filter((group) => group.day === day) : days;
+  const showingAll = choice === "all";
+  const active = showingAll ? "" : (choice ?? days[0]?.day ?? "");
+  const groups = showingAll ? days : days.filter((group) => group.day === active);
+  const selected = showingAll ? null : groups[0];
+  const selectedPnl = showingAll ? (num(summary?.realized_pnl) ?? 0) : (selected?.pnl ?? 0);
+  const selectedCount = showingAll ? closed.length : (selected?.trades.length ?? 0);
+  const selectedWins = showingAll ? (summary?.wins ?? 0) : (selected?.trades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length ?? 0);
+  const selectedLabel = !report ? "טוען" : showingAll ? "כל הימים" : (dayTitle(active) || "תאריך לא ידוע");
 
-  const cubes: { label: string; value: string; className?: string }[][] = summary
-    ? [
-        [
-          { label: "רווח/הפסד כולל", value: signed(summary.total_pnl), className: tone(summary.total_pnl) },
-          { label: "תשואה על הכסף שהושקע", value: pct(summary.total_return_pct), className: tone(summary.total_return_pct) },
-          { label: "עלות AI כוללת", value: dollars(summary.ai_cost) },
-          { label: "נטו אחרי עלות AI", value: signed(summary.net_after_ai), className: tone(summary.net_after_ai) },
-        ],
-        [
-          { label: "עסקאות שנסגרו", value: `${summary.closed_count} · ${summary.wins} רווח / ${summary.losses} הפסד` },
-          { label: "הושקע בעסקאות שנסגרו", value: dollars(summary.invested_closed) },
-          { label: "רווח/הפסד ממומש", value: signed(summary.realized_pnl), className: tone(summary.realized_pnl) },
-          { label: "תשואה ממומשת", value: pct(summary.realized_return_pct), className: tone(summary.realized_return_pct) },
-        ],
-        [
-          { label: "אחוז הצלחה", value: summary.win_rate_pct == null ? "—" : `${Number(summary.win_rate_pct).toFixed(0)}%` },
-          { label: "רווח ממוצע", value: signed(summary.average_win), className: "up" },
-          { label: "הפסד ממוצע", value: signed(summary.average_loss), className: "down" },
-          { label: "יחס רווחים להפסדים", value: summary.profit_factor ?? "—" },
-        ],
-        [
-          { label: "פוזיציות פתוחות", value: String(summary.open_count) },
-          { label: "הושקע בפתוחות", value: dollars(summary.open_invested) },
-          { label: "רווח/הפסד פתוח", value: signed(summary.unrealized_pnl), className: tone(summary.unrealized_pnl) },
-          { label: "זמן החזקה ממוצע", value: held(summary.average_hold_minutes) },
-        ],
-      ]
-    : [];
+  const pick = (next: string) => {
+    setChoice(next);
+    setMenu(false);
+  };
 
   return (
     <Shell>
-      <section className="engine">
+      <section className="engine book">
         <header className="ops-head">
           <div>
             <h1>היסטוריית עסקאות</h1>
-            <p>דוח רווח והפסד לכל עסקה · Alpaca Paper</p>
+            <p>כל יום מסחר, וכל עסקה שנסגרה בו</p>
           </div>
           <span className={`ops-pip ${failed || report?.available === false ? "warn" : report ? "on" : "warn"}`}>
             <i />
@@ -296,199 +263,90 @@ export default function HistoryPage() {
           </span>
         </header>
 
-        <div className="ops-pips" role="tablist" aria-label="תקופה" style={{ flexWrap: "wrap", alignItems: "center", gap: 8 }}>
-          {PERIODS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              role="tab"
-              aria-selected={period === item.id}
-              className={`ops-pip ${period === item.id ? "on" : ""}`}
-              onClick={() => setPeriod(item.id)}
-              style={{ cursor: "pointer" }}
-            >
-              {item.label}
-            </button>
-          ))}
-          {period === "range" ? (
-            <>
-              <label className="ops-pip">
-                מ־ <input type="date" value={start} onChange={(event) => setStart(event.target.value)} className="num" style={{ background: "transparent", color: "inherit", border: 0 }} />
-              </label>
-              <label className="ops-pip">
-                עד <input type="date" value={end} onChange={(event) => setEnd(event.target.value)} className="num" style={{ background: "transparent", color: "inherit", border: 0 }} />
-              </label>
-            </>
+        <div className="book-pick">
+          <button type="button" className="book-trigger" aria-expanded={menu} aria-haspopup="listbox" onClick={() => setMenu((value) => !value)}>
+            <span>
+              <small>יום מסחר</small>
+              {selectedLabel}
+            </span>
+            <b className={`num ${mark(selectedPnl)}`}>{report ? signed(String(selectedPnl)) : "—"}</b>
+          </button>
+          {menu ? (
+            <div className="book-menu" role="listbox" aria-label="ימי מסחר">
+              <button type="button" className={`book-option${showingAll ? " on" : ""}`} onClick={() => pick("all")}>
+                <span>כל הימים<small>{closed.length} עסקאות</small></span>
+                <b className={`num ${tone(summary?.realized_pnl)}`}>{signed(summary?.realized_pnl)}</b>
+              </button>
+              {days.map((group) => {
+                const wins = group.trades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length;
+                return (
+                  <button key={group.day || "unknown"} type="button" className={`book-option${active === group.day ? " on" : ""}`} onClick={() => pick(group.day)}>
+                    <span>{dayTitle(group.day) || "תאריך לא ידוע"}<small>{wins} מתוך {group.trades.length} ברווח</small></span>
+                    <b className={`num ${mark(group.pnl)}`}>{signed(String(group.pnl))}</b>
+                  </button>
+                );
+              })}
+            </div>
           ) : null}
-          <span className="ops-pip num">{span(report)}</span>
         </div>
+        {menu ? <button type="button" className="book-shade" aria-label="סגור תאריכים" onClick={() => setMenu(false)} /> : null}
 
-        <div className="ops-pips" role="tablist" aria-label="סוג עסקה" style={{ flexWrap: "wrap", gap: 8 }}>
-          {([
-            ["all", `הכול · ${live.length + closed.length}`],
-            ["open", `פתוחות · ${live.length}`],
-            ["closed", `סגורות · ${closed.length}`],
-          ] as const).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              role="tab"
-              aria-selected={view === id}
-              className={`ops-pip ${view === id ? "on" : ""}`}
-              onClick={() => setView(id)}
-              style={{ cursor: "pointer" }}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {view !== "open" && days.length > 0 ? (
-          <div className="day-strip" role="tablist" aria-label="ימי מסחר">
-            <button type="button" className={`day-chip${day === null ? " on" : ""}`} onClick={() => setDay(null)}>
-              <b>כל הימים</b>
-              <span className={`num ${tone(summary?.realized_pnl)}`}>{signed(summary?.realized_pnl)}</span>
-              <small>{closed.length} עסקאות</small>
-            </button>
-            {days.map((group) => {
-              const wins = group.trades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length;
-              return (
-                <button key={group.day || "unknown"} type="button" className={`day-chip${day === group.day ? " on" : ""}`} onClick={() => setDay(group.day)}>
-                  <b>{dayLabel(group.day) || "תאריך לא ידוע"}</b>
-                  <span className={`num ${group.pnl > 0 ? "up" : group.pnl < 0 ? "down" : ""}`}>{signed(String(group.pnl))}</span>
-                  <small>{group.trades.length} עסקאות · {wins} ברווח</small>
+        {live.length > 0 ? (
+          <section className="desk-days">
+            <header className="ops-pane-head">
+              <h2>פתוח עכשיו</h2>
+              <span>{live.length}</span>
+            </header>
+            <div className="desk-blotter">
+              {live.map((trade) => (
+                <button key={`${trade.symbol}-${trade.opened_at}`} type="button" className="desk-pos" onClick={() => setOpen(trade)}>
+                  <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
+                  <span>{px(trade.entry_price)} → {px(trade.current_price)} · פתוחה</span>
+                  <strong className={`num ${tone(trade.unrealized_pnl)}`}>{signed(trade.unrealized_pnl)}<small>{pct(trade.return_pct)}</small></strong>
                 </button>
-              );
-            })}
-          </div>
+              ))}
+            </div>
+          </section>
         ) : null}
 
-        {summary ? (
-          <div className="engine-board" aria-label="סיכום">
-            {cubes.map((row, rowIndex) => (
-              <div className="engine-row fit" key={row[0].label}>
-                {row.map((cube, index) => (
-                  <div key={cube.label} className="engine-cube stat" style={{ animationDelay: `${(rowIndex * 4 + index) * 30}ms` }}>
-                    <span>{cube.label}</span>
-                    <b className={`num ${cube.className ?? ""}`}>{cube.value}</b>
+        <section className="desk-days">
+          <header className="ops-pane-head">
+            <h2>{selectedLabel}</h2>
+            <span className={`num ${mark(selectedPnl)}`}>{report ? `${signed(String(selectedPnl))} · ${selectedWins} מתוך ${selectedCount} ברווח` : "טוען"}</span>
+          </header>
+          <div className="desk-blotter">
+            {groups.length === 0 ? <p className="desk-empty">{report ? "אין עסקה שנסגרה ביום הזה" : "טוען"}</p> : groups.map((group) => (
+              <div key={group.day || "unknown"}>
+                {showingAll ? (
+                  <div className="book-day">
+                    <b>{dayTitle(group.day) || "תאריך לא ידוע"}</b>
+                    <span className={`num ${mark(group.pnl)}`}>{signed(String(group.pnl))}</span>
                   </div>
+                ) : null}
+                {group.trades.map((trade) => (
+                  <button key={`${trade.symbol}-${trade.closed_at}`} type="button" className="desk-pos" onClick={() => setOpen(trade)}>
+                    <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
+                    <span>{px(trade.entry_price)} → {px(trade.exit_price)} · {reason(trade)}</span>
+                    <strong className={`num ${tone(trade.pnl)}`}>{signed(trade.pnl)}<small>{pct(trade.return_pct)}</small></strong>
+                  </button>
                 ))}
               </div>
             ))}
           </div>
-        ) : null}
-
-        {summary?.best && summary?.worst ? (
-          <p className="ops-line">
-            העסקה הטובה ביותר: <b className="num up">{summary.best.symbol}</b> {signed(summary.best.pnl)} ({pct(summary.best.return_pct)}) · העסקה הגרועה ביותר:{" "}
-            <b className="num down">{summary.worst.symbol}</b> {signed(summary.worst.pnl)} ({pct(summary.worst.return_pct)})
-          </p>
-        ) : null}
-
-        {view !== "closed" ? (
-        <section className="ops-pane">
-          <h2>פוזיציות פתוחות · {live.length}</h2>
-          <div className="ops-scroll">
-            <table className="ops-table ops-cardify">
-              <thead>
-                <tr>
-                  <th>נפתחה</th>
-                  <th>נכס</th>
-                  <th>סוג</th>
-                  <th>סטרייק</th>
-                  <th>פקיעה</th>
-                  <th>כמות</th>
-                  <th>כניסה</th>
-                  <th>עכשיו</th>
-                  <th>הושקע</th>
-                  <th>שווי</th>
-                  <th>רווח/הפסד</th>
-                  <th>%</th>
-                  <th>מוחזקת</th>
-                </tr>
-              </thead>
-              <tbody>
-                {live.length > 0 ? live.map((trade) => (
-                  <tr key={`${trade.symbol}-${trade.opened_at}`} onClick={() => setOpen(trade)} style={{ cursor: "pointer" }}>
-                    <td className="num">{when(trade.opened_at)}</td>
-                    <td className="num">{trade.underlying}</td>
-                    <td className="num">{trade.right ?? "—"}</td>
-                    <td className="num">{trade.strike ?? "—"}</td>
-                    <td className="num">{trade.expiration ?? "—"}</td>
-                    <td className="num">{count(trade.qty_open ?? trade.qty)}</td>
-                    <td className="num">${trade.entry_price}</td>
-                    <td className="num">{trade.current_price ? `$${trade.current_price}` : "—"}</td>
-                    <td className="num">{dollars(trade.invested)}</td>
-                    <td className="num">{dollars(trade.market_value)}</td>
-                    <td className={`num ${tone(trade.unrealized_pnl)}`}>{signed(trade.unrealized_pnl)}</td>
-                    <td className={`num ${tone(trade.return_pct)}`}>{pct(trade.return_pct)}</td>
-                    <td className="num">{held(trade.held_minutes)}</td>
-                  </tr>
-                )) : (
-                  <tr><td colSpan={13}>{!report ? "טוען" : report.window?.includes_today === false ? "פוזיציות פתוחות מוצגות רק בתקופה שכוללת את היום" : "אין פוזיציה פתוחה"}</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
         </section>
-        ) : null}
 
-        {view !== "open" ? (
-        <section className="ops-pane">
-          <h2>עסקאות שנסגרו · {shown.reduce((sum, group) => sum + group.trades.length, 0)}</h2>
-          <div className="ops-scroll">
-            <table className="ops-table ops-cardify">
-              <thead>
-                <tr>
-                  <th>נסגרה</th>
-                  <th>נכס</th>
-                  <th>סוג</th>
-                  <th>סטרייק</th>
-                  <th>כמות</th>
-                  <th>כניסה</th>
-                  <th>יציאה</th>
-                  <th>הושקע</th>
-                  <th>התקבל</th>
-                  <th>רווח/הפסד</th>
-                  <th>%</th>
-                  <th>מוחזקת</th>
-                  <th>סיבת יציאה</th>
-                </tr>
-              </thead>
-              <tbody>
-                {shown.length > 0 ? shown.map((group) => (
-                  <Fragment key={group.day}>
-                    <tr className="ops-day">
-                      <td colSpan={13}>
-                        <b>{dayLabel(group.day) || "תאריך לא ידוע"}</b> · {group.trades.length} עסקאות ·{" "}
-                        <b className={`num ${group.pnl > 0 ? "up" : group.pnl < 0 ? "down" : ""}`}>{signed(String(group.pnl))}</b>
-                      </td>
-                    </tr>
-                    {group.trades.map((trade) => (
-                  <tr key={`${trade.symbol}-${trade.closed_at}`} onClick={() => setOpen(trade)} style={{ cursor: "pointer" }}>
-                    <td className="num">{when(trade.closed_at)}</td>
-                    <td className="num">{trade.underlying}</td>
-                    <td className="num">{trade.right ?? "—"}</td>
-                    <td className="num">{trade.strike ?? "—"}</td>
-                    <td className="num">{count(trade.qty)}</td>
-                    <td className="num">${trade.entry_price}</td>
-                    <td className="num">${trade.exit_price}</td>
-                    <td className="num">{dollars(trade.invested)}</td>
-                    <td className="num">{dollars(trade.proceeds)}</td>
-                    <td className={`num ${tone(trade.pnl)}`}>{signed(trade.pnl)}</td>
-                    <td className={`num ${tone(trade.return_pct)}`}>{pct(trade.return_pct)}</td>
-                    <td className="num">{held(trade.held_minutes)}</td>
-                    <td>{reason(trade)}</td>
-                  </tr>
-                    ))}
-                  </Fragment>
-                )) : (
-                  <tr><td colSpan={13}>{report ? "אין עסקה שנסגרה בתקופה הזו" : "טוען"}</td></tr>
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
+        {summary ? (
+          <details className="desk-system">
+            <summary>סיכום כל הספר</summary>
+            <div className="book-facts">
+              <span>נסגרו<small className="num">{summary.closed_count}</small></span>
+              <span>אחוז הצלחה<small className="num">{summary.win_rate_pct == null ? "—" : `${Number(summary.win_rate_pct).toFixed(0)}%`}</small></span>
+              <span>רווח ממוצע<small className="num up">{signed(summary.average_win)}</small></span>
+              <span>הפסד ממוצע<small className="num down">{signed(summary.average_loss)}</small></span>
+              <span>יחס רווח להפסד<small className="num">{summary.profit_factor ?? "—"}</small></span>
+              <span>זמן החזקה<small className="num">{held(summary.average_hold_minutes)}</small></span>
+            </div>
+          </details>
         ) : null}
 
         {failed && !report ? <p className="ops-line">אין נתונים. השרת לא החזיר את דוח העסקאות.</p> : null}
@@ -496,6 +354,7 @@ export default function HistoryPage() {
         {report?.orphan_sells ? <p className="ops-line">{report.orphan_sells} מילויי מכירה בלי קנייה תואמת בהיסטוריה לא נכללו בחישוב.</p> : null}
         {report?.paper_limitation ? <p className="ops-line">{report.paper_limitation}</p> : null}
       </section>
+
 
       {open ? <TradeModal trade={open} onClose={() => setOpen(null)} /> : null}
     </Shell>

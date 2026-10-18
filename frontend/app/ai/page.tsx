@@ -65,8 +65,6 @@ export default function AiPage() {
     { label: "מטמון", value: Number.isFinite(Number(summary?.cache_hit_rate)) ? rate : "אין נתונים", explain: { title: "פגיעות מטמון", does: "החלטה חוזרת בתוך ה-TTL לא קוראת למודל מחדש.", tools: ["fingerprint"], formula: "פגיעה = החלטות עם cache_hit / החלטות עם שדה\nTTL = 900 שניות" } },
     { label: "השהיה", value: summary?.latency_ms == null ? "אין נתונים" : `${summary.latency_ms} ms`, explain: { title: "השהיה ממוצעת", does: "ממוצע זמן הקריאה רק כשהשדה נשמר. בלי מדידה אין מספר.", tools: ["ai_request_logs"], formula: "השהיה = ממוצע latency_ms" } },
   ];
-  const rows = [cubes.slice(0, 4), cubes.slice(4)];
-
   return (
     <Shell>
       <section className="engine">
@@ -77,16 +75,13 @@ export default function AiPage() {
           </div>
           <span className={`ops-pip ${status ? "on" : "warn"}`}><i />{status?.ai_mode || "טוען"}</span>
         </header>
-        <div className="engine-board">
-          {rows.map((row, index) => (
-            <div className="engine-row fit" key={row[0]?.label ?? index}>
-              {row.map((item) => (
-                <button key={item.label} type="button" className="engine-cube stat" onClick={() => setOpen(item.explain)}>
-                  <span>{item.label}</span>
-                  <b className="num">{item.value}</b>
-                </button>
-              ))}
-            </div>
+        <a className="plain-row" href="/decisions"><b>היסטוריית ההחלטות</b><strong>פתח</strong></a>
+        <div className="plain-list">
+          {cubes.map((item) => (
+            <button key={item.label} type="button" className="plain-row" onClick={() => setOpen(item.explain)}>
+              <b>{item.label}</b>
+              <strong className="num">{item.value}</strong>
+            </button>
           ))}
         </div>
         {open ? (
