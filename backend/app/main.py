@@ -208,6 +208,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lines.append(f"beo_ai_cost_usd {cost}")
         return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
 
+    @app.get("/api/v1/release")
+    def release_notes():
+        from app.ops.releases import load_releases
+
+        return load_releases()
+
     @app.get("/api/v1/system")
     def system_status(authorization: str | None = Header(default=None)):
         user_id_from_header(current, authorization)

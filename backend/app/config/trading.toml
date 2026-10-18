@@ -62,6 +62,10 @@ entry_cutoff_minutes = 80
 # blocked AMZN +$2,660 and SOFI +$168 to save $230.
 max_same_direction_entries = 0
 same_direction_window_minutes = 30
+# Before 10:00 New York, two new buys and then stop. Oct 14-16: the third and later
+# opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
+opening_entry_cap = 2
+opening_entry_until_minutes = 600
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25

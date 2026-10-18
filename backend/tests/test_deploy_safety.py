@@ -17,6 +17,14 @@ def test_official_policy_is_intact():
     assert_boot_safe(Settings())
 
 
+def test_the_release_ledger_starts_with_the_current_version():
+    from app.ops.releases import load_releases
+
+    body = load_releases()
+    assert body["current"] == body["releases"][0]["version"]
+    assert body["releases"][0]["changes"]
+
+
 def test_live_alpaca_host_is_rejected():
     with pytest.raises(ValueError):
         Settings(alpaca_base_url="https://api.alpaca.markets")

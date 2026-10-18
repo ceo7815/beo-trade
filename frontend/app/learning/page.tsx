@@ -75,10 +75,19 @@ function dteGroup(dte: number | null) {
 }
 
 function hourGroup(minutes: number) {
-  if (minutes < 11 * 60) return "עד 11:00";
+  if (minutes < 10 * 60) return "לפני 10:00";
+  if (minutes < 11 * 60) return "10:00–11:00";
   if (minutes < 13 * 60) return "11:00–13:00";
   if (minutes < 15 * 60) return "13:00–15:00";
   return "אחרי 15:00";
+}
+
+function dayName(stamp: string) {
+  const parts = nyParts(stamp);
+  const [year, month, date] = parts.day.split("-").map(Number);
+  const weekday = WEEKDAYS[parts.weekday] ?? "";
+  if (!year || !month || !date) return parts.day || "לא ידוע";
+  return `${weekday} ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
 }
 
 function groupBy(rows: Closed[], key: (row: Closed) => string): Group[] {
@@ -117,6 +126,8 @@ function tone(value: number) {
 }
 
 const VIEWS: { title: string; note: string; key: (row: Closed) => string }[] = [
+  { title: "יום מסחר", note: "לפי יום הסגירה בניו יורק. הימים עם הרווח הגדול למעלה", key: (row) => dayName(row.closed_at) },
+  { title: "פתיחת המסחר", note: "לפני 10:00 בניו יורק מול אחרי 10:00", key: (row) => (nyParts(row.opened_at).minutes < 10 * 60 ? "לפני 10:00" : "מ־10:00") },
   { title: "ימים עד פקיעה", note: "כמה ימים נשארו לאופציה ביום הכניסה", key: (row) => dteGroup(row.dte_at_entry) },
   { title: "שעת כניסה", note: "שעון ניו יורק", key: (row) => hourGroup(nyParts(row.opened_at).minutes) },
   { title: "יום בשבוע", note: "יום הכניסה, שעון ניו יורק", key: (row) => WEEKDAYS[nyParts(row.opened_at).weekday] ?? "לא ידוע" },

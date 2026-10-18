@@ -68,6 +68,53 @@ def test_recent_buys_are_counted_by_direction_inside_the_window(tmp_path):
     assert _settings().trading().max_same_direction_entries == 0
 
 
+def test_two_buys_fill_the_opening_and_the_third_waits_until_ten(tmp_path):
+    from zoneinfo import ZoneInfo
+
+    from app.models.db import configure_database, init_db, session_scope
+    from app.models.tables import BrokerOrderRecord
+    from app.workers.loops import opening_cap_reached, opening_entries_taken
+
+    ny = ZoneInfo("America/New_York")
+    morning = datetime(2026, 10, 15, 9, 50, tzinfo=ny)
+    settings = Settings(
+        app_env="local",
+        trading_mode="PAPER",
+        auth_required=False,
+        database_url="sqlite:///" + (tmp_path / "opening.db").as_posix(),
+        auto_create_tables=True,
+    )
+    configure_database(settings)
+    init_db(settings)
+    placed = [
+        (datetime(2026, 10, 15, 9, 36, tzinfo=ny), "filled"),
+        (datetime(2026, 10, 15, 9, 39, tzinfo=ny), "accepted"),
+        (datetime(2026, 10, 15, 9, 44, tzinfo=ny), "canceled"),
+        (datetime(2026, 10, 15, 10, 5, tzinfo=ny), "filled"),
+        (datetime(2026, 10, 14, 9, 36, tzinfo=ny), "filled"),
+    ]
+    with session_scope() as session:
+        for moment, status in placed:
+            session.add(
+                BrokerOrderRecord(
+                    symbol="QQQ261016P00734000",
+                    side="buy",
+                    position_intent="buy_to_open",
+                    status=status,
+                    created_at=moment.astimezone(timezone.utc),
+                )
+            )
+        session.commit()
+    taken = opening_entries_taken(morning, 600)
+    assert taken == 2
+    assert opening_cap_reached(morning, taken, 2, 600) is True
+    assert opening_cap_reached(morning, 1, 2, 600) is False
+    assert opening_cap_reached(datetime(2026, 10, 15, 10, 0, tzinfo=ny), 6, 2, 600) is False
+    assert opening_cap_reached(morning, None, 2, 600) is True
+    assert opening_cap_reached(morning, 6, 0, 600) is False
+    assert settings.trading().opening_entry_cap == 2
+
+
 def test_the_entry_cutoff_leaves_an_hour_before_every_forced_exit():
     config = _settings().trading()
     forced = max(config.session_exit_minutes, config.exit_before_expiration_minutes)

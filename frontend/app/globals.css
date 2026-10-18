@@ -1746,6 +1746,65 @@ button.engine-cube { cursor: pointer; }
 
 .flat { color: var(--muted); }
 
+.version-link {
+  display: inline-flex;
+  width: fit-content;
+  margin-top: 8px;
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.mobile-title a {
+  color: var(--gold);
+  font-weight: 800;
+}
+
+.day-strip {
+  display: flex;
+  gap: 8px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+  scrollbar-width: none;
+}
+
+.day-strip::-webkit-scrollbar { display: none; }
+
+.day-chip {
+  display: grid;
+  flex: none;
+  gap: 2px;
+  min-width: 148px;
+  max-width: 220px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: transparent;
+  padding: 10px 12px;
+  color: inherit;
+  text-align: right;
+}
+
+.day-chip b {
+  overflow: hidden;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.day-chip span { font-size: 18px; font-weight: 800; }
+.day-chip small { color: var(--muted); font-size: 11px; }
+.day-chip.on { border-color: rgba(231, 201, 138, 0.7); }
+
+.version-changes {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0 18px 16px 0;
+  color: var(--text);
+  font-size: 15px;
+  line-height: 1.5;
+}
+
 @media (max-width: 1280px) {
   .int-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-book { grid-template-columns: repeat(2, minmax(0, 1fr)); }

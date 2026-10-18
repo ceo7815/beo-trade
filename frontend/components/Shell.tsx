@@ -6,6 +6,7 @@ import { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { PHASES, apiGet, apiPost, poll, type SystemStatus } from "@/lib/api";
 import { LogoLockup } from "@/components/Logo";
 
+type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
 type DeskData = { query: string; status: SystemStatus | null };
 const DeskContext = createContext<DeskData>({ query: "", status: null });
 export function useDesk() {
@@ -42,6 +43,7 @@ const icons = {
   ai: "M12 3l1.6 5.2L19 10l-5.4 1.8L12 17l-1.6-5.2L5 10l5.4-1.8z",
   status: "M4 12h3l2-5 4 10 2-5h5",
   settings: "M4 7h16M4 12h10M4 17h13",
+  version: "M7 4h10v16H7zM9 8h6M9 12h6M9 16h4",
 };
 
 function useClock(timeZone: string) {
@@ -103,10 +105,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [switching, setSwitching] = useState(false);
   const [closing, setClosing] = useState(false);
   const [menu, setMenu] = useState(false);
+  const [release, setRelease] = useState<Release | null>(null);
 
   useEffect(() => {
     setMenu(false);
   }, [path]);
+
+  useEffect(() => {
+    let alive = true;
+    apiGet<Release>("/api/v1/release")
+      .then((body) => alive && setRelease(body))
+      .catch(() => undefined);
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -210,6 +223,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         { href: "/audit", label: "ביקורת מערכת", icon: icons.history },
         { href: "/backtests", label: "בדיקות עבר", icon: icons.scan },
         { href: "/settings", label: "הגדרות", icon: icons.settings },
+        { href: "/versions", label: "גרסאות", icon: icons.version },
       ],
     },
   ];
@@ -266,6 +280,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
               {link === "up" ? "מחובר" : link === "down" ? "אין חיבור" : "מתחבר"}
             </span>
             <span className="paper-flag">PAPER TRADING</span>
+            <Link href="/versions" className="version-link">
+              {release?.current ? `גרסה ${release.current}` : "גרסאות"}
+            </Link>
           </div>
           <nav>
             {groups.map((group) => (
@@ -300,6 +317,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <span>
                 <i className={`dot ${link}`} />
                 {phase} · PAPER
+                <Link href="/versions">{release?.current ? ` · גרסה ${release.current}` : " · גרסאות"}</Link>
               </span>
             </div>
             <button

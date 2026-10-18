@@ -33,6 +33,8 @@ OFFICIAL_POLICY = {
     "exit_before_expiration_minutes": 20,
     "outcome_target_percent": 0.0,
     "stop_loss_percent": 0.40,
+    "opening_entry_cap": 2,
+    "opening_entry_until_minutes": 600,
 }
 
 

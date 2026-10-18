@@ -207,6 +207,7 @@ export default function HistoryPage() {
   const [start, setStart] = useState("");
   const [end, setEnd] = useState("");
   const [view, setView] = useState<"all" | "open" | "closed">("all");
+  const [day, setDay] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -234,6 +235,10 @@ export default function HistoryPage() {
   }, [period, start, end]);
 
   useEffect(() => {
+    setDay(null);
+  }, [period, start, end]);
+
+  useEffect(() => {
     if (!open) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setOpen(null);
@@ -245,6 +250,8 @@ export default function HistoryPage() {
   const summary = report?.summary;
   const closed = report?.closed ?? [];
   const live = report?.open ?? [];
+  const days = byDay(closed);
+  const shown = day ? days.filter((group) => group.day === day) : days;
 
   const cubes: { label: string; value: string; className?: string }[][] = summary
     ? [
@@ -336,6 +343,26 @@ export default function HistoryPage() {
           ))}
         </div>
 
+        {view !== "open" && days.length > 0 ? (
+          <div className="day-strip" role="tablist" aria-label="ימי מסחר">
+            <button type="button" className={`day-chip${day === null ? " on" : ""}`} onClick={() => setDay(null)}>
+              <b>כל הימים</b>
+              <span className={`num ${tone(summary?.realized_pnl)}`}>{signed(summary?.realized_pnl)}</span>
+              <small>{closed.length} עסקאות</small>
+            </button>
+            {days.map((group) => {
+              const wins = group.trades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length;
+              return (
+                <button key={group.day || "unknown"} type="button" className={`day-chip${day === group.day ? " on" : ""}`} onClick={() => setDay(group.day)}>
+                  <b>{dayLabel(group.day) || "תאריך לא ידוע"}</b>
+                  <span className={`num ${group.pnl > 0 ? "up" : group.pnl < 0 ? "down" : ""}`}>{signed(String(group.pnl))}</span>
+                  <small>{group.trades.length} עסקאות · {wins} ברווח</small>
+                </button>
+              );
+            })}
+          </div>
+        ) : null}
+
         {summary ? (
           <div className="engine-board" aria-label="סיכום">
             {cubes.map((row, rowIndex) => (
@@ -408,7 +435,7 @@ export default function HistoryPage() {
 
         {view !== "open" ? (
         <section className="ops-pane">
-          <h2>עסקאות שנסגרו · {closed.length}</h2>
+          <h2>עסקאות שנסגרו · {shown.reduce((sum, group) => sum + group.trades.length, 0)}</h2>
           <div className="ops-scroll">
             <table className="ops-table ops-cardify">
               <thead>
@@ -429,7 +456,7 @@ export default function HistoryPage() {
                 </tr>
               </thead>
               <tbody>
-                {closed.length > 0 ? byDay(closed).map((group) => (
+                {shown.length > 0 ? shown.map((group) => (
                   <Fragment key={group.day}>
                     <tr className="ops-day">
                       <td colSpan={13}>

@@ -79,6 +79,8 @@ class TradingConfig:
     long_dte_penalty: float = 0.15
     max_same_direction_entries: int = 0
     same_direction_window_minutes: int = 30
+    opening_entry_cap: int = 2
+    opening_entry_until_minutes: int = 600
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
     max_contracts: int = 100

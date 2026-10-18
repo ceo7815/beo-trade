@@ -23,6 +23,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 OPEN_PATHS = {"/health", "/ready"}
 READ_PATHS = (
     "/api/v1/system",
+    "/api/v1/release",
     "/api/v1/desk",
     "/api/v1/decisions",
     "/api/v1/finance",

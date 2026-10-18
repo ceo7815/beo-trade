@@ -583,6 +583,50 @@ def recent_entries_by_right(moment: datetime, window_minutes: int) -> dict[str, 
     return counts
 
 
+def _new_york(moment: datetime) -> datetime:
+    from zoneinfo import ZoneInfo
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(ZoneInfo("America/New_York"))
+
+
+def opening_cap_reached(moment: datetime, taken: int | None, cap: int, until_minutes: int) -> bool:
+    """Before 10:00 New York, stop after `cap` new buys. A missing count blocks the buy."""
+    if cap <= 0:
+        return False
+    local = _new_york(moment)
+    if local.hour * 60 + local.minute >= until_minutes:
+        return False
+    if taken is None:
+        return True
+    return taken >= cap
+
+
+def opening_entries_taken(moment: datetime, until_minutes: int) -> int | None:
+    """Buy orders placed today in New York before the opening cutoff. Canceled orders do not count."""
+    from sqlalchemy import select
+
+    from app.models.db import database_ready, session_scope
+    from app.models.tables import BrokerOrderRecord
+
+    if not database_ready():
+        return None
+    local_day = _new_york(moment).date()
+    taken = 0
+    with session_scope() as session:
+        rows = session.scalars(select(BrokerOrderRecord).where(BrokerOrderRecord.position_intent == "buy_to_open"))
+        for row in rows:
+            if row.created_at is None or str(row.status or "").lower() in DEAD_ORDER_STATES:
+                continue
+            placed = row.created_at if row.created_at.tzinfo else row.created_at.replace(tzinfo=timezone.utc)
+            local = _new_york(placed)
+            if local.date() != local_day or local.hour * 60 + local.minute >= until_minutes:
+                continue
+            taken += 1
+    return taken
+
+
 def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     rows = _broker_positions(settings)
     if rows is None:
@@ -682,8 +726,17 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
 
         trading = settings.trading()
         same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
+        opening_taken = opening_entries_taken(moment, trading.opening_entry_until_minutes)
         for row in buys:
             side = row.call_put.value
+            if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "OPENING_CAP", row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CAP"})
+                continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
                     from app.broker.store import record_trade_event
@@ -793,6 +846,8 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     )
                     outcomes.append({"symbol": row.option_symbol, "result": "submitted", "reason": ""})
                     same_side[side] = same_side.get(side, 0) + 1
+                    if opening_taken is not None:
+                        opening_taken += 1
                 except Exception as exc:
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
                 session.commit()
