@@ -5,6 +5,7 @@ import { Shell } from "@/components/Shell";
 import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
+import { FloorMark } from "@/components/FloorMark";
 
 type Desk = {
   autonomous: boolean;
@@ -105,6 +106,7 @@ type Risk = {
   daily_loss_limit: string | null;
   daily_loss_used: string | null;
   today_pnl?: string | null;
+  day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
   max_positions: number;
   open_positions: number | null;
 };
@@ -223,7 +225,10 @@ function Board() {
           <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{sync.text}</span>
         </div>
         <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : "היום"}</p>
-        <p className={`desk-hero-pnl num ${tone(showLast && lastDay ? lastDay.pnl : dayPnl)}`}>{showLast && lastDay ? signedMoney(lastDay.pnl) : dayPnl === null ? "—" : signedMoney(dayPnl)}</p>
+        <div className="desk-hero-main">
+          <p className={`desk-hero-pnl num ${tone(showLast && lastDay ? lastDay.pnl : dayPnl)}`}>{showLast && lastDay ? signedMoney(lastDay.pnl) : dayPnl === null ? "—" : signedMoney(dayPnl)}</p>
+          {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
+        </div>
         <p className="desk-hero-note">{showLast ? "השוק סגור. זה יום המסחר האחרון." : narrative}</p>
       </header>
 

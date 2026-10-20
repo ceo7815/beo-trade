@@ -232,6 +232,10 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         reasons.append("אין בדיקה מחדש")
     reasons.extend(fresh_quote_reasons(settings, symbol, intent, moment, quotes, context if isinstance(context, dict) else None))
     if intent == "buy_to_open":
+        from app.options.day_floor import day_is_closed
+
+        if day_is_closed(settings, moment):
+            reasons.append("DAY_FLOOR")
         held = adapter.get_positions()
         if any(str(row.get("symbol") or "").replace(" ", "") == symbol and (_decimal(row.get("qty")) or Decimal("0")) > 0 for row in held):
             reasons.append("כבר קיימת פוזיציה פתוחה")

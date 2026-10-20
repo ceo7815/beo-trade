@@ -9,6 +9,7 @@ export const EXIT_REASONS: Record<string, string> = {
   LIQUIDITY: "נזילות ירדה",
   KILL_SWITCH: "עצירת חירום",
   CLOSE_ALL: "סגירת כל הפוזיציות",
+  DAY_FLOOR: "רצפת היום",
 };
 
 export function exitLabel(reason: string | null | undefined) {

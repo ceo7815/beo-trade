@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { FloorMark } from "@/components/FloorMark";
 import { Shell } from "@/components/Shell";
 import { apiGet } from "@/lib/api";
 
@@ -10,6 +11,7 @@ type Risk = {
   exposure_limit: string | null;
   daily_loss_limit: string | null;
   daily_loss_used: string | null;
+  day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
   max_positions: number;
   open_positions: number | null;
   max_spread: string;
@@ -254,10 +256,13 @@ export default function RiskPage() {
         </header>
 
         <div className="plain-list">
-          <button type="button" className="plain-row" onClick={() => setOpen(cubes[3].explain)}>
-            <b>הפסד היום</b>
-            <strong className={`num ${near(body?.daily_loss_used, body?.daily_loss_limit) ? "bad" : ""}`}>{pair(money(body?.daily_loss_used), money(body?.daily_loss_limit))}</strong>
-          </button>
+          <div className="floor-host">
+            <button type="button" className="plain-row" onClick={() => setOpen(cubes[3].explain)}>
+              <b>הפסד היום</b>
+              <strong className={`num ${near(body?.daily_loss_used, body?.daily_loss_limit) ? "bad" : ""}`}>{pair(money(body?.daily_loss_used), money(body?.daily_loss_limit))}</strong>
+            </button>
+            {body?.day_floor?.armed ? <FloorMark closed={Boolean(body.day_floor.closed)} amount={body.day_floor.floor} /> : null}
+          </div>
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[4].explain)}>
             <b>פוזיציות</b>
             <strong className={`num ${near(body?.open_positions == null ? null : String(body.open_positions), body?.max_positions == null ? null : String(body.max_positions)) ? "bad" : ""}`}>{positions}</strong>

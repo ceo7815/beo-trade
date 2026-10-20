@@ -42,6 +42,7 @@ const REASONS: Record<string, string> = {
   RISK_BUDGET: "תקציב הסיכון",
   DAILY_LOSS_LIMIT_REACHED: "הפסד יומי",
   DAILY_HARD_STOP: "עצירת הפסד יומית",
+  DAY_FLOOR: "רצפת היום",
   REGIME_WAITING: "השוק עדיין לא ברור",
   REGIME_UNKNOWN: "מצב השוק לא ידוע",
   REGIME_STRESSED: "השוק לחוץ",

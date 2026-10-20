@@ -198,6 +198,10 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
         if quotes is None and positions:
             quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
         bundles = quotes if quotes is not None else {}
+        session_open, book_close = _session_state(settings, adapter, moment)
+        floor = _account_day_floor(settings, adapter, moment, session_open)
+        if floor.get("closed") and submit:
+            _cancel_entry_orders(adapter)
         exits = []
         for position in positions:
             symbol = str(position.get("symbol") or "").replace(" ", "")
@@ -206,7 +210,11 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             underlying = bundle.get("underlying")
             entry = position.get("avg_entry_price")
             trade_id = str(position.get("trade_id") or symbol)
-            if option is None or underlying is None or entry in {None, ""}:
+            forced = _floor_exit(position, option, settings.trading()) if floor.get("closed") else None
+            if forced is not None:
+                signal, session_close = forced, book_close
+                source = "day-floor"
+            elif option is None or underlying is None or entry in {None, ""}:
                 _session_open, session_close = _session_state(settings, adapter, moment)
                 price = fallback_exit_price(position, moment, session_close, settings.trading())
                 if price is None:
@@ -312,6 +320,68 @@ def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, 
         signal = exit_signal(fill, option, underlying, moment, trading, session_open, session_close, locked, prior_hits)
         _liquidity_hits[symbol] = prior_hits + 1 if _spread_wide(option, trading) else 0
     return signal, session_close
+
+
+def _account_day_floor(settings: Settings, adapter, moment: datetime, session_open: bool | None) -> dict:
+    """Latch the day floor from the account mark. A quote-only test adapter does not write the latch."""
+    from app.options.day_floor import observe_day_floor, public_from_store
+
+    if not hasattr(adapter, "get_account"):
+        return public_from_store(settings, moment)
+    pnl = None
+    if session_open is True:
+        try:
+            account = adapter.get_account()
+            activities = adapter.get_activities() if hasattr(adapter, "get_activities") else None
+        except Exception:
+            account = None
+            activities = None
+        if account is not None:
+            from app.analytics.finance import trading_day_pnl
+            from zoneinfo import ZoneInfo
+
+            session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+            pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+    try:
+        return observe_day_floor(settings, pnl, moment, session_open is True)
+    except Exception:
+        return {"armed": False, "closed": False, "arm": "0.00", "floor": "0.00"}
+
+
+def _floor_exit(position: dict, option, trading):
+    from app.options.day_floor import floor_sell_price
+
+    bid = None if option is None else option.bid
+    mark = None
+    raw = position.get("current_price")
+    if raw not in {None, ""}:
+        try:
+            mark = Decimal(str(raw))
+        except Exception:
+            mark = None
+    price = floor_sell_price(bid, mark, Decimal(str(trading.fallback_exit_discount)))
+    if price is None:
+        return None
+    return SimpleNamespace(reason="DAY_FLOOR", exit_price=price)
+
+
+def _cancel_entry_orders(adapter) -> None:
+    if not hasattr(adapter, "get_orders") or not hasattr(adapter, "cancel_order"):
+        return
+    try:
+        rows = adapter.get_orders("open")
+    except Exception:
+        return
+    for row in rows:
+        if str(row.get("position_intent") or "") != "buy_to_open":
+            continue
+        order_id = str(row.get("broker_order_id") or row.get("id") or "")
+        if not order_id:
+            continue
+        try:
+            adapter.cancel_order(order_id)
+        except Exception:
+            continue
 
 
 def fallback_exit_price(position: dict, moment: datetime, session_close: datetime | None, trading) -> Decimal | None:
@@ -718,6 +788,20 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         account = adapter.get_account()
         if account.get("equity") not in {None, ""}:
             equity = Decimal(str(account["equity"]))
+        from app.analytics.finance import trading_day_pnl
+        from app.options.day_floor import observe_day_floor
+        from zoneinfo import ZoneInfo
+
+        activities = None
+        try:
+            activities = adapter.get_activities()
+        except Exception:
+            activities = None
+        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+        measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        if observe_day_floor(settings, measured, moment, session_open).get("closed"):
+            blocked_all("DAY_FLOOR")
+            return
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
         from app.broker.runtime import broker_risk_snapshot

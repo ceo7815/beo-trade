@@ -267,12 +267,17 @@ def register(app: FastAPI, settings: Settings) -> None:
         account = None
         positions = None
         activities = None
+        session_open = False
         try:
             adapter = open_paper_broker(settings)
             try:
                 account = adapter.get_account()
                 positions = adapter.get_positions()
                 activities = adapter.get_activities()
+                try:
+                    session_open = adapter.get_market_clock().get("is_open") is True
+                except Exception:
+                    session_open = False
             finally:
                 adapter.close()
         except Exception:
@@ -315,6 +320,13 @@ def register(app: FastAPI, settings: Settings) -> None:
             state = "אזהרה"
         else:
             state = "בתוך המגבלה"
+        from app.options.day_floor import observe_day_floor, public_from_store
+
+        moment = datetime.now(timezone.utc)
+        try:
+            day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None else public_from_store(settings, moment)
+        except Exception:
+            day_floor = {"armed": False, "closed": False, "arm": None, "floor": None}
         return {
             "environment": "PAPER",
             "state": state,
@@ -329,6 +341,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "max_spread": str(trading.max_bid_ask_spread),
             "max_slippage": str(trading.slippage_percent),
             "sector_note": "נתוני סקטור אינם זמינים",
+            "day_floor": day_floor,
         }
 
     @app.get("/api/v1/report/trades")

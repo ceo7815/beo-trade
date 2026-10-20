@@ -81,6 +81,9 @@ class TradingConfig:
     same_direction_window_minutes: int = 30
     opening_entry_cap: int = 2
     opening_entry_until_minutes: int = 600
+    # Account day P&L, including open marks. The floor stays at day_floor_lock after the arm. It does not rise.
+    day_floor_arm: int = 4000
+    day_floor_lock: int = 2000
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
     max_contracts: int = 100
