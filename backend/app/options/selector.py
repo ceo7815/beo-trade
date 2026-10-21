@@ -13,19 +13,23 @@ def rank_contracts(
     config: TradingConfig,
     as_of: datetime,
 ) -> list[OptionSnapshot]:
+    target = config.preferred_dte
+
+    def dte_of(option: OptionSnapshot) -> int:
+        return (option.expiration - as_of.date()).days
+
     def score(option: OptionSnapshot) -> float:
-        mid = float(option.mid)
         spread = float((option.ask - option.bid) / option.mid)
         delta_gap = abs(abs(float(option.delta or 0)) - config.target_delta)
         moneyness = abs(float(option.strike) - float(underlying.price)) / float(underlying.price)
-        dte = (option.expiration - as_of.date()).days
+        dte = dte_of(option)
         volume_score = min(option.volume, 5000) / 5000
         oi_score = min(option.open_interest, 5000) / 5000
         gamma_score = min(abs(float(option.gamma or 0)), 0.2) / 0.2
         long_dated = max(0, dte - config.preferred_max_dte) * config.long_dte_penalty
-        return volume_score + oi_score + gamma_score * 0.5 - spread * 3 - delta_gap - moneyness - dte * 0.02 - long_dated
+        return volume_score + oi_score + gamma_score * 0.5 - spread * 3 - delta_gap - moneyness - long_dated
 
-    ordered = sorted(options, key=score, reverse=True)
+    ordered = sorted(options, key=lambda option: (abs(dte_of(option) - target), -score(option)))
     return ordered[: config.shortlist_size]
 
 

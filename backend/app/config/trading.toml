@@ -11,6 +11,8 @@ min_underlying_volume = 1000000
 max_expiration_days = 21
 # Contracts past this many days rank lower per extra day. Week of Oct 7: 1-2 DTE made +$3,167 on 11 trades, 7-9 DTE lost $2,736 on 10.
 preferred_max_dte = 3
+# Closed book through Oct 20: 2 DTE was +$21,828 on 24 trades. 1 DTE was -$13,788 on 17. Ranking only; other days stay eligible.
+preferred_dte = 2
 long_dte_penalty = 0.15
 min_expiration_days = 0
 # Oct 12: MSFT delta 0.30 lost $1,845 and PLTR PUT delta 0.24 lost $800. SOFI 0.68, META 0.41 and MU 0.37 stayed in.
@@ -28,6 +30,9 @@ min_relative_volume = 0.50
 # Ranking tier only, after the size of the move. A name at or above this breaks a tie. It does not reject a stock.
 relative_volume_priority = 1.8
 min_underlying_move_percent = 0.6
+# Ranking only. A move from 2% up to (not including) 4% is scanned before a smaller move and before a larger one.
+move_rank_low_percent = 2
+move_rank_high_percent = 4
 min_option_price = 0.30
 max_option_price = 20.0
 entry_buffer_percent = 0.04

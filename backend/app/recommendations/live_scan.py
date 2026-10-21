@@ -362,7 +362,13 @@ def _liquidity_stage(underlyings, providers, config: TradingConfig, now: datetim
             rejections.append((item.symbol, "min_price", "liquidity"))
         else:
             kept.append(item)
-    return rank_underlyings(kept, now, config.relative_volume_priority), rejections
+    return rank_underlyings(
+        kept,
+        now,
+        config.relative_volume_priority,
+        config.move_rank_low_percent,
+        config.move_rank_high_percent,
+    ), rejections
 
 
 def _remember_scan_liquidity(underlyings) -> None:

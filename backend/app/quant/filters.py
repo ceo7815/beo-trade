@@ -39,19 +39,27 @@ def rank_underlyings(
     underlyings: list[UnderlyingSnapshot],
     as_of: datetime,
     priority: float = 1.8,
+    move_band_low: float = 2,
+    move_band_high: float = 4,
 ) -> list[UnderlyingSnapshot]:
-    """Stage B. A name still at the day's high or low is scanned first, then the larger move.
+    """Stage B. Continuation first, then a 2% to 4% move, then the larger move.
 
-    Distance from yesterday's close is not enough: a 1% gap that has already pulled back was
-    bought ahead of a name still running. Relative volume only breaks a tie.
+    The closed book through Oct 20 made its money on moves in that band. A 0.6% name and a
+    6% name both stay eligible; they are only later in line. Relative volume breaks a tie.
+    The high end of the band is exclusive, so 4% sits with the larger moves.
     """
+
+    low = Decimal(str(move_band_low))
+    high = Decimal(str(move_band_high))
 
     def key(item: UnderlyingSnapshot) -> tuple:
         age = quote_age_seconds(item.observed_at, as_of)
         relative = float(item.relative_volume)
+        move = abs(item.change_percent)
         return (
             0 if continuation(item) else 1,
-            -abs(float(item.change_percent)),
+            0 if low <= move < high else 1,
+            -float(move),
             0 if relative >= priority else 1,
             -relative,
             age,

@@ -34,6 +34,8 @@ class TradingConfig:
     min_relative_volume: float = 0.50
     relative_volume_priority: float = 1.8
     min_underlying_move_percent: float = 0.6
+    move_rank_low_percent: float = 2
+    move_rank_high_percent: float = 4
     min_option_price: float = 0.05
     max_option_price: float = 20.0
     entry_buffer_percent: float = 0.04
@@ -76,6 +78,7 @@ class TradingConfig:
     entry_cutoff_minutes: int = 80
     fallback_exit_discount: float = 0.10
     preferred_max_dte: int = 3
+    preferred_dte: int = 2
     long_dte_penalty: float = 0.15
     max_same_direction_entries: int = 0
     same_direction_window_minutes: int = 30

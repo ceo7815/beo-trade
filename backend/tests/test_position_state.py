@@ -409,6 +409,19 @@ def test_short_dated_contract_ranks_ahead_of_a_week_out_with_better_liquidity():
     assert [item.option_symbol for item in ranked] == [short.option_symbol, week.option_symbol]
 
 
+def test_two_day_contract_ranks_ahead_of_a_more_liquid_one_day_and_four_day():
+    from dataclasses import replace
+
+    from app.options.selector import rank_contracts
+
+    config = TradingConfig()
+    two = _option("1.95", "2.00", expiration=NOW.date() + timedelta(days=2))
+    one = replace(_option("1.95", "2.00", expiration=NOW.date() + timedelta(days=1)), option_symbol="NVDA261003C00100000", volume=5000, open_interest=5000)
+    four = replace(_option("1.95", "2.00", expiration=NOW.date() + timedelta(days=4)), option_symbol="NVDA261006C00100000", volume=5000, open_interest=5000)
+    ranked = rank_contracts([four, one, two], _underlying(), config, NOW)
+    assert ranked[0].option_symbol == two.option_symbol
+
+
 def test_aggregate_and_underlying_block_the_buy():
     config = TradingConfig()
     option = _option("4.90", "5.00", expiration=NOW.date() + timedelta(days=2))

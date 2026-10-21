@@ -103,3 +103,16 @@ def test_volume_below_one_million_stays_eligible_and_a_bigger_move_ranks_first()
     live = _snap("LIVE", change_percent=Decimal("1.2"), price=Decimal("105"), high=Decimal("105.1"), low=Decimal("100"))
     pulled_back = _snap("BACK", change_percent=Decimal("4.5"), price=Decimal("100"), high=Decimal("108"), low=Decimal("99"))
     assert [item.symbol for item in rank_underlyings([pulled_back, live], NOW)] == ["LIVE", "BACK"]
+
+
+def test_a_two_to_four_percent_move_ranks_ahead_of_a_smaller_and_a_larger_move():
+    sweet = _snap("SWEET", change_percent=Decimal("3.1"))
+    huge = _snap("HUGE", change_percent=Decimal("7.9"))
+    small = _snap("SMALL", change_percent=Decimal("0.8"))
+    edge = _snap("EDGE", change_percent=Decimal("4"))
+    down = _snap("DOWN", change_percent=Decimal("-2.4"), price=Decimal("100"), high=Decimal("104"), low=Decimal("96"))
+    ranked = rank_underlyings([huge, small, edge, sweet, down], NOW)
+    assert [item.symbol for item in ranked][:2] == ["SWEET", "DOWN"]
+    assert [item.symbol for item in ranked][2:] == ["HUGE", "EDGE", "SMALL"]
+    still_running = _snap("LIVE", change_percent=Decimal("1.2"), price=Decimal("105"), high=Decimal("105.1"), low=Decimal("100"))
+    assert [item.symbol for item in rank_underlyings([sweet, still_running], NOW)][0] == "LIVE"
