@@ -1,6 +1,8 @@
-"""Fixed day floor. Once the account is up by the arm, the floor stays put for that New York session.
+"""Stepped day floor. The floor ratchets up with the day's peak and never comes back down.
 
-The floor does not rise with the peak. Touching it closes the day: sell everything, no new buys.
+4,000 arms a floor of 2,000. That floor stays through 6,999. From 7,000 each extra 1,000 of peak
+lifts the floor by 1,000, through 15,000 which locks 11,000. A higher peak does not lift it further.
+Touching the active floor closes the day: sell everything, no new buys.
 A missing P&L does not arm or release the latch. The latch advances only while the session is open,
 so a stale prior-day mark before the open cannot close the next session.
 """
@@ -21,10 +23,11 @@ def store_path():
     return DATA_DIR / "day_floor.json"
 
 
-def advance(prior: dict | None, session_date: str, pnl: Decimal | None, arm: Decimal, lock: Decimal) -> dict:
-    """Arm at `arm`. Close at `lock`. A closed day stays closed even if P&L bounces back."""
+def advance(prior: dict | None, session_date: str, pnl: Decimal | None, steps: tuple | None = None) -> dict:
+    """Raise the floor to the highest step the peak has reached. A closed day stays closed."""
+    ladder = _ladder(steps)
     state = prior if prior and prior.get("session_date") == session_date else _blank(session_date)
-    if arm <= 0 or lock <= 0 or lock >= arm:
+    if not ladder:
         return _blank(session_date)
     if state.get("closed"):
         return state
@@ -33,8 +36,9 @@ def advance(prior: dict | None, session_date: str, pnl: Decimal | None, arm: Dec
     peak = _decimal(state.get("peak"))
     if peak is None or pnl > peak:
         peak = pnl
-    armed = bool(state.get("armed")) or pnl >= arm
-    closed = armed and pnl <= lock
+    _, floor = _level(peak, ladder)
+    armed = floor is not None
+    closed = armed and pnl <= floor
     return {"session_date": session_date, "armed": armed, "closed": closed, "peak": _text(peak)}
 
 
@@ -51,21 +55,19 @@ def floor_sell_price(bid: Decimal | None, mark: Decimal | None, discount: Decima
 
 def observe_day_floor(settings: Settings, pnl: Decimal | None, moment: datetime, session_open: bool) -> dict:
     trading = settings.trading()
-    arm = Decimal(trading.day_floor_arm)
-    lock = Decimal(trading.day_floor_lock)
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
     if not session_open:
-        return _public(prior, arm, lock)
-    updated = advance(prior, session_date, pnl, arm, lock)
+        return _public(prior, trading.day_floor_steps)
+    updated = advance(prior, session_date, pnl, trading.day_floor_steps)
     stored = _commit(prior, updated)
-    return _public(stored, arm, lock)
+    return _public(stored, trading.day_floor_steps)
 
 
 def public_from_store(settings: Settings, moment: datetime) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
-    return _public(_for_date(_read(), session_date), Decimal(trading.day_floor_arm), Decimal(trading.day_floor_lock))
+    return _public(_for_date(_read(), session_date), trading.day_floor_steps)
 
 
 def day_is_closed(settings: Settings, moment: datetime) -> bool:
@@ -82,13 +84,45 @@ def _blank(session_date: str) -> dict:
     return {"session_date": session_date, "armed": False, "closed": False, "peak": None}
 
 
-def _public(state: dict | None, arm: Decimal, lock: Decimal) -> dict:
+def _ladder(steps: tuple | None) -> tuple[tuple[Decimal, Decimal], ...]:
+    if steps is None:
+        from app.config.settings import TradingConfig
+
+        steps = TradingConfig().day_floor_steps
+    raw = steps or ()
+    parsed: list[tuple[Decimal, Decimal]] = []
+    for item in raw:
+        arm, lock = Decimal(str(item[0])), Decimal(str(item[1]))
+        if arm <= 0 or lock <= 0 or lock >= arm:
+            return ()
+        parsed.append((arm, lock))
+    parsed.sort(key=lambda step: step[0])
+    return tuple(parsed)
+
+
+def _level(peak: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], ...]) -> tuple[Decimal | None, Decimal | None]:
+    arm: Decimal | None = None
+    floor: Decimal | None = None
+    if peak is None:
+        return None, None
+    for step_arm, step_floor in ladder:
+        if peak >= step_arm:
+            arm, floor = step_arm, step_floor
+    return arm, floor
+
+
+def _public(state: dict | None, steps: tuple | None) -> dict:
+    ladder = _ladder(steps)
     row = state or {}
+    first_arm, first_floor = ladder[0] if ladder else (Decimal("0"), Decimal("0"))
+    arm, floor = _level(_decimal(row.get("peak")), ladder)
+    if not row.get("armed") or floor is None:
+        arm, floor = first_arm, first_floor
     return {
         "armed": bool(row.get("armed")),
         "closed": bool(row.get("closed")),
-        "arm": str(arm.quantize(Decimal("0.01"))),
-        "floor": str(lock.quantize(Decimal("0.01"))),
+        "arm": _text(arm) or "0.00",
+        "floor": _text(floor) or "0.00",
     }
 
 
@@ -110,10 +144,12 @@ def _read() -> dict | None:
 
 
 def _commit(prior: dict | None, updated: dict) -> dict:
-    merged = _merge(prior, updated)
-    if prior == merged:
+    disk = _for_date(_read(), updated.get("session_date", ""))
+    base = _merge(disk, prior) if disk and prior else (disk or prior)
+    merged = _merge(base, updated)
+    if base == merged:
         return merged
-    if prior is None and not merged.get("armed") and not merged.get("closed"):
+    if base is None and not merged.get("armed") and not merged.get("closed"):
         return merged
     path = store_path()
     path.parent.mkdir(parents=True, exist_ok=True)

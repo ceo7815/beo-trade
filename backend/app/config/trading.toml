@@ -71,10 +71,12 @@ same_direction_window_minutes = 30
 # opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
 opening_entry_cap = 2
 opening_entry_until_minutes = 600
-# Once the account day P&L, including open marks, reaches the arm, the floor stays there for the New York session.
-# The floor does not rise if the day later reaches 8000. Touching the floor sells everything and blocks new buys.
+# Account day P&L, including open marks. 4,000 arms a floor of 2,000 and that floor holds through 6,999.
+# From 7,000 each extra 1,000 of peak lifts the floor by 1,000, through 15,000 which locks 11,000.
+# The floor never falls. Touching it sells everything and blocks new buys.
 day_floor_arm = 4000
 day_floor_lock = 2000
+day_floor_steps = [[4000, 2000], [7000, 3000], [8000, 4000], [9000, 5000], [10000, 6000], [11000, 7000], [12000, 8000], [13000, 9000], [14000, 10000], [15000, 11000]]
 initial_stop_decline_pct = 0.40
 protect_at_r = 1.0
 protective_stop_r = 0.25

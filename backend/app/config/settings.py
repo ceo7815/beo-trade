@@ -84,9 +84,22 @@ class TradingConfig:
     same_direction_window_minutes: int = 30
     opening_entry_cap: int = 2
     opening_entry_until_minutes: int = 600
-    # Account day P&L, including open marks. The floor stays at day_floor_lock after the arm. It does not rise.
+    # Account day P&L, including open marks. The first step arms 2,000 at 4,000.
+    # From 7,000 the floor rises 1,000 per extra 1,000 of peak, through 15,000 / 11,000.
     day_floor_arm: int = 4000
     day_floor_lock: int = 2000
+    day_floor_steps: tuple[tuple[int, int], ...] = (
+        (4000, 2000),
+        (7000, 3000),
+        (8000, 4000),
+        (9000, 5000),
+        (10000, 6000),
+        (11000, 7000),
+        (12000, 8000),
+        (13000, 9000),
+        (14000, 10000),
+        (15000, 11000),
+    )
     holding_minutes_0dte: int = 90
     holding_minutes_1dte: int = 180
     max_contracts: int = 100
@@ -166,6 +179,8 @@ def load_trading_config(path: Path | None = None) -> TradingConfig:
             raw[key] = tuple(str(item).upper() for item in raw[key])
     if "sec_fact_tags" in raw and isinstance(raw["sec_fact_tags"], list):
         raw["sec_fact_tags"] = tuple(str(item) for item in raw["sec_fact_tags"])
+    if "day_floor_steps" in raw and isinstance(raw["day_floor_steps"], list):
+        raw["day_floor_steps"] = tuple(tuple(int(part) for part in step) for step in raw["day_floor_steps"])
     return TradingConfig(**raw)
 
 

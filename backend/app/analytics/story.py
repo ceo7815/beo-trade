@@ -116,8 +116,7 @@ def exit_story(trade: dict, config: TradingConfig) -> list[str]:
         lines.append("יום המסחר עמד להסתיים, ולכן העסקה נסגרה לפני הסגירה.")
     elif reason == "DAY_FLOOR":
         lines.append(
-            f"רווח היום הגיע ל-{_usd(Decimal(config.day_floor_arm))}, אז נפתחה רצפה של {_usd(Decimal(config.day_floor_lock))}. "
-            "הרווח ירד לרצפה, לכן מכרנו את הפוזיציה וסגרנו את היום לקניות."
+            "רווח היום ירד לרצפה שנפתחה אחרי שהרווח עלה. מכרנו את הפוזיציה וסגרנו את היום לקניות."
         )
     elif reason == "INVALIDATION":
         lines.append(f"המניה זזה {config.invalidation_underlying_percent * 100:.0f}% נגד הכיוון שהימרנו עליו. הסיבה שבגללה נכנסנו כבר לא הייתה נכונה, אז יצאנו.")
