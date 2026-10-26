@@ -89,7 +89,7 @@ type Position = {
   cost_basis?: string | null;
 };
 
-type ClosedLite = { closed_at?: string | null; pnl?: string | null };
+type ClosedLite = { closed_at?: string | null; pnl?: string | null; invested?: string | null };
 
 type TradeTotals = {
   total_pnl: string;
@@ -266,6 +266,7 @@ function Board() {
             <a key={group.day} className="desk-day" href="/history">
               <span>{dayTitle(group.day)}</span>
               <b className={`num ${tone(group.pnl)}`}>{signedMoney(group.pnl)}</b>
+              <small className={`num ${tone(group.pnl)}`}>{group.pct === null ? "—" : `${group.pct > 0 ? "+" : ""}${group.pct.toFixed(1)}%`}</small>
               <small>{group.wins} מתוך {group.trades} ברווח</small>
             </a>
           ))}
@@ -466,18 +467,22 @@ function dayTitle(day: string) {
 
 function recentDays(rows: ClosedLite[] | null) {
   if (rows === null) return null;
-  const groups = new Map<string, { day: string; pnl: number; trades: number; wins: number }>();
+  const groups = new Map<string, { day: string; pnl: number; invested: number; trades: number; wins: number }>();
   for (const row of rows) {
     const profit = num(row.pnl);
     if (!row.closed_at || profit === null) continue;
     const day = new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date(row.closed_at));
-    const group = groups.get(day) ?? { day, pnl: 0, trades: 0, wins: 0 };
+    const group = groups.get(day) ?? { day, pnl: 0, invested: 0, trades: 0, wins: 0 };
     group.pnl += profit;
+    group.invested += num(row.invested) ?? 0;
     group.trades += 1;
     if (profit > 0) group.wins += 1;
     groups.set(day, group);
   }
-  return [...groups.values()].sort((a, b) => (a.day < b.day ? 1 : -1)).slice(0, 8);
+  return [...groups.values()]
+    .sort((a, b) => (a.day < b.day ? 1 : -1))
+    .slice(0, 8)
+    .map((group) => ({ ...group, pct: group.invested > 0 ? (group.pnl / group.invested) * 100 : null }));
 }
 
 function ResultCell({ label, book, empty }: { label: string; book: DayBook | null; empty: string }) {

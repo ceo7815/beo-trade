@@ -158,6 +158,34 @@ function dayTitle(day: string | null | undefined) {
   return `${weekday} ${String(date).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
 }
 
+function dayStats(trades: Trade[]) {
+  let pnl = 0;
+  let invested = 0;
+  let wins = 0;
+  let losses = 0;
+  for (const trade of trades) {
+    const result = num(trade.pnl) ?? 0;
+    pnl += result;
+    invested += num(trade.invested) ?? 0;
+    if (result > 0) wins += 1;
+    else if (result < 0) losses += 1;
+  }
+  return { count: trades.length, wins, losses, pnl, pct: invested > 0 ? (pnl / invested) * 100 : null };
+}
+
+function DayScore({ trades }: { trades: Trade[] }) {
+  const stats = dayStats(trades);
+  const percent = stats.pct === null ? "—" : `${stats.pct > 0 ? "+" : ""}${stats.pct.toFixed(1)}%`;
+  return (
+    <div className="day-score">
+      <span>עסקאות<b className="num">{stats.count}</b></span>
+      <span>ברווח<b className="num up">{stats.wins}</b></span>
+      <span>בהפסד<b className="num down">{stats.losses}</b></span>
+      <span>מההשקעה<b className={`num ${mark(stats.pnl)}`}>{percent}</b></span>
+    </div>
+  );
+}
+
 function byDay(trades: Trade[]) {
   const sorted = [...trades].sort((a, b) => new Date(b.closed_at ?? 0).getTime() - new Date(a.closed_at ?? 0).getTime());
   const groups: { day: string; trades: Trade[]; pnl: number }[] = [];
@@ -241,7 +269,6 @@ export default function HistoryPage() {
   const selected = showingAll ? null : groups[0];
   const selectedPnl = showingAll ? (num(summary?.realized_pnl) ?? 0) : (selected?.pnl ?? 0);
   const selectedCount = showingAll ? closed.length : (selected?.trades.length ?? 0);
-  const selectedWins = showingAll ? (summary?.wins ?? 0) : (selected?.trades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length ?? 0);
   const selectedLabel = !report ? "טוען" : showingAll ? "כל הימים" : (dayTitle(active) || "תאריך לא ידוע");
 
   const pick = (next: string) => {
@@ -312,8 +339,8 @@ export default function HistoryPage() {
         <section className="desk-days">
           <header className="ops-pane-head">
             <h2>{selectedLabel}</h2>
-            <span className={`num ${mark(selectedPnl)}`}>{report ? `${signed(String(selectedPnl))} · ${selectedWins} מתוך ${selectedCount} ברווח` : "טוען"}</span>
           </header>
+          {report && selectedCount > 0 && !showingAll ? <DayScore trades={selected?.trades ?? []} /> : null}
           <div className="desk-blotter">
             {groups.length === 0 ? <p className="desk-empty">{report ? "אין עסקה שנסגרה ביום הזה" : "טוען"}</p> : groups.map((group) => (
               <div key={group.day || "unknown"}>
@@ -321,6 +348,7 @@ export default function HistoryPage() {
                   <div className="book-day">
                     <b>{dayTitle(group.day) || "תאריך לא ידוע"}</b>
                     <span className={`num ${mark(group.pnl)}`}>{signed(String(group.pnl))}</span>
+                    <DayScore trades={group.trades} />
                   </div>
                 ) : null}
                 {group.trades.map((trade) => (

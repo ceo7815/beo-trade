@@ -2373,6 +2373,8 @@ button.desk-day { background: transparent; color: inherit; font: inherit; text-a
 .desk-day span { color: var(--muted); font-size: 12px; font-weight: 700; }
 .desk-day b { font-size: 22px; letter-spacing: -0.04em; }
 .desk-day small { color: var(--muted); font-size: 12px; }
+.desk-day small.up { color: var(--up); }
+.desk-day small.down { color: var(--down); }
 
 .desk-system {
   border-top: 1px solid var(--line);
@@ -2469,16 +2471,35 @@ button.desk-day { background: transparent; color: inherit; font: inherit; text-a
 .book-option small { color: var(--muted); font-size: 12px; font-weight: 700; }
 .book-option b { font-size: 16px; }
 .book-day {
-  display: flex;
+  display: grid;
+  grid-template-columns: 1fr auto;
   align-items: baseline;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 18px 16px 4px;
   color: var(--muted);
   font-size: 13px;
   font-weight: 800;
 }
 .book-day span { font-size: 15px; }
+.book-day .day-score { grid-column: 1 / -1; padding: 8px 0 4px; border-bottom: 0; }
+.day-score {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px 16px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.day-score span {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+.day-score b { color: var(--text); font-size: 18px; font-weight: 800; }
+.day-score b.up { color: var(--up); }
+.day-score b.down { color: var(--down); }
 .book-facts {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
