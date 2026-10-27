@@ -5,6 +5,8 @@ lifts the floor by 1,000, through 15,000 which locks 11,000. A higher peak does 
 Touching the active floor closes the day: sell everything, no new buys.
 A missing P&L does not arm or release the latch. The latch advances only while the session is open,
 so a stale prior-day mark before the open cannot close the next session.
+
+The daily kill uses the same latch with reason DAILY_HARD_STOP. The next New York session starts clear.
 """
 
 from __future__ import annotations
@@ -39,7 +41,14 @@ def advance(prior: dict | None, session_date: str, pnl: Decimal | None, steps: t
     _, floor = _level(peak, ladder)
     armed = floor is not None
     closed = armed and pnl <= floor
-    return {"session_date": session_date, "armed": armed, "closed": closed, "peak": _text(peak)}
+    return {
+        "session_date": session_date,
+        "armed": armed,
+        "closed": closed,
+        "peak": _text(peak),
+        "reason": "DAY_FLOOR" if closed else "",
+        "cleared": bool(state.get("cleared")),
+    }
 
 
 def floor_sell_price(bid: Decimal | None, mark: Decimal | None, discount: Decimal) -> Decimal | None:
@@ -64,6 +73,35 @@ def observe_day_floor(settings: Settings, pnl: Decimal | None, moment: datetime,
     return _public(stored, trading.day_floor_steps)
 
 
+def latch_hard_stop(settings: Settings, moment: datetime) -> dict:
+    """Close the day the way a touched floor does: flatten, and no new buys until the next session."""
+    trading = settings.trading()
+    session_date = _session_date(settings, moment)
+    prior = _for_date(_read(), session_date)
+    base = prior or _blank(session_date)
+    updated = {**base, "closed": True, "reason": "DAILY_HARD_STOP"}
+    stored = _commit(prior, updated)
+    return _public(stored, trading.day_floor_steps)
+
+
+def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
+    """Remember that this session's open orders were already canceled, so a later tick does not cancel the liquidation sells."""
+    trading = settings.trading()
+    session_date = _session_date(settings, moment)
+    prior = _for_date(_read(), session_date)
+    base = prior or _blank(session_date)
+    updated = {**base, "closed": True, "reason": str(base.get("reason") or "DAILY_HARD_STOP"), "cleared": True}
+    stored = _commit(prior, updated)
+    return _public(stored, trading.day_floor_steps)
+
+
+def day_close_reason(settings: Settings, moment: datetime) -> str | None:
+    view = public_from_store(settings, moment)
+    if not view.get("closed"):
+        return None
+    return str(view.get("reason") or "DAY_FLOOR")
+
+
 def public_from_store(settings: Settings, moment: datetime) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
@@ -81,7 +119,7 @@ def _session_date(settings: Settings, moment: datetime) -> str:
 
 
 def _blank(session_date: str) -> dict:
-    return {"session_date": session_date, "armed": False, "closed": False, "peak": None}
+    return {"session_date": session_date, "armed": False, "closed": False, "peak": None, "reason": "", "cleared": False}
 
 
 def _ladder(steps: tuple | None) -> tuple[tuple[Decimal, Decimal], ...]:
@@ -118,11 +156,16 @@ def _public(state: dict | None, steps: tuple | None) -> dict:
     arm, floor = _level(_decimal(row.get("peak")), ladder)
     if not row.get("armed") or floor is None:
         arm, floor = first_arm, first_floor
+    reason = str(row.get("reason") or "")
+    if row.get("closed") and not reason:
+        reason = "DAY_FLOOR"
     return {
         "armed": bool(row.get("armed")),
         "closed": bool(row.get("closed")),
         "arm": _text(arm) or "0.00",
         "floor": _text(floor) or "0.00",
+        "reason": reason,
+        "cleared": bool(row.get("cleared")),
     }
 
 
@@ -163,11 +206,17 @@ def _merge(prior: dict | None, updated: dict) -> dict:
     if not prior:
         return updated
     peaks = [item for item in (_decimal(prior.get("peak")), _decimal(updated.get("peak"))) if item is not None]
+    reason = str(prior.get("reason") or "")
+    incoming = str(updated.get("reason") or "")
+    if incoming == "DAILY_HARD_STOP" or not reason:
+        reason = incoming or reason
     return {
         "session_date": updated["session_date"],
         "armed": bool(prior.get("armed") or updated.get("armed")),
         "closed": bool(prior.get("closed") or updated.get("closed")),
         "peak": _text(max(peaks) if peaks else None),
+        "reason": reason,
+        "cleared": bool(prior.get("cleared") or updated.get("cleared")),
     }
 
 

@@ -116,6 +116,7 @@ def policy_view(config: TradingConfig) -> dict:
         "daily_warning_pct": config.daily_warning_pct,
         "daily_entry_stop_pct": config.daily_entry_stop_pct,
         "daily_hard_stop_pct": config.daily_hard_stop_pct,
+        "daily_kill_loss_usd": config.daily_kill_loss_usd,
         "initial_stop_decline_pct": config.initial_stop_decline_pct,
         "protective_stop_r": config.protective_stop_r,
         "protect_at_r": config.protect_at_r,

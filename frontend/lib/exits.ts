@@ -10,9 +10,11 @@ export const EXIT_REASONS: Record<string, string> = {
   KILL_SWITCH: "עצירת חירום",
   CLOSE_ALL: "סגירת כל הפוזיציות",
   DAY_FLOOR: "רצפת היום",
+  DAILY_HARD_STOP: "עצירת הפסד יומית",
 };
 
 export function exitLabel(reason: string | null | undefined) {
   if (!reason) return "—";
-  return EXIT_REASONS[reason] || reason;
+  const code = reason.trim().split(/\s+/)[0];
+  return EXIT_REASONS[code] || reason;
 }
