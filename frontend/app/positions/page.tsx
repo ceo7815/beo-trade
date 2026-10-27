@@ -5,7 +5,8 @@ import { Shell, useDesk } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { loadCached, peekCached, poll, transportMode } from "@/lib/api";
 import { copy } from "@/lib/copy";
-import { Num, Sparkline, useTick } from "@/components/live-ui";
+import { Num, Odometer, Sparkline, useTick } from "@/components/live-ui";
+import { signedPct as formatPct } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
@@ -101,7 +102,7 @@ function signedMoney(value: number | null) {
 
 function signedPct(value: number | null) {
   if (value === null) return "—";
-  return `${value > 0 ? "+" : ""}${value.toFixed(2)}%`;
+  return formatPct(value, 2);
 }
 
 function tone(value: number | null) {
@@ -313,11 +314,11 @@ export default function PositionsPage() {
         ) : null}
 
         {active === "live" ? <div className="live-strip">
-          <Stat label="פתוחות" value={positions === null ? "—" : `${items.length}${risk?.max_positions ? ` / ${risk.max_positions}` : ""}`} />
-          <Stat label="כסף בסיכון" value={positions === null ? "—" : money(cost)} />
-          <Stat label="רווח/הפסד פתוח" value={signedMoney(open)} sub={open !== null && cost > 0 ? signedPct((open / cost) * 100) : undefined} className={tone(open)} />
-          <Stat label="אם הכול ייצא בסטופ הנוכחי" value={signedMoney(worstCase)} className={tone(worstCase)} />
-          <Stat label="ממומש היום" value={signedMoney(realized)} sub={report?.summary ? `${report.summary.wins ?? 0} ברווח · ${report.summary.losses ?? 0} בהפסד` : undefined} className={tone(realized)} />
+          <Stat label={copy.positions.now} value={positions === null ? "—" : `${items.length}${risk?.max_positions ? ` / ${risk.max_positions}` : ""}`} />
+          <Stat label={copy.positions.premium} value={positions === null ? "—" : money(cost)} />
+          <Stat label={copy.positions.openPnl} roll={open} sub={open !== null && cost > 0 ? signedPct((open / cost) * 100) : undefined} className={tone(open)} />
+          <Stat label={copy.positions.atStop} value={signedMoney(worstCase)} className={tone(worstCase)} />
+          <Stat label={copy.positions.realized} value={signedMoney(realized)} sub={report?.summary ? `${report.summary.wins ?? 0} ${copy.history.wins} · ${report.summary.losses ?? 0} ${copy.history.losses}` : undefined} className={tone(realized)} />
           <div className="live-stat">
             <span>חשיפה מול תקרה</span>
             <b className="num">{limit ? `${money(exposure)} / ${money(limit)}` : money(exposure)}</b>
@@ -369,12 +370,12 @@ export default function PositionsPage() {
   );
 }
 
-function Stat({ label, value, sub, className = "" }: { label: string; value: string; sub?: string; className?: string }) {
+function Stat({ label, value, roll, sub, className = "" }: { label: string; value?: string; roll?: number | null; sub?: string; className?: string }) {
   return (
     <div className="live-stat">
       <span>{label}</span>
-      <b className={`num ${className}`}>{value}</b>
-      {sub ? <em className={className}>{sub}</em> : null}
+      {roll !== undefined ? <Odometer value={roll} digits={0} className="sm" /> : <Num className={className}>{value}</Num>}
+      {sub ? <em className={`num ${className}`}>{sub}</em> : null}
     </div>
   );
 }

@@ -8,6 +8,7 @@ import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
 import { copy } from "@/lib/copy";
+import { money as usd, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
 import { observeTrades, useLive } from "@/lib/live";
 
@@ -120,10 +121,9 @@ type AuditRow = { state: string; reason: string; created_at: string };
 type Order = { symbol?: string; internal_state?: string; qty?: string; position_intent?: string };
 
 function money(value: string | number | null | undefined) {
-  if (value === null || value === undefined || value === "") return "אין נתונים";
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "אין נתונים";
-  return number.toLocaleString("en-US", { style: "currency", currency: "USD" });
+  const number = typeof value === "number" ? value : value == null || value === "" ? Number.NaN : Number(value);
+  if (!Number.isFinite(number)) return copy.common.noData;
+  return usd(number);
 }
 
 function ageLabel(seconds: number | null | undefined) {
@@ -136,7 +136,7 @@ function share(value: string | number | null | undefined) {
   if (value === null || value === undefined || value === "") return "—";
   const number = Number(value);
   if (!Number.isFinite(number)) return "—";
-  return `${number > 0 ? "+" : ""}${number.toFixed(2)}%`;
+  return signedPct(number, 2);
 }
 
 function tone(value: number | null) {
@@ -219,8 +219,8 @@ function Board() {
   }, [desk?.heartbeat_age_seconds]);
 
   useEffect(() => {
-    const rows = [...(today?.closed ?? []), ...(today?.open ?? [])];
-    observeTrades(rows);
+    if (today === null) return;
+    observeTrades([...(today.closed ?? []), ...(today.open ?? [])]);
   }, [today]);
 
   const ssePositions = transportMode() === "sse" ? (live.snap?.positions?.items as Position[] | undefined) : undefined;
@@ -288,15 +288,15 @@ function Board() {
       <section className="desk-days">
         <header className="ops-pane-head">
           <h2>{copy.dashboard.days}</h2>
-          <a href="/history">כל העסקאות</a>
+          <a href="/history">{copy.dashboard.allTrades}</a>
         </header>
         <div className="desk-day-row">
-          {days === null ? <p className="desk-empty">טוען</p> : days.length === 0 ? <p className="desk-empty">עוד אין יום מסחר סגור</p> : days.map((group) => (
+          {days === null ? <p className="desk-empty">{copy.common.loading}</p> : days.length === 0 ? <p className="desk-empty">{copy.dashboard.emptyDays}</p> : days.map((group) => (
             <a key={group.day} className="desk-day" href="/history">
               <span>{dayTitle(group.day)}</span>
-              <b className={`num ${tone(group.pnl)}`}>{signedMoney(group.pnl)}</b>
-              <small className={`num ${tone(group.pnl)}`}>{group.pct === null ? "—" : `${group.pct > 0 ? "+" : ""}${group.pct.toFixed(1)}%`}</small>
-              <small>{group.wins} מתוך {group.trades} ברווח</small>
+              <Num className={tone(group.pnl)}>{signedMoney(group.pnl)}</Num>
+              <small><Num className={tone(group.pnl)}>{group.pct === null ? "—" : signedPct(group.pct, 1)}</Num></small>
+              <small>{copy.dashboard.winsOf(group.wins, group.trades)}</small>
             </a>
           ))}
         </div>
@@ -305,16 +305,16 @@ function Board() {
       <details className="desk-system">
         <summary>{copy.dashboard.system}</summary>
       <div className="desk-stats">
-        <ResultStat label="סגור" book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? "טוען" : "אין סגירה"} />
-        <ResultStat label="פתוח" book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? "טוען" : "אין פוזיציה"} />
+        <ResultStat label={copy.dashboard.closed} book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? copy.common.loading : copy.dashboard.emptyFlow} />
+        <ResultStat label={copy.dashboard.open} book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? copy.common.loading : copy.dashboard.emptyPositions} />
         <Stat label={copy.dashboard.equity} value={money(viewAccount?.equity)} />
         <Stat label={copy.dashboard.cash} value={money(viewAccount?.cash)} />
-        <Stat label="בסיכון" value={stake === null ? "—" : money(stake.dollars)} />
+        <Stat label={copy.dashboard.atRisk} value={stake === null ? "—" : money(stake.dollars)} />
       </div>
       <div className="ops-meters">
         <Meter label={copy.dashboard.dailyLoss} used={risk?.daily_loss_used} limit={kill == null ? risk?.daily_loss_limit : String(kill)} />
-        <Meter label="חשיפה" used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
-        <Meter label="פוזיציות" used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
+        <Meter label={copy.dashboard.exposure} used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
+        <Meter label={copy.dashboard.positionMeter} used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
       </div>
       <section className="ops-pane stage">
         <header className="ops-pane-head">
@@ -478,7 +478,7 @@ function Stat({ label, value, className = "" }: { label: string; value: string; 
   return (
     <div className="desk-stat">
       <span>{label}</span>
-      <b className={`num ${className}`}>{value}</b>
+      <Num className={className}>{value}</Num>
     </div>
   );
 }
@@ -558,7 +558,7 @@ function num(value: string | number | null | undefined) {
 }
 
 function signedMoney(value: number) {
-  return `${value > 0 ? "+" : value < 0 ? "-" : ""}${money(Math.abs(value))}`;
+  return usdSigned(value, 2);
 }
 
 type DayBook = { profit: number; invested: number; pct: number };

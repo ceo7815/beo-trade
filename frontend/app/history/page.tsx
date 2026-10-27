@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
-import { Num } from "@/components/live-ui";
+import { Num, Odometer } from "@/components/live-ui";
+import { signedPct } from "@/lib/format";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet, poll } from "@/lib/api";
 import { EXIT_REASONS } from "@/lib/exits";
@@ -177,7 +178,7 @@ function dayStats(trades: Trade[]) {
 
 function DayScore({ trades }: { trades: Trade[] }) {
   const stats = dayStats(trades);
-  const percent = stats.pct === null ? "—" : `${stats.pct > 0 ? "+" : ""}${stats.pct.toFixed(1)}%`;
+  const percent = stats.pct === null ? "—" : signedPct(stats.pct, 1);
   return (
     <div className="day-score">
       <span>עסקאות<b className="num">{stats.count}</b></span>
@@ -306,7 +307,7 @@ export default function HistoryPage() {
               <small>יום מסחר</small>
               {selectedLabel}
             </span>
-            <Num className={mark(selectedPnl)}>{report ? signed(String(selectedPnl)) : "—"}</Num>
+            <Odometer value={report ? selectedPnl : null} digits={0} className="sm" />
           </button>
           {menu ? (
             <div className="book-menu" role="listbox" aria-label="ימי מסחר">
