@@ -41,7 +41,7 @@ def test_system_status_never_waits_for_a_slow_feed(tmp_path, monkeypatch):
         openai_price_output_per_million=Decimal("0"),
     )
     try:
-        with TestClient(create_app(settings)) as client:
+        with TestClient(create_app(settings, allow_open_api=True)) as client:
             started = time.perf_counter()
             for _ in range(3):
                 assert client.get("/api/v1/system").status_code == 200
@@ -206,7 +206,7 @@ def test_dashboard_api_exposes_buys_only(tmp_path, monkeypatch):
         openai_price_input_per_million=Decimal("0"),
         openai_price_output_per_million=Decimal("0"),
     )
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         health = client.get("/health")
         assert health.status_code == 200
         ready = client.get("/ready")

@@ -601,6 +601,38 @@ def test_probe_is_connected_only_after_quote_and_chain(monkeypatch):
     assert "test-terminal" not in detail
 
 
+def test_identity_probe_sends_the_client_key_only_from_the_environment(monkeypatch):
+    monkeypatch.setattr("app.integrations.secrets._read_file", lambda settings: {})
+    seen: dict = {}
+
+    def fake_post(url, **kwargs):
+        headers = dict(kwargs.get("headers") or {})
+        body = kwargs.get("json") or {}
+        seen["headers"] = headers
+        seen["body"] = body
+        raise httpx.ConnectError(f"down {headers.get('TD-TERMINAL-KEY', '')} {body.get('apiKey', '')}")
+
+    def fake_get(*_args, **_kwargs):
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr("app.integrations.probes._post", fake_post)
+    monkeypatch.setattr("app.integrations.probes._get", fake_get)
+    missing = _settings(thetadata_client_key="")
+    status, _latency, detail = probe_thetadata(missing)
+    assert status == "disconnected"
+    assert "TD-TERMINAL-KEY" not in seen["headers"]
+    assert "test-terminal" not in detail
+
+    seen.clear()
+    configured = _settings(thetadata_client_key="client-from-env")
+    status, _latency, detail = probe_thetadata(configured)
+    assert status == "disconnected"
+    assert seen["headers"]["TD-TERMINAL-KEY"] == "client-from-env"
+    assert seen["body"]["apiKey"] == "test-terminal"
+    assert "client-from-env" not in detail
+    assert "test-terminal" not in detail
+
+
 def test_provider_selection_follows_the_saved_key(monkeypatch):
     monkeypatch.setattr("app.integrations.secrets._read_file", lambda settings: {})
     assert build_providers(_settings(thetadata_api_key="")).market.name == "unconfigured"
@@ -628,7 +660,7 @@ def test_http_scan_enters_run_scan_from_terminal_payload(tmp_path, monkeypatch):
     reset_universe_state()
     database = tmp_path / "beo.db"
     settings = _settings(database_url="sqlite:///" + database.as_posix())
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         scan = client.post("/api/v1/scan")
         assert scan.status_code == 200
         body = scan.json()

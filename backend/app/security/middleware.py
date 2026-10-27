@@ -46,13 +46,14 @@ READ_PATHS = (
 
 
 def presented_key(request: Request) -> str:
+    """Header or bearer only. A ?key= query is ignored so it cannot authenticate or land in access logs."""
     header = request.headers.get("x-beo-key", "").strip()
     if header:
         return header
     authorization = request.headers.get("authorization", "")
     if authorization.lower().startswith("bearer "):
         return authorization.split(" ", 1)[1].strip()
-    return request.query_params.get("key", "").strip()
+    return ""
 
 
 def readable(path: str) -> bool:
@@ -64,17 +65,26 @@ def _same(given: str, expected: str) -> bool:
 
 
 class ApiKeyMiddleware(BaseHTTPMiddleware):
-    """With API_ADMIN_KEY set, every call needs a key. The read key only reads, and only from READ_PATHS."""
+    """Fail closed. Health and ready stay public. Everything else needs a configured admin key.
 
-    def __init__(self, app, admin_key: str, read_key: str = "") -> None:
+    allow_open_api is a test-only escape for route tests that do not set API_ADMIN_KEY.
+    It is not read from the environment. A configured admin key is still enforced.
+    """
+
+    def __init__(self, app, admin_key: str, read_key: str = "", allow_open_api: bool = False) -> None:
         super().__init__(app)
         self.admin_key = admin_key
         self.read_key = read_key
+        self.allow_open_api = allow_open_api
 
     async def dispatch(self, request: Request, call_next) -> Response:
         path = request.url.path
-        if not self.admin_key or path in OPEN_PATHS or request.method == "OPTIONS":
+        if path in OPEN_PATHS or request.method == "OPTIONS":
             return await call_next(request)
+        if not self.admin_key:
+            if self.allow_open_api:
+                return await call_next(request)
+            return JSONResponse({"detail": "השרת לא הוגדר עם מפתח גישה"}, status_code=503)
         key = presented_key(request)
         if _same(key, self.admin_key):
             return await call_next(request)

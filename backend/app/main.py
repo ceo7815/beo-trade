@@ -165,7 +165,7 @@ def _decision_analyzer(settings: Settings, ledger):
     return OpenAIResponsesClient(settings, ledger)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, allow_open_api: bool = False) -> FastAPI:
     current = settings or get_settings()
     feed_lock = threading.Lock()
 
@@ -191,7 +191,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # production ceiling so a single open tab cannot lock itself out.
     rate_limit = 600 if current.app_env == "production" else 2000
     app.add_middleware(RateLimitMiddleware, limit=rate_limit)
-    app.add_middleware(ApiKeyMiddleware, admin_key=current.api_admin_key.strip(), read_key=current.api_read_key.strip())
+    app.add_middleware(
+        ApiKeyMiddleware,
+        admin_key=current.api_admin_key.strip(),
+        read_key=current.api_read_key.strip(),
+        allow_open_api=allow_open_api,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[item.strip() for item in current.cors_origins.split(",") if item.strip()],
