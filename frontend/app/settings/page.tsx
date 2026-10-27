@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet } from "@/lib/api";
 
 type SettingsView = {
@@ -67,7 +68,7 @@ export default function SettingsPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>הגדרות</h1>
+            <h1>{copy.screens.settings}</h1>
             <p>Settings · PAPER</p>
           </div>
           <span className={`ops-pip ${settings ? "on" : "warn"}`}><i />{settings ? "קובץ ההגדרות" : "טוען"}</span>

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
@@ -63,7 +64,7 @@ export default function StatusPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>בריאות המערכת</h1>
+            <h1>{copy.screens.status}</h1>
             <p>System Health · PAPER</p>
           </div>
           <span className={`ops-pip ${failed ? "off" : status ? "on" : "warn"}`}><i />{failed ? "אין נתונים" : status ? "נבדק" : "טוען"}</span>

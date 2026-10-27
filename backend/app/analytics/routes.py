@@ -167,6 +167,10 @@ def _history_window(name: str) -> tuple[str, str]:
 
 
 def register(app: FastAPI, settings: Settings) -> None:
+    from app.live.stream import register as register_stream
+
+    register_stream(app, settings)
+
     @app.get("/api/v1/desk")
     def desk(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
@@ -427,6 +431,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "per_trade_limit": None if equity is None else str((equity * Decimal(str(trading.max_capital_per_trade_pct))).quantize(Decimal("0.01"))),
             "exposure_limit": None if equity is None else str((equity * Decimal(str(trading.max_total_open_exposure_pct))).quantize(Decimal("0.01"))),
             "daily_loss_limit": None if equity is None else str((equity * Decimal(str(trading.daily_entry_stop_pct))).quantize(Decimal("0.01"))),
+            "daily_kill_loss_usd": None if equity is None else str((equity * Decimal(str(trading.daily_hard_stop_pct))).quantize(Decimal("0.01"))),
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,

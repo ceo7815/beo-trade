@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { useIntegrations } from "@/components/IntegrationBoard";
 
 const ORDER = ["AI", "Market Data", "News", "Broker / Paper Execution", "Database", "Infrastructure", "Regulatory", "Macro", "Internal Intelligence"];
@@ -21,7 +22,7 @@ function Hub() {
   return (
     <div className="grid gap-4">
       <div>
-        <h1>ממשקים פעילים</h1>
+        <h1>{copy.screens.integrations}</h1>
         <p className="mt-2 font-bold text-[var(--muted)]">PAPER TRADING. חיבור מוצג רק אחרי בדיקה אמיתית. <Link className="text-[var(--gold)]" href="/integrations/status">סטטוס מערכת</Link></p>
       </div>
       {error ? <p className="font-bold text-[var(--rose)]">{error}</p> : null}

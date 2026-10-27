@@ -3,8 +3,13 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { motion, useReducedMotion } from "framer-motion";
 import { PHASES, apiGet, apiPost, poll, warm, type SystemStatus } from "@/lib/api";
+import { copy } from "@/lib/copy";
+import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
+import { Heartbeat, Ticker, Toasts } from "@/components/live-ui";
+import { LiveProvider, useLive } from "@/lib/live";
 
 type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
 type DeskData = { query: string; status: SystemStatus | null };
@@ -112,7 +117,19 @@ function Clock({ timeZone, label }: { timeZone: string; label: string }) {
 }
 
 export function Shell({ children }: { children: React.ReactNode }) {
+  return (
+    <LiveProvider>
+      <ShellFrame>{children}</ShellFrame>
+    </LiveProvider>
+  );
+}
+
+function ShellFrame({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const live = useLive();
+  const reduce = useReducedMotion();
+  const [query, setQuery] = useState("");
+  const [finder, setFinder] = useState(false);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [note, setNote] = useState("");
   const [link, setLink] = useState<"pending" | "up" | "down">("pending");
@@ -165,6 +182,25 @@ export function Shell({ children }: { children: React.ReactNode }) {
     if (switching || status?.trading_halted == null) return;
     setHalted(status.trading_halted);
   }, [status, switching]);
+
+  const shown = useMemo(() => {
+    if (!status) return status;
+    const liveStatus = live.snap?.status;
+    if (!liveStatus) return status;
+    return {
+      ...status,
+      market_phase: liveStatus.market_phase || status.market_phase,
+      session_open: liveStatus.session_open ?? status.session_open,
+      session_close: liveStatus.session_close ?? status.session_close,
+      trading_halted: liveStatus.trading_halted ?? status.trading_halted,
+    };
+  }, [status, live.snap]);
+
+  useEffect(() => {
+    const pnl = num(live.snap?.day?.mark_pnl ?? live.snap?.day?.pnl);
+    document.body.classList.toggle("red", pnl !== null && pnl < 0);
+    document.body.style.setProperty("--mood", pnl === null ? "0.5" : String(Math.max(-1, Math.min(1, pnl / 2500))));
+  }, [live.snap]);
 
   async function toggleTrading() {
     const next = !halted;
@@ -278,7 +314,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <DeskContext.Provider value={{ query: "", status }}>
+    <DeskContext.Provider value={{ query, status: shown }}>
+      <div className="aura" />
+      <Toasts items={live.toasts} />
       <div className="desk">
         {menu ? <button type="button" className="rail-backdrop" aria-label="סגור תפריט" onClick={() => setMenu(false)} /> : null}
         <aside className={`rail${menu ? " open" : ""}`} aria-label="ניווט">
@@ -290,8 +328,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
           <div className="brand-block">
             <LogoLockup />
             <span className={`conn ${link}`}>
-              <i />
-              {link === "up" ? "מחובר" : link === "down" ? "אין חיבור" : "מתחבר"}
+              <Heartbeat live={link === "up"} />
+              {link === "up" ? copy.shell.connected : link === "down" ? copy.shell.disconnected : copy.common.connecting}
             </span>
             <span className="paper-flag">PAPER TRADING</span>
             <Link href="/versions" className="version-link">
@@ -322,7 +360,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="sheet-actions">
             <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
-              {closing ? "סוגר" : "סגור את כל הפוזיציות"}
+              {closing ? copy.shell.closing : copy.shell.closeAllLong}
             </button>
           </div>
         </aside>
@@ -343,21 +381,21 @@ export function Shell({ children }: { children: React.ReactNode }) {
               disabled={switching}
               onClick={toggleTrading}
             >
-              {switching ? "מעדכן" : halted ? "כניסות עצורות · הפעל" : "עצור כניסות"}
+              {switching ? copy.shell.halting : halted ? copy.shell.halted : copy.shell.halt}
             </button>
           </header>
           <header className="instrument">
             <div className="bar-item">
               <div>
-                <div className="kicker">מצב שוק</div>
+                <div className="kicker">{copy.shell.market}</div>
                 <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>
               </div>
               <div className="session-track" aria-hidden>
                 <div className="session-fill" style={{ width: `${progress}%` }} />
               </div>
             </div>
-            <Clock timeZone="America/New_York" label="ניו יורק" />
-            <Clock timeZone="Asia/Dubai" label="דובאי" />
+            <Clock timeZone="America/New_York" label={copy.shell.ny} />
+            <Clock timeZone="Asia/Dubai" label={copy.shell.dubai} />
             <div className="bar-actions">
               <button
                 type="button"
@@ -366,22 +404,50 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 disabled={switching}
                 onClick={toggleTrading}
               >
-                {switching ? "מעדכן" : halted ? "הפעל כניסות" : "עצור כניסות"}
+                {switching ? copy.shell.halting : halted ? copy.shell.resume : copy.shell.halt}
+              </button>
+              <button type="button" className="halt-btn ghost" onClick={() => setFinder((open) => !open)}>
+                {copy.shell.search}
               </button>
               <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
-                {closing ? "סוגר" : "סגור פוזיציות"}
+                {closing ? copy.shell.closing : copy.shell.closeAll}
               </button>
               <button
                 type="button"
                 className="halt-btn run"
                 onClick={() => fetch("/api/auth/logout", { method: "POST" }).finally(() => (window.location.href = "/login"))}
               >
-                יציאה
+                {copy.shell.logout}
               </button>
             </div>
           </header>
-          {note ? <p className="px-6 pt-3 text-sm text-[var(--rose)]">{note}</p> : null}
-          <div className="stage-body">{children}</div>
+          {finder ? (
+            <div className="search-pop">
+              <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.shell.search} aria-label={copy.shell.search} />
+              {groups.flatMap((group) => group.items).filter((item) => item.label.includes(query.trim())).map((item) => (
+                <Link key={item.href} href={item.href} onClick={() => setFinder(false)}>{item.label}</Link>
+              ))}
+            </div>
+          ) : null}
+          <Ticker
+            quotes={(live.snap?.quotes || []).map((quote) => ({
+              symbol: quote.symbol,
+              price: num(quote.price),
+              change: num(quote.change_percent),
+            }))}
+            series={live.series}
+          />
+          {note ? <p className="px-6 pt-3 text-sm text-[var(--down)]">{note}</p> : null}
+          {live.stale ? <p className="stale-note">{copy.common.stale(Math.max(1, Math.round(((Date.now() - (live.updatedAt || Date.now())) / 1000))))}</p> : null}
+          <motion.div
+            className="stage-body"
+            key={path}
+            initial={reduce ? false : { opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.22 }}
+          >
+            {children}
+          </motion.div>
         </div>
         <nav className="tabbar" aria-label="ניווט ראשי">
           {tabs.map((tab) => (

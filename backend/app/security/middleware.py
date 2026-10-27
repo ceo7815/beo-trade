@@ -38,6 +38,7 @@ READ_PATHS = (
     "/api/v1/alerts",
     "/api/v1/recommendations",
     re.compile(r"^/api/v1/recommendations/[\w-]+$"),
+    "/api/v1/stream",
     "/api/v1/broker/alpaca/positions",
     "/api/v1/broker/alpaca/orders",
     "/api/v1/broker/alpaca/fills",

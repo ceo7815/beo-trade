@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet } from "@/lib/api";
 import { contractResult, money, percent } from "@/lib/pnl";
 
@@ -28,7 +29,7 @@ export default function CalculatorPage() {
     <Shell>
       <div className="grid gap-4 lg:grid-cols-[1.1fr_0.9fr]">
         <section className="panel">
-          <h1 className="text-lg">חשבון Alpaca Paper</h1>
+          <h1 className="text-lg">{copy.screens.calculator}</h1>
           <p className="mt-1 text-sm text-[var(--muted)]">היתרות נלקחות מחשבון Alpaca Paper.</p>
           <div className="mt-6 grid gap-4 sm:grid-cols-2">
             <Line label="הון עצמי" value={account?.equity ? money(Number(account.equity)) : "אין נתונים"} />

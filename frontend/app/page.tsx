@@ -1,11 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
 import { Shell, useDesk } from "@/components/Shell";
-import { PHASES, loadCached, peekCached, poll, type SystemStatus } from "@/lib/api";
+import { PHASES, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
+import { copy } from "@/lib/copy";
+import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
+import { observeTrades, useLive } from "@/lib/live";
 
 type Desk = {
   autonomous: boolean;
@@ -104,6 +108,7 @@ type Risk = {
   per_trade_limit: string | null;
   exposure_limit: string | null;
   daily_loss_limit: string | null;
+  daily_kill_loss_usd?: string | null;
   daily_loss_used: string | null;
   today_pnl?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
@@ -156,6 +161,8 @@ export default function HomePage() {
 
 function Board() {
   const { status } = useDesk();
+  const live = useLive();
+  const reduce = useReduced();
   const [desk, setDesk] = useState<Desk | null>(() => peekCached<Desk>("/api/v1/desk"));
   const [account, setAccount] = useState<BrokerAccount | null>(() => peekCached<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account")?.account ?? null);
   const [positions, setPositions] = useState<Position[] | null>(() => peekCached<{ items?: Position[] }>("/api/v1/broker/alpaca/positions")?.items ?? null);
@@ -182,12 +189,18 @@ function Board() {
       }, everyMs);
     const stops = [
       feed<Desk>("/api/v1/desk", setDesk, 15000),
-      feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => setPositions(body.items || []), 12000),
+      feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => {
+        if (transportMode() === "sse") return;
+        setPositions(body.items || []);
+      }, 12000),
       feed<Risk>("/api/v1/risk", setRisk, 15000),
       feed<TodayReport>("/api/v1/report/trades?period=today", setToday, 60000, 30000),
       feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 15000),
       feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 30000),
-      feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => setAccount(body.account || null), 15000),
+      feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => {
+        if (transportMode() === "sse") return;
+        setAccount(body.account || null);
+      }, 15000),
       feed<{ summary?: TradeTotals; closed?: ClosedLite[] }>("/api/v1/report/trades?period=all", (body) => {
         setTotals(body.summary ?? null);
         setBook(body.closed ?? []);
@@ -205,13 +218,26 @@ function Board() {
     if (desk?.heartbeat_age_seconds != null) setBeatAt(Date.now());
   }, [desk?.heartbeat_age_seconds]);
 
-  const dayPnl = num(risk?.today_pnl);
+  useEffect(() => {
+    const rows = [...(today?.closed ?? []), ...(today?.open ?? [])];
+    observeTrades(rows);
+  }, [today]);
+
+  const ssePositions = transportMode() === "sse" ? (live.snap?.positions?.items as Position[] | undefined) : undefined;
+  const sseAccount = transportMode() === "sse" ? live.snap?.account : undefined;
+  const viewPositions = ssePositions ?? positions;
+  const viewAccount = (sseAccount as BrokerAccount | null | undefined) ?? account;
+  const dayPnl = num(live.snap?.day?.pnl) ?? num(risk?.today_pnl);
+  const markPnl = num(live.snap?.day?.mark_pnl);
+  const heroPnl = markPnl ?? dayPnl;
+  const kill = num(live.snap?.day?.daily_kill_loss_usd) ?? num(risk?.daily_kill_loss_usd);
   const scan = desk?.last_scan ?? null;
-  const exposure = exposureOf(positions);
-  const stake = stakeOf(today?.open, positions);
+  const exposure = exposureOf(viewPositions);
+  const stake = stakeOf(today?.open, viewPositions);
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
+  const lossState = live.snap?.day?.daily_loss_state;
   const sync = syncOf(syncedAt, now);
   const days = recentDays(book);
   const lastDay = days?.[0] ?? null;
@@ -219,46 +245,49 @@ function Board() {
 
   return (
     <section className="desk-home">
+      <KillBanner pnl={heroPnl} kill={kill} state={lossState} />
       <header className="desk-hero">
         <div className="desk-hero-top">
           <span>{phase}</span>
-          <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{sync.text}</span>
+          <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
         </div>
-        <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : "היום"}</p>
+        <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
         <div className="desk-hero-main">
-          <p className={`desk-hero-pnl num ${tone(showLast && lastDay ? lastDay.pnl : dayPnl)}`}>{showLast && lastDay ? signedMoney(lastDay.pnl) : dayPnl === null ? "—" : signedMoney(dayPnl)}</p>
+          <Odometer value={showLast && lastDay ? lastDay.pnl : heroPnl} />
           {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
         </div>
-        <p className="desk-hero-note">{showLast ? "השוק סגור. זה יום המסחר האחרון." : narrative}</p>
+        <Gauge pnl={showLast && lastDay ? lastDay.pnl : heroPnl} kill={kill} />
+        <p className="desk-hero-note" title={narrative.detail}>{showLast ? copy.dashboard.closedNote : narrative.short}</p>
       </header>
 
       <div className="ops-stage">
           <section className="ops-pane stage">
             <header className="ops-pane-head">
-              <h2>פוזיציות פתוחות</h2>
-              <span>{positions === null ? "טוען" : `${positions.length} פתוחות`}</span>
+              <h2>{copy.dashboard.positions}</h2>
+              <span>{viewPositions === null ? copy.common.loading : copy.dashboard.openCount(viewPositions.length)}</span>
             </header>
-            <div className="desk-blotter">
-              {positions && positions.length > 0 ? positions.map((item) => (
-                <button key={item.symbol} type="button" className="desk-pos" onClick={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}>
-                  <b>{item.underlying || "—"}</b>
-                  <span>{item.right || "—"} · {contracts(item.qty)}</span>
-                  <span className="num">{price(item.avg_entry_price)} → {price(item.current_price)}</span>
-                  <strong className={`num ${tone(item.unrealized_pl ? Number(item.unrealized_pl) : null)}`}>
-                    {item.current_price ? money(item.unrealized_pl) : "—"}
-                    <small>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : ""}</small>
-                  </strong>
-                </button>
+            <div className="desk-blotter blot">
+              <AnimatePresence initial={false}>
+              {viewPositions && viewPositions.length > 0 ? viewPositions.map((item, index) => (
+                <PosRow
+                  key={item.symbol}
+                  item={item}
+                  index={index}
+                  reduce={reduce}
+                  points={live.series[item.symbol] || []}
+                  onOpen={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}
+                />
               )) : (
-                <p className="desk-empty">{positions === null ? "טוען" : "אין פוזיציה פתוחה"}</p>
+                <p className="desk-empty">{viewPositions === null ? copy.common.loading : copy.dashboard.emptyPositions}</p>
               )}
+              </AnimatePresence>
             </div>
           </section>
       </div>
 
       <section className="desk-days">
         <header className="ops-pane-head">
-          <h2>ימים</h2>
+          <h2>{copy.dashboard.days}</h2>
           <a href="/history">כל העסקאות</a>
         </header>
         <div className="desk-day-row">
@@ -274,16 +303,16 @@ function Board() {
       </section>
 
       <details className="desk-system">
-        <summary>המערכת</summary>
+        <summary>{copy.dashboard.system}</summary>
       <div className="desk-stats">
         <ResultStat label="סגור" book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? "טוען" : "אין סגירה"} />
         <ResultStat label="פתוח" book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? "טוען" : "אין פוזיציה"} />
-        <Stat label="הון" value={money(account?.equity)} />
-        <Stat label="מזומן" value={money(account?.cash)} />
+        <Stat label={copy.dashboard.equity} value={money(viewAccount?.equity)} />
+        <Stat label={copy.dashboard.cash} value={money(viewAccount?.cash)} />
         <Stat label="בסיכון" value={stake === null ? "—" : money(stake.dollars)} />
       </div>
       <div className="ops-meters">
-        <Meter label="הפסד יומי" used={risk?.daily_loss_used} limit={risk?.daily_loss_limit} />
+        <Meter label={copy.dashboard.dailyLoss} used={risk?.daily_loss_used} limit={kill == null ? risk?.daily_loss_limit : String(kill)} />
         <Meter label="חשיפה" used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
         <Meter label="פוזיציות" used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
       </div>
@@ -319,7 +348,10 @@ function Board() {
       </section>
       <div className="ops-below">
           <section className="ops-pane">
-            <h2>צינור המערכת</h2>
+            <div className="pipe-head">
+            <h2>{copy.dashboard.pipeline}</h2>
+            <Radar names={live.snap?.scan?.names || []} active={Boolean(desk?.scan_progress && desk.scan_progress.stage_done !== "done")} />
+          </div>
             <div className="ops-rail">
               <Node label="סריקה אחרונה" value={scanNode(scan, closed)} />
               <Node label="משך סריקה" value={durationOf(scan)} />
@@ -575,6 +607,7 @@ function Feed({ label, row }: { label: string; row: { text: string; tone: string
   return (
     <div className="ops-feed">
       <span>{label}</span>
+      <Heartbeat live={row.tone === "ok"} />
       <b className={row.tone === "ok" ? "up" : row.tone === "bad" ? "down" : "flat"}>{row.text}</b>
     </div>
   );
@@ -704,18 +737,44 @@ function scanNode(scan: Desk["last_scan"], closed: boolean) {
 }
 
 function narrativeOf(desk: Desk | null, scan: Desk["last_scan"], closed: boolean, phase: string) {
-  if (!desk) return "מתחבר למנוע";
-  if (!desk.autonomous) return "המנוע לא פעיל. אין סריקה חיה.";
-  if (scan?.blocked) return `סריקה אחרונה נעצרה: ${scan.blocked}`;
+  if (!desk) return { short: copy.dashboard.connecting, detail: copy.dashboard.connecting };
+  if (!desk.autonomous) return { short: copy.dashboard.engineOff, detail: "המנוע לא פעיל. אין סריקה חיה." };
+  if (scan?.blocked) return { short: copy.dashboard.scanHeld, detail: scan.blocked };
   if (scan?.observed_at) {
     const outcomes = scan.stages?.buy_outcomes ?? [];
     const sent = outcomes.filter((item) => item.result === "submitted").length;
     const stopped = outcomes.filter((item) => item.result === "blocked");
-    const why = stopped.length > 0 ? ` · ${stopped.length} נחסמו: ${stopped[0].reason}` : "";
-    return `סריקה אחרונה ${clock(scan.observed_at)} · משך ${durationOf(scan)} · ${scan.buys ?? 0} BUY · ${sent} נשלחו${why}`;
+    const why = stopped.length > 0 ? ` · ${stopped.length} נחסמו` : "";
+    return { short: copy.dashboard.scanLive, detail: `${clock(scan.observed_at)} · ${durationOf(scan)} · ${scan.buys ?? 0} BUY · ${sent} נשלחו${why}` };
   }
-  if (closed) return `המנוע פועם. ${phase}. הסריקה ממתינה לחלון המסחר.`;
-  return "המנוע פועם. אין עדיין סריקה שמורה.";
+  if (closed) return { short: copy.dashboard.waitOpen, detail: `${copy.dashboard.engineOn}. ${phase}` };
+  return { short: copy.dashboard.engineOn, detail: copy.dashboard.engineOn };
+}
+
+function PosRow({ item, index, reduce, points, onOpen }: { item: Position; index: number; reduce: boolean | null; points: number[]; onOpen: () => void }) {
+  const flash = useTick(item.current_price);
+  const pnl = item.unrealized_pl ? Number(item.unrealized_pl) : null;
+  return (
+    <motion.button
+      layout={!reduce}
+      type="button"
+      className={`desk-pos row ${flash === "up" ? "fu" : flash === "down" ? "fd" : ""}`}
+      onClick={onOpen}
+      initial={reduce ? false : { opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={reduce ? undefined : { opacity: 0, x: -40 }}
+      transition={{ duration: reduce ? 0 : 0.22, delay: reduce ? 0 : index * 0.04 }}
+    >
+      <b>{item.underlying || "—"} <small className="tag">{item.right || ""}</small></b>
+      <span>{contracts(item.qty)}</span>
+      <Num>{price(item.avg_entry_price)} → {price(item.current_price)}</Num>
+      <Sparkline points={points} up={(pnl ?? 0) >= 0} />
+      <strong>
+        <Num className={tone(pnl)}>{item.current_price ? money(item.unrealized_pl) : "—"}</Num>
+        <small><Num className={tone(pnl)}>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : ""}</Num></small>
+      </strong>
+    </motion.button>
+  );
 }
 
 function feedOf(feed: SystemStatus["market_status"], name: string | undefined, count: number) {

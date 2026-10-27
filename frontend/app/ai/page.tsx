@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Summary = {
@@ -69,7 +70,7 @@ export default function AiPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>מרכז החלטות AI</h1>
+            <h1>{copy.screens.ai}</h1>
             <p>AI Decision Center · PAPER</p>
           </div>
           <span className={`ops-pip ${status ? "on" : "warn"}`}><i />{status?.ai_mode || "טוען"}</span>

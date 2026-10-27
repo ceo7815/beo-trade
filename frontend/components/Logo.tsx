@@ -1,3 +1,3 @@
-export function LogoLockup() {
-  return <img className="brand-logo" src="/beo-trade-logo.png" alt="Beo-Trade" />;
+export function LogoLockup({ className = "" }: { className?: string }) {
+  return <img className={`brand-logo${className ? ` ${className}` : ""}`} src="/beo-trade-logo.png" alt="Beo-Trade" />;
 }

@@ -2,6 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
+import { Num } from "@/components/live-ui";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet, poll } from "@/lib/api";
 import { EXIT_REASONS } from "@/lib/exits";
@@ -280,8 +282,8 @@ export default function HistoryPage() {
       <section className="engine book">
         <header className="ops-head">
           <div>
-            <h1>היסטוריית עסקאות</h1>
-            <p>כל יום מסחר, וכל עסקה שנסגרה בו</p>
+            <h1>{copy.history.title}</h1>
+            <p>{copy.history.subtitle}</p>
           </div>
           <span className={`ops-pip ${failed || report?.available === false ? "warn" : report ? "on" : "warn"}`}>
             <i />
@@ -289,13 +291,22 @@ export default function HistoryPage() {
           </span>
         </header>
 
+        {days.length > 1 ? (
+          <div className="day-bars" aria-hidden="true">
+            {[...days].reverse().slice(-24).map((group) => {
+              const max = Math.max(...days.map((day) => Math.abs(day.pnl)), 1);
+              return <i key={group.day || "unknown"} className={group.pnl < 0 ? "down" : ""} style={{ height: `${Math.max(8, (Math.abs(group.pnl) / max) * 72)}px` }} />;
+            })}
+          </div>
+        ) : null}
+
         <div className="book-pick">
           <button type="button" className="book-trigger" aria-expanded={menu} aria-haspopup="listbox" onClick={() => setMenu((value) => !value)}>
             <span>
               <small>יום מסחר</small>
               {selectedLabel}
             </span>
-            <b className={`num ${mark(selectedPnl)}`}>{report ? signed(String(selectedPnl)) : "—"}</b>
+            <Num className={mark(selectedPnl)}>{report ? signed(String(selectedPnl)) : "—"}</Num>
           </button>
           {menu ? (
             <div className="book-menu" role="listbox" aria-label="ימי מסחר">

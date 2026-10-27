@@ -3,7 +3,10 @@
 import { useEffect, useState } from "react";
 import { Shell, useDesk } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
-import { loadCached, peekCached, poll } from "@/lib/api";
+import { loadCached, peekCached, poll, transportMode } from "@/lib/api";
+import { copy } from "@/lib/copy";
+import { Num, Sparkline, useTick } from "@/components/live-ui";
+import { useLive } from "@/lib/live";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
@@ -161,6 +164,7 @@ function expiryLabel(dte: number | null | undefined) {
 
 export default function PositionsPage() {
   const { status } = useDesk();
+  const live = useLive();
   const [positions, setPositions] = useState<BrokerPosition[] | null>(() => peekCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions")?.items ?? null);
   const [report, setReport] = useState<Report | null>(() => peekCached<Report>("/api/v1/report/trades?period=today"));
   const [risk, setRisk] = useState<Risk | null>(() => peekCached<Risk>("/api/v1/risk"));
@@ -176,7 +180,7 @@ export default function PositionsPage() {
     const stopLive = poll(async () => {
       try {
         await loadCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions", (body) => {
-          if (!alive) return;
+          if (!alive || transportMode() === "sse") return;
           setPositions(body.items || []);
           setFailed(false);
           setUpdated(Date.now());
@@ -223,7 +227,9 @@ export default function PositionsPage() {
     return report?.open?.find((item) => item.symbol.replace(/\s/g, "") === key) ?? null;
   };
 
-  const items = positions ?? [];
+  const fromLive = transportMode() === "sse" && live.snap?.positions;
+  const items = fromLive ? ((live.snap?.positions?.items as BrokerPosition[]) || []) : (positions ?? []);
+  const ready = Boolean(fromLive) || positions !== null;
   const cost = items.reduce((sum, item) => sum + Math.abs(num(item.cost_basis) ?? 0), 0);
   const open = items.every((item) => num(item.unrealized_pl) !== null) ? items.reduce((sum, item) => sum + (num(item.unrealized_pl) ?? 0), 0) : null;
   const exposure = items.reduce((sum, item) => sum + Math.abs(num(item.market_value) ?? 0), 0);
@@ -244,8 +250,8 @@ export default function PositionsPage() {
       <section className="live">
         <header className="ops-head">
           <div>
-            <h1>מרכז בקרה · פוזיציות פתוחות</h1>
-            <p>כל פוזיציה: איפה היא עכשיו, מה יוציא אותה, ומתי</p>
+            <h1>{copy.positions.title}</h1>
+            <p>{copy.positions.subtitle}</p>
           </div>
           <div className="ops-pips">
             <span className={`ops-pip ${failed ? "warn" : positions ? "on" : "warn"}`}>
@@ -319,18 +325,18 @@ export default function PositionsPage() {
           </div>
         </div> : null}
 
-        {active === "live" && positions !== null && items.length === 0 ? (
-          <div className="live-empty">אין פוזיציה פתוחה ב-Alpaca Paper. המערכת ממשיכה לסרוק.</div>
+        {active === "live" && ready && items.length === 0 ? (
+          <div className="live-empty">{copy.positions.empty}</div>
         ) : null}
-        {failed && positions === null ? <p className="ops-line">השרת לא החזיר את ספר Alpaca.</p> : null}
+        {failed && !ready ? <p className="ops-line">{copy.positions.brokerDown}</p> : null}
 
-        {active === "live" && positions === null ? (
+        {active === "live" && !ready ? (
           <div className="live-grid" aria-busy="true" aria-label="טוען פוזיציות">
             <article className="live-card live-skeleton" />
             <article className="live-card live-skeleton" />
           </div>
         ) : null}
-        {active === "live" && positions !== null ? <div className="live-grid">
+        {active === "live" && ready ? <div className="live-grid">
           {items.map((item) => (
             <Card
               key={item.symbol}
@@ -338,6 +344,7 @@ export default function PositionsPage() {
               trade={tradeOf(item.symbol)}
               now={now}
               sessionClose={sessionClose}
+              points={live.series[item.symbol || ""] || []}
               onOpen={() => setPicked({ position: item, trade: tradeOf(item.symbol) })}
             />
           ))}
@@ -372,7 +379,7 @@ function Stat({ label, value, sub, className = "" }: { label: string; value: str
   );
 }
 
-function Card({ position, trade, now, sessionClose, onOpen }: { position: BrokerPosition; trade: OpenTrade | null; now: number; sessionClose: number | null; onOpen: () => void }) {
+function Card({ position, trade, now, sessionClose, points, onOpen }: { position: BrokerPosition; trade: OpenTrade | null; now: number; sessionClose: number | null; points: number[]; onOpen: () => void }) {
   const levels = trade?.levels?.available ? trade.levels : null;
   const pnl = num(position.unrealized_pl);
   const pct = num(position.unrealized_plpc);
@@ -384,8 +391,9 @@ function Card({ position, trade, now, sessionClose, onOpen }: { position: Broker
   const closeExit = sessionClose !== null && levels?.close_exit_minutes != null ? sessionClose - levels.close_exit_minutes * 60000 : null;
   const room = current !== null && active !== null && current > 0 ? ((current - active) / current) * 100 : null;
   const atExit = num(levels?.pnl_at_active_exit);
+  const flash = useTick(position.current_price);
   return (
-    <article className={`live-card ${stage.toLowerCase()}`}>
+    <article className={`live-card ${stage.toLowerCase()} ${flash === "up" ? "fu" : flash === "down" ? "fd" : ""} ${stage === "TRAILING" ? "row-event" : ""}`}>
       <header>
         <div>
           <h2 className="num">{position.underlying} {position.right} {position.strike}</h2>
@@ -398,16 +406,17 @@ function Card({ position, trade, now, sessionClose, onOpen }: { position: Broker
       </header>
 
       <div className="live-pnl">
-        <b className={`num ${tone(pnl)}`}>{signedMoney(pnl)}</b>
-        <span className={`num ${tone(pct)}`}>{pct === null ? "—" : signedPct(pct * 100)}</span>
-        <em>הושקע {money(num(position.cost_basis) ?? 0)}</em>
+        <Num className={tone(pnl)}>{signedMoney(pnl)}</Num>
+        <Sparkline points={points} up={(pnl ?? 0) >= 0} />
+        <span><Num className={tone(pct)}>{pct === null ? "—" : signedPct(pct * 100)}</Num></span>
+        <em>{copy.positions.premium} <Num>{money(num(position.cost_basis) ?? 0)}</Num></em>
       </div>
 
       {levels ? <Ladder levels={levels} current={current} /> : <p className="live-note">אין עדיין רמות יציאה לחוזה הזה.</p>}
 
       <dl className="live-facts">
-        <div><dt>כניסה</dt><dd className="num">{px(position.avg_entry_price)}</dd></div>
-        <div><dt>עכשיו</dt><dd className="num">{px(position.current_price)}</dd></div>
+        <div><dt>{copy.positions.entry}</dt><dd><Num>{px(position.avg_entry_price)}</Num></dd></div>
+        <div><dt>{copy.positions.mark}</dt><dd><Num className={flash === "up" ? "tick fu" : flash === "down" ? "tick fd" : ""}>{px(position.current_price)}</Num></dd></div>
         <div><dt>שיא</dt><dd className="num">{px(levels?.peak)}</dd></div>
         <div>
           <dt>יציאה תופעל ב-</dt>

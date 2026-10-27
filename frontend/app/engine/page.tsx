@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { apiGet, poll } from "@/lib/api";
+import { copy } from "@/lib/copy";
 
 type Desk = {
   autonomous: boolean;
@@ -154,15 +155,15 @@ export default function EnginePage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>המערכת האוטונומית</h1>
-            <p>Autonomous Engine · PAPER</p>
+            <h1>{copy.screens.engine}</h1>
+            <p title="ביצוע Paper אינו משחזר השפעת שוק, מיקום בתור או slippage">{copy.screens.engineHint}</p>
           </div>
           <span className={`ops-pip ${desk ? (desk.autonomous ? "on" : "off") : "warn"}`}>
             <i />
             {desk ? (desk.autonomous ? "המנוע פועם" : "המנוע לא פעיל") : "אין נתונים"}
           </span>
         </header>
-        <p className="ops-line">ביצוע Paper אינו משחזר השפעת שוק, מיקום בתור, דליפת מידע או slippage של לייב. רווח Paper אינו ראיה לרווח בלייב.</p>
+        <p className="ops-line" title="ביצוע Paper אינו משחזר השפעת שוק, מיקום בתור, דליפת מידע או slippage. רווח Paper אינו ראיה לרווח בחשבון אמיתי">{copy.screens.engineHint}</p>
 
         <div className="plain-list" aria-label="מוני סריקה">
           {counts.map(([label, value]) => (

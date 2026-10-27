@@ -22,7 +22,7 @@ body {
     radial-gradient(720px 320px at 100% 0%, rgba(231, 201, 138, 0.08), transparent 58%),
     var(--bg);
   color: var(--text);
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 500;
 }
 
@@ -458,7 +458,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 .halt-btn:disabled { opacity: 0.6; }
 
 .clock {
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.05em;
@@ -671,7 +671,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   display: block;
   margin-top: 8px;
   color: #fffaf2;
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-size: 22px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -722,7 +722,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 }
 
 .num {
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   direction: ltr;
@@ -2185,7 +2185,7 @@ button.engine-cube { cursor: pointer; }
     display: block;
     margin-bottom: 2px;
     color: var(--muted);
-    font-family: var(--font-rubik), Arial, sans-serif;
+    font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
     font-size: 11px;
     font-weight: 700;
     direction: rtl;

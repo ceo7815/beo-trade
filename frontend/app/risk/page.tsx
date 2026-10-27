@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { FloorMark } from "@/components/FloorMark";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet, poll } from "@/lib/api";
 
 type Risk = {
@@ -245,7 +246,7 @@ export default function RiskPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>בקרת סיכון</h1>
+            <h1>{copy.screens.risk}</h1>
             <p>Risk Control · PAPER</p>
           </div>
           <span className={`ops-pip ${tone}`}>
@@ -289,7 +290,7 @@ export default function RiskPage() {
               <dt>נכס אחד</dt><dd>{policy?.max_positions_per_underlying === 1 ? "פוזיציה אחת" : "אין נתונים"}</dd>
               <dt>אזהרת הפסד</dt><dd className="num">{policy ? `${pct(policy.daily_warning_pct)}-` : "אין נתונים"}</dd>
               <dt>עצירת כניסות</dt><dd className="num">{policy ? `${pct(policy.daily_entry_stop_pct)}-` : "אין נתונים"}</dd>
-              <dt>עצירה יומית</dt><dd className="num">{policy ? `${pct(policy.daily_hard_stop_pct)}-` : "אין נתונים"}</dd>
+              <dt>{copy.riskLabels.hardStop}</dt><dd className="num">{policy ? `${pct(policy.daily_hard_stop_pct)}-` : "אין נתונים"}</dd>
             </dl>
           </article>
           <article>
@@ -297,10 +298,10 @@ export default function RiskPage() {
             <dl>
               <dt>Stop ראשוני</dt><dd>−1R · ברירת מחדל {pct(policy?.initial_stop_decline_pct)} מהפרמיה</dd>
               <dt>ב-+1R</dt><dd>{policy ? "מצב הגנה" : "אין נתונים"}</dd>
-              <dt>Stop מוגן</dt><dd className="num">{policy ? `−${policy.protective_stop_r}R` : "אין נתונים"}</dd>
-              <dt>ב-+30%</dt><dd>{policy ? "Trailing פעיל" : "אין נתונים"}</dd>
+              <dt>{copy.riskLabels.protected}</dt><dd className="num">{policy ? `−${policy.protective_stop_r}R` : "אין נתונים"}</dd>
+              <dt>ב־30%</dt><dd>{policy ? copy.riskLabels.trailOn : "אין נתונים"}</dd>
               <dt>ב-+2R</dt><dd>{policy ? "Winner Run" : "אין נתונים"}</dd>
-              <dt>Trailing</dt><dd className="num">{policy ? `${pct(policy.trailing_pct)} מהשיא` : "אין נתונים"}</dd>
+              <dt>{copy.riskLabels.trail}</dt><dd className="num">{policy ? `${pct(policy.trailing_pct)} מהשיא` : "אין נתונים"}</dd>
               <dt>0DTE</dt><dd className="num">{policy ? `עד ${policy.holding_minutes_0dte} דקות` : "אין נתונים"}</dd>
               <dt>1DTE</dt><dd className="num">{policy ? `עד ${policy.holding_minutes_1dte} דקות` : "אין נתונים"}</dd>
               <dt>סגירת סשן</dt><dd>לפני סיום המסחר</dd>
@@ -321,7 +322,7 @@ export default function RiskPage() {
                 <dt>כמות לפי הון</dt><dd className="num">{trace.by_capital ?? "אין נתונים"}</dd>
                 <dt>כמות לפי חשיפה</dt><dd className="num">{trace.by_exposure ?? "אין נתונים"}</dd>
                 <dt>כמות לפי סקטור</dt><dd className="num">{trace.by_sector ?? "אין נתונים"}</dd>
-                <dt>כמות לפי Buying Power</dt><dd className="num">{trace.by_buying_power ?? "אין נתונים"}</dd>
+                <dt>כמות לפי {copy.riskLabels.buyingPower}</dt><dd className="num">{trace.by_buying_power ?? "אין נתונים"}</dd>
                 <dt>כמות סופית</dt><dd className="num">{trace.quantity ?? "אין נתונים"}</dd>
                 <dt>הסיבה שהגבילה</dt><dd>{trace.limiter || "אין נתונים"}</dd>
               </dl>
@@ -332,10 +333,10 @@ export default function RiskPage() {
             {closed && closed.length > 0 ? closed.slice(0, 8).map((row) => (
               <dl key={`${row.symbol}-${row.closed_at}`}>
                 <dt>סיבת יציאה</dt><dd>{row.exit_reason || "אין נתונים"}</dd>
-                <dt>Entry</dt><dd className="num">{row.entry_price || "אין נתונים"}</dd>
-                <dt>Exit</dt><dd className="num">{row.exit_price || "אין נתונים"}</dd>
-                <dt>P&L</dt><dd className="num">{row.pnl || "אין נתונים"}</dd>
-                <dt>P&L %</dt><dd className="num">{row.return_pct || "אין נתונים"}</dd>
+                <dt>{copy.riskLabels.entry}</dt><dd className="num">{row.entry_price || "אין נתונים"}</dd>
+                <dt>{copy.riskLabels.exit}</dt><dd className="num">{row.exit_price || "אין נתונים"}</dd>
+                <dt>{copy.riskLabels.pnl}</dt><dd className="num">{row.pnl || "אין נתונים"}</dd>
+                <dt>{copy.riskLabels.pnl} %</dt><dd className="num">{row.return_pct || "אין נתונים"}</dd>
               </dl>
             )) : <p>אין עדיין עסקה</p>}
           </article>

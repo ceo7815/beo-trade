@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Desk = {
@@ -95,7 +96,7 @@ export default function ScannerPage() {
 
   return (
     <Shell>
-      <Board title="מודיעין שוק" hint="Market Intelligence · PAPER" pip={scan ? "יש סריקה" : desk ? "ממתין" : "טוען"} cubes={cubes} open={open} setOpen={setOpen} />
+      <Board title={copy.screens.scanner} hint={copy.screens.engineHint} pip={scan ? "יש סריקה" : desk ? copy.common.waiting : copy.common.loading} cubes={cubes} open={open} setOpen={setOpen} />
     </Shell>
   );
 }
