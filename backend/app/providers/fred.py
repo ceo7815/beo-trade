@@ -16,6 +16,8 @@ SERIES_URL = "https://api.stlouisfed.org/fred/series"
 EXCHANGE = ZoneInfo("America/New_York")
 CACHE_OK = timedelta(hours=6)
 CACHE_MISS = timedelta(seconds=60)
+# A black-holed connect fails in a few seconds. An idle read cannot wait forever.
+REQUEST_TIMEOUT = httpx.Timeout(20.0, connect=5.0)
 
 
 class FredError(ProviderUnavailable):
@@ -138,7 +140,7 @@ class FredFeed:
 
     def _get(self, url: str, params: dict) -> dict:
         try:
-            with httpx.Client(transport=self.transport, timeout=20) as client:
+            with httpx.Client(transport=self.transport, timeout=REQUEST_TIMEOUT) as client:
                 response = client.get(url, params={"api_key": self._key, "file_type": "json", **params})
         except httpx.HTTPError as exc:
             raise FredError(scrub(str(exc), [self._key])) from exc

@@ -21,6 +21,8 @@ MAX_PER_SECOND = 10
 RETRY_CAP_SECONDS = 5
 FILING_LIMIT = 5
 FACT_UNITS = ("USD", "USD/shares", "shares", "pure")
+# A black-holed connect fails in a few seconds. An idle read cannot wait forever.
+REQUEST_TIMEOUT = httpx.Timeout(30.0, connect=5.0)
 
 
 class SecError(ProviderUnavailable):
@@ -183,7 +185,7 @@ class SecFeed:
         cik = self._cik(symbol)
         submissions_url = SUBMISSIONS_URL.format(cik=cik)
         facts_url = FACTS_URL.format(cik=cik)
-        with _HTTP_CLIENT(transport=self.transport, timeout=30, follow_redirects=True) as client:
+        with _HTTP_CLIENT(transport=self.transport, timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
             submissions_response = self._get(client, submissions_url)
             submissions = _json_object(submissions_response)
             _state.submissions_status = submissions_response.status_code
@@ -211,7 +213,7 @@ class SecFeed:
     def _cik(self, symbol: str) -> str:
         global _tickers
         if _tickers is None:
-            with _HTTP_CLIENT(transport=self.transport, timeout=30, follow_redirects=True) as client:
+            with _HTTP_CLIENT(transport=self.transport, timeout=REQUEST_TIMEOUT, follow_redirects=True) as client:
                 payload = _json_object(self._get(client, TICKERS_URL))
             mapped: dict[str, str] = {}
             for row in payload.values():
