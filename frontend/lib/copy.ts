@@ -153,6 +153,7 @@ export const copy = {
     system: "המערכת",
     closed: "סגור",
     open: "פתוח",
+    account: "חשבון",
     equity: "הון",
     cash: "מזומן",
     atRisk: "בסיכון",
@@ -183,6 +184,8 @@ export const copy = {
     tripped: "עצירת הפסד יומית",
     trippedDetail: "כניסות חסומות · פוזיציות פתוחות יוצאות",
     gauge: "בלם יומי",
+    brake: "בלם",
+    distance: "מרחק עד הבלם",
   },
   positions: {
     title: "פוזיציות פתוחות",

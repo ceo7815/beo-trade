@@ -2220,10 +2220,10 @@ button.engine-cube { cursor: pointer; }
 .desk-home {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  width: min(1120px, 100%);
+  gap: 12px;
+  width: 100%;
   margin-inline: auto;
-  padding: 8px 8px 28px;
+  padding: 2px 0 24px;
 }
 
 .desk-home .up, .live .up, .book .up { color: var(--up); }
@@ -2327,10 +2327,11 @@ button.engine-cube { cursor: pointer; }
 .desk-stat b { font-size: 18px; font-weight: 800; }
 
 .desk-home .ops-pane {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)), rgba(14, 16, 19, 0.78);
+  box-shadow: var(--shadow-float);
+  padding: 12px 14px 14px;
 }
 
 .desk-home .ops-pane-head h2 { font-size: 15px; letter-spacing: 0.04em; }

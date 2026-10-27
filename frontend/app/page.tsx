@@ -51,7 +51,17 @@ type FlowTrade = {
   held_minutes?: number | null;
   story?: Story | null;
   plan?: { planned_risk?: string | null } | null;
-  levels?: { pnl_at_active_exit?: string | null } | null;
+  levels?: {
+    available?: boolean;
+    pnl_at_active_exit?: string | null;
+    dte?: number | null;
+    stop?: string | null;
+    entry?: string | null;
+    current?: string | null;
+    trail_on?: string | null;
+    active_exit?: string | null;
+    stage?: string | null;
+  } | null;
 };
 
 type DaySummary = {
@@ -230,7 +240,7 @@ function Board() {
   const dayPnl = num(live.snap?.day?.pnl) ?? num(risk?.today_pnl);
   const markPnl = num(live.snap?.day?.mark_pnl);
   const heroPnl = markPnl ?? dayPnl;
-  const kill = num(live.snap?.day?.daily_kill_loss_usd) ?? num(risk?.daily_kill_loss_usd);
+  const kill = num(live.snap?.day?.daily_kill_loss_usd) ?? num(risk?.daily_kill_loss_usd) ?? num(status?.daily_kill_loss_usd);
   const scan = desk?.last_scan ?? null;
   const exposure = exposureOf(viewPositions);
   const stake = stakeOf(today?.open, viewPositions);
@@ -243,178 +253,172 @@ function Board() {
   const lastDay = days?.[0] ?? null;
   const showLast = closed && (dayPnl === null || dayPnl === 0) && lastDay !== null;
 
+  const equityUp = (num(viewAccount?.equity) ?? 0) >= (num(viewAccount?.last_equity) ?? num(viewAccount?.equity) ?? 0);
+  const shownPnl = showLast && lastDay ? lastDay.pnl : heroPnl;
+
   return (
     <section className="desk-home">
       <KillBanner pnl={heroPnl} kill={kill} state={lossState} />
-      <header className="desk-hero">
-        <div className="desk-hero-top">
-          <span>{phase}</span>
-          <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
-        </div>
-        <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
-        <div className="desk-hero-main">
-          <Odometer value={showLast && lastDay ? lastDay.pnl : heroPnl} />
-          {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
-        </div>
-        <Gauge pnl={showLast && lastDay ? lastDay.pnl : heroPnl} kill={kill} />
-        <p className="desk-hero-note" title={narrative.detail}>{showLast ? copy.dashboard.closedNote : narrative.short}</p>
-      </header>
-
-      <div className="ops-stage">
-          <section className="ops-pane stage">
-            <header className="ops-pane-head">
-              <h2>{copy.dashboard.positions}</h2>
-              <span>{viewPositions === null ? copy.common.loading : copy.dashboard.openCount(viewPositions.length)}</span>
-            </header>
-            <div className="desk-blotter blot">
-              <AnimatePresence initial={false}>
-              {viewPositions && viewPositions.length > 0 ? viewPositions.map((item, index) => (
-                <PosRow
-                  key={item.symbol}
-                  item={item}
-                  index={index}
-                  reduce={reduce}
-                  points={live.series[item.symbol] || []}
-                  onOpen={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}
-                />
-              )) : (
-                <p className="desk-empty">{viewPositions === null ? copy.common.loading : copy.dashboard.emptyPositions}</p>
-              )}
-              </AnimatePresence>
-            </div>
-          </section>
+      <div className="desk-top">
+        <article className="ops-pane account-card">
+          <header className="ops-pane-head">
+            <h2>{copy.dashboard.account}</h2>
+            <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
+          </header>
+          <div className="acct-pair">
+            <ResultStat label={copy.dashboard.closed} book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? copy.common.loading : copy.dashboard.emptyFlow} />
+            <ResultStat label={copy.dashboard.open} book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? copy.common.loading : copy.dashboard.emptyPositions} />
+          </div>
+          <div className="acct-equity">
+            <span>{copy.dashboard.equity}</span>
+            <Num>{money(viewAccount?.equity)}</Num>
+            <Sparkline points={live.series.eq || []} up={equityUp} />
+          </div>
+          <div className="acct-pair">
+            <Stat label={copy.dashboard.cash} value={money(viewAccount?.cash)} />
+            <Stat label={copy.dashboard.atRisk} value={stake === null ? "—" : money(stake.dollars)} />
+          </div>
+        </article>
+        <article className="ops-pane desk-hero">
+          <div className="desk-hero-top">
+            <span>{phase}</span>
+            <span>{showLast ? copy.dashboard.closedNote : narrative.short}</span>
+          </div>
+          <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
+          <div className="desk-hero-main">
+            <Odometer value={shownPnl} />
+            {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
+          </div>
+          <Gauge pnl={shownPnl} kill={kill} />
+        </article>
       </div>
 
-      <section className="desk-days">
+      <section className="ops-pane">
         <header className="ops-pane-head">
-          <h2>{copy.dashboard.days}</h2>
-          <a href="/history">{copy.dashboard.allTrades}</a>
+          <h2>{copy.dashboard.positions}</h2>
+          <span>{viewPositions === null ? copy.common.loading : copy.dashboard.openCount(viewPositions.length)}</span>
         </header>
-        <div className="desk-day-row">
-          {days === null ? <p className="desk-empty">{copy.common.loading}</p> : days.length === 0 ? <p className="desk-empty">{copy.dashboard.emptyDays}</p> : days.map((group) => (
-            <a key={group.day} className="desk-day" href="/history">
-              <span>{dayTitle(group.day)}</span>
-              <Num className={tone(group.pnl)}>{signedMoney(group.pnl)}</Num>
-              <small><Num className={tone(group.pnl)}>{group.pct === null ? "—" : signedPct(group.pct, 1)}</Num></small>
-              <small>{copy.dashboard.winsOf(group.wins, group.trades)}</small>
-            </a>
-          ))}
+        {viewPositions && viewPositions.length > 0 ? <div className="pos-head" aria-hidden="true"><span>שם</span><span>DTE</span><span>חוזים</span><span>כניסה → עכשיו</span><span /><span>סטופ</span><span>רווח/הפסד</span></div> : null}
+        <div className="desk-blotter blot">
+          <AnimatePresence initial={false}>
+          {viewPositions && viewPositions.length > 0 ? viewPositions.map((item, index) => (
+            <PosRow
+              key={item.symbol}
+              item={item}
+              trade={openTrade(today, item.symbol)}
+              index={index}
+              reduce={reduce}
+              points={live.series[item.symbol] || []}
+              onOpen={() => setPicked(openTrade(today, item.symbol) ?? fromPosition(item))}
+            />
+          )) : (
+            <p className="desk-empty">{viewPositions === null ? copy.common.loading : copy.dashboard.emptyPositions}</p>
+          )}
+          </AnimatePresence>
         </div>
       </section>
 
-      <details className="desk-system">
-        <summary>{copy.dashboard.system}</summary>
-      <div className="desk-stats">
-        <ResultStat label={copy.dashboard.closed} book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? copy.common.loading : copy.dashboard.emptyFlow} />
-        <ResultStat label={copy.dashboard.open} book={dayBook(today?.summary?.unrealized_pnl, today?.summary?.open_invested)} empty={today === null ? copy.common.loading : copy.dashboard.emptyPositions} />
-        <Stat label={copy.dashboard.equity} value={money(viewAccount?.equity)} />
-        <Stat label={copy.dashboard.cash} value={money(viewAccount?.cash)} />
-        <Stat label={copy.dashboard.atRisk} value={stake === null ? "—" : money(stake.dollars)} />
+      <div className="desk-split">
+        <section className="ops-pane">
+          <header className="ops-pane-head">
+            <h2>{copy.dashboard.flow}</h2>
+            <span>{todayLine(today)}</span>
+          </header>
+          <div className="ops-scroll">
+            {flowOf(today, scan).length === 0 ? (
+              <div className="ops-feed"><span>{today === null ? copy.common.loading : copy.dashboard.emptyFlow}</span></div>
+            ) : flowOf(today, scan).map((event, index) => (
+              <div
+                className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
+                key={`${event.at}-${event.kind}-${index}`}
+                title={event.trade ? narrative.detail : undefined}
+                onClick={() => event.trade && setPicked(event.trade)}
+              >
+                <b className="num ops-flow-time">{clock(event.at)}</b>
+                <i>{event.kind === "entry" ? copy.dashboard.entry : event.kind === "exit" ? copy.dashboard.exit : copy.dashboard.blocked}</i>
+                <span className="ops-flow-copy">
+                  <bdi dir="ltr">{event.title}</bdi>
+                  {event.lines.map((line) => <em key={line}>{line}</em>)}
+                </span>
+                {event.kind === "exit" && event.trade ? (
+                  <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
+                ) : event.kind === "entry" && event.trade ? (
+                  <b className="num ops-flow-money">{money(event.trade.invested)}</b>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        </section>
+        <section className="ops-pane desk-days">
+          <header className="ops-pane-head">
+            <h2>{copy.dashboard.days}</h2>
+            <a href="/history">{copy.dashboard.allTrades}</a>
+          </header>
+          <div className="desk-day-row">
+            {days === null ? <p className="desk-empty">{copy.common.loading}</p> : days.length === 0 ? <p className="desk-empty">{copy.dashboard.emptyDays}</p> : days.map((group) => (
+              <a key={group.day} className="desk-day" href="/history">
+                <span>{dayTitle(group.day)}</span>
+                <Num className={tone(group.pnl)}>{signedMoney(group.pnl)}</Num>
+                <small><Num className={tone(group.pnl)}>{group.pct === null ? "—" : signedPct(group.pct, 1)}</Num></small>
+                <small>{copy.dashboard.winsOf(group.wins, group.trades)}</small>
+              </a>
+            ))}
+          </div>
+        </section>
       </div>
+
       <div className="ops-meters">
         <Meter label={copy.dashboard.dailyLoss} used={risk?.daily_loss_used} limit={kill == null ? risk?.daily_loss_limit : String(kill)} />
         <Meter label={copy.dashboard.exposure} used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
         <Meter label={copy.dashboard.positionMeter} used={risk?.open_positions == null ? null : String(risk.open_positions)} limit={risk ? String(risk.max_positions) : null} plain />
       </div>
-      <section className="ops-pane stage">
-        <header className="ops-pane-head">
-          <h2>זרם פעילות היום</h2>
-          <span>{todayLine(today)}</span>
-        </header>
-        <div className="ops-scroll">
-          {flowOf(today, scan).length === 0 ? (
-            <div className="ops-feed"><span>{today === null ? "טוען" : "עוד לא היו היום כניסות או יציאות"}</span></div>
-          ) : flowOf(today, scan).map((event, index) => (
-            <div
-              className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
-              key={`${event.at}-${event.kind}-${index}`}
-              title={event.trade ? "לחץ להסבר על העסקה" : undefined}
-              onClick={() => event.trade && setPicked(event.trade)}
-            >
-              <b className="num ops-flow-time">{clock(event.at)}</b>
-              <i>{event.kind === "entry" ? "כניסה" : event.kind === "exit" ? "יציאה" : "נחסם"}</i>
-              <span className="ops-flow-copy">
-                <bdi dir="ltr">{event.title}</bdi>
-                {event.lines.map((line) => <em key={line}>{line}</em>)}
-              </span>
-              {event.kind === "exit" && event.trade ? (
-                <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
-              ) : event.kind === "entry" && event.trade ? (
-                <b className="num ops-flow-money">{money(event.trade.invested)}</b>
-              ) : null}
-            </div>
-          ))}
-        </div>
-      </section>
-      <div className="ops-below">
-          <section className="ops-pane">
-            <div className="pipe-head">
+
+      <div className="desk-trio">
+        <section className="ops-pane">
+          <div className="pipe-head">
             <h2>{copy.dashboard.pipeline}</h2>
             <Radar names={live.snap?.scan?.names || []} active={Boolean(desk?.scan_progress && desk.scan_progress.stage_done !== "done")} />
           </div>
-            <div className="ops-rail">
-              <Node label="סריקה אחרונה" value={scanNode(scan, closed)} />
-              <Node label="משך סריקה" value={durationOf(scan)} />
-              <Node label="סריקה רצה" value={runningOf(desk?.scan_progress ?? null)} />
-              <Node label="AI" value={aiNode(scan, closed)} />
-              <Node label="החלטות" value={scan ? String(scan.recommendations ?? 0) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="BUY" value={scan ? String(scan.buys ?? 0) : closed ? "ממתין" : "אין נתונים"} />
-              <Node label="נשלחו לברוקר" value={scan?.stages?.orders != null ? String(scan.stages.orders) : closed ? "ממתין" : "—"} />
-              <Node label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
+          <div className="ops-rail">
+            <Node label="סריקה אחרונה" value={scanNode(scan, closed)} />
+            <Node label="משך סריקה" value={durationOf(scan)} />
+            <Node label="סריקה רצה" value={runningOf(desk?.scan_progress ?? null)} />
+            <Node label="AI" value={aiNode(scan, closed)} />
+            <Node label="החלטות" value={scan ? String(scan.recommendations ?? 0) : closed ? "ממתין" : "אין נתונים"} />
+            <Node label="BUY" value={scan ? String(scan.buys ?? 0) : closed ? "ממתין" : "אין נתונים"} />
+            <Node label="נשלחו לברוקר" value={scan?.stages?.orders != null ? String(scan.stages.orders) : closed ? "ממתין" : "—"} />
+            <Node label="פקודות פתוחות" value={orders === null ? "אין נתונים" : String(orders.length)} />
+          </div>
+        </section>
+        <section className="ops-pane">
+          <h2>{copy.dashboard.feeds}</h2>
+          <Feed label="שוק" row={feedOf(status?.market_status, status?.providers.market, status?.market_status?.quote_count ?? 0)} />
+          <Feed label="אופציות" row={feedOf(status?.options_status, status?.providers.options, status?.options_status?.option_count ?? status?.options_status?.quote_count ?? 0)} />
+          <Feed label="חדשות" row={newsOf(status)} />
+          <Feed label="FRED" row={macroOf(status)} />
+          <Feed label="SEC" row={secOf(status)} />
+          <Feed label="AI" row={aiOf(status)} />
+        </section>
+        <section className="ops-pane">
+          <h2>סיכון · {risk?.state || "אין נתונים"}</h2>
+          <div className="ops-feed"><span>הון לעסקה</span><b className="num">{money(risk?.per_trade_limit)}</b></div>
+          <div className="ops-feed"><span>מגבלה יומית</span><b className="num">{money(risk?.daily_loss_limit)}</b></div>
+          <div className="ops-feed"><span>בלם</span><b className="num">{kill === null ? "—" : money(kill)}</b></div>
+          <div className="ops-feed"><span>פתיחה</span><b className="num">{clock(status?.session_open)}</b></div>
+          <div className="ops-feed"><span>סגירה</span><b className="num">{clock(status?.session_close)}</b></div>
+          <div className="ops-feed"><span>עלות AI היום</span><b className="num">{status ? money(status.ai_day_usd) : "אין נתונים"}</b></div>
+          <div className="ops-feed"><span>מההתחלה</span><b className={`num ${tone(totals ? Number(totals.total_pnl) : null)}`}>{totals ? money(totals.total_pnl) : "אין נתונים"}</b></div>
+          {(status?.alerts || []).slice(0, 2).map((item) => (
+            <div className="ops-feed" key={item}><span>{item}</span></div>
+          ))}
+          {(audit || []).slice(0, 2).map((item, index) => (
+            <div className="ops-feed" key={`${item.created_at}-${index}`}>
+              <span className="num">{item.state}</span>
+              <b className="num">{clock(item.created_at)}</b>
             </div>
-          </section>
-          <section className="ops-pane">
-            <h2>לוח מצב</h2>
-            <div className="ops-matrix">
-              <Cell label="פתיחת סשן" value={clock(status?.session_open)} />
-              <Cell label="סגירת סשן" value={clock(status?.session_close)} />
-              <Cell label="מסד" value={status?.database === "ok" ? "פעיל" : status ? "אין חיבור" : "אין נתונים"} />
-              <Cell label="מודל" value={status?.ai_model || "אין נתונים"} />
-              <Cell label="הון לעסקה" value={money(risk?.per_trade_limit)} />
-              <Cell label="תקרת הפסד" value={money(risk?.daily_loss_limit)} />
-              <Cell label="תקרת חשיפה" value={money(risk?.exposure_limit)} />
-              <Cell label="רווח/הפסד מההתחלה" value={totals ? money(totals.total_pnl) : "אין נתונים"} className={tone(totals ? Number(totals.total_pnl) : null)} />
-              <Cell label="תשואה על הכסף שהושקע" value={totals ? share(totals.total_return_pct) : "אין נתונים"} className={tone(totals?.total_return_pct ? Number(totals.total_return_pct) : null)} />
-              <Cell label="עלות AI מההתחלה" value={totals?.ai_cost != null ? money(totals.ai_cost) : "אין נתונים"} />
-              <Cell label="נטו אחרי AI" value={totals?.net_after_ai != null ? money(totals.net_after_ai) : "אין נתונים"} className={tone(totals?.net_after_ai ? Number(totals.net_after_ai) : null)} />
-            </div>
-          </section>
-          <section className="ops-pane">
-            <h2>ערוצי נתונים</h2>
-            <Feed label="שוק" row={feedOf(status?.market_status, status?.providers.market, status?.market_status?.quote_count ?? 0)} />
-            <Feed label="אופציות" row={feedOf(status?.options_status, status?.providers.options, status?.options_status?.option_count ?? status?.options_status?.quote_count ?? 0)} />
-            <Feed label="חדשות" row={newsOf(status)} />
-            <Feed label="FRED" row={macroOf(status)} />
-            <Feed label="SEC" row={secOf(status)} />
-            <Feed label="AI" row={aiOf(status)} />
-          </section>
-
-          <section className="ops-pane">
-            <h2>סיכון · {risk?.state || "אין נתונים"}</h2>
-            <div className="ops-feed"><span>הון לעסקה</span><b className="num">{money(risk?.per_trade_limit)}</b></div>
-            <div className="ops-feed"><span>מגבלה יומית</span><b className="num">{money(risk?.daily_loss_limit)}</b></div>
-            <div className="ops-feed"><span>עלות AI היום</span><b className="num">{status ? `$${status.ai_day_usd}` : "אין נתונים"}</b></div>
-            <div className="ops-feed"><span>עלות AI החודש</span><b className="num">{status ? `$${status.ai_month_usd}` : "אין נתונים"}</b></div>
-            <div className="ops-feed"><span>קריאות החודש</span><b className="num">{status ? String(status.ai_calls) : "אין נתונים"}</b></div>
-          </section>
-
-          <section className="ops-pane grow">
-            <h2>התראות וביקורת</h2>
-            <div className="ops-scroll">
-              {(status?.alerts || []).length === 0 ? <div className="ops-feed"><span>אין התראות פעילות</span></div> : status?.alerts.map((item) => (
-                <div className="ops-feed" key={item}><span>{item}</span></div>
-              ))}
-              {(audit || []).slice(0, 6).map((item, index) => (
-                <div className="ops-feed" key={`${item.created_at}-${index}`}>
-                  <span className="num">{item.state}</span>
-                  <b className="num">{clock(item.created_at)}</b>
-                </div>
-              ))}
-              {audit && audit.length === 0 ? <div className="ops-feed"><span>אין רשומות ביקורת</span></div> : null}
-            </div>
-          </section>
+          ))}
+        </section>
       </div>
-      </details>
       {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
     </section>
   );
@@ -464,16 +468,6 @@ function fromPosition(item: Position): FlowTrade {
   };
 }
 
-function Cell({ label, hint, value, detail, className = "" }: { label: string; hint?: string; value: string; detail?: string; className?: string }) {
-  return (
-    <div className="ops-cell">
-      <span>{label}{hint ? <em> {hint}</em> : null}</span>
-      <b className={className}>{value}</b>
-      {detail ? <small>{detail}</small> : null}
-    </div>
-  );
-}
-
 function Stat({ label, value, className = "" }: { label: string; value: string; className?: string }) {
   return (
     <div className="desk-stat">
@@ -515,11 +509,6 @@ function recentDays(rows: ClosedLite[] | null) {
     .sort((a, b) => (a.day < b.day ? 1 : -1))
     .slice(0, 8)
     .map((group) => ({ ...group, pct: group.invested > 0 ? (group.pnl / group.invested) * 100 : null }));
-}
-
-function ResultCell({ label, book, empty }: { label: string; book: DayBook | null; empty: string }) {
-  if (book === null) return <Cell label={label} value={empty} />;
-  return <Cell label={label} value={signedMoney(book.profit)} detail={`${share(book.pct)} על ${money(book.invested)}`} className={tone(book.profit)} />;
 }
 
 function dayBook(pnl: string | null | undefined, invested: string | null | undefined): DayBook | null {
@@ -751,29 +740,57 @@ function narrativeOf(desk: Desk | null, scan: Desk["last_scan"], closed: boolean
   return { short: copy.dashboard.engineOn, detail: copy.dashboard.engineOn };
 }
 
-function PosRow({ item, index, reduce, points, onOpen }: { item: Position; index: number; reduce: boolean | null; points: number[]; onOpen: () => void }) {
+function PosRow({ item, trade, index, reduce, points, onOpen }: { item: Position; trade: FlowTrade | null; index: number; reduce: boolean | null; points: number[]; onOpen: () => void }) {
   const flash = useTick(item.current_price);
   const pnl = item.unrealized_pl ? Number(item.unrealized_pl) : null;
+  const dte = trade?.levels?.dte;
+  const side = item.right === "CALL" || item.right === "PUT" ? item.right : "";
   return (
     <motion.button
       layout={!reduce}
       type="button"
-      className={`desk-pos row ${flash === "up" ? "fu" : flash === "down" ? "fd" : ""}`}
+      className={`pos-row row ${flash === "up" ? "fu" : flash === "down" ? "fd" : ""}`}
       onClick={onOpen}
       initial={reduce ? false : { opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       exit={reduce ? undefined : { opacity: 0, x: -40 }}
       transition={{ duration: reduce ? 0 : 0.22, delay: reduce ? 0 : index * 0.04 }}
     >
-      <b>{item.underlying || "—"} <small className="tag">{item.right || ""}</small></b>
-      <span>{contracts(item.qty)}</span>
-      <Num>{price(item.avg_entry_price)} → {price(item.current_price)}</Num>
+      <b className="pos-name">{item.underlying || "—"}{side ? <small className={`chip ${side === "CALL" ? "call" : "put"}`}>{side}</small> : null}</b>
+      <span className="pos-meta">
+        <span className="pos-dte">{dte === null || dte === undefined ? "—" : `${dte}DTE`}</span>
+        <span className="pos-qty">{contracts(item.qty)}</span>
+      </span>
+      <Num className="pos-px">{price(item.avg_entry_price)} → {price(item.current_price)}</Num>
       <Sparkline points={points} up={(pnl ?? 0) >= 0} />
-      <strong>
-        <Num className={tone(pnl)}>{item.current_price ? money(item.unrealized_pl) : "—"}</Num>
+      <MiniLadder levels={trade?.levels} />
+      <strong className="pos-pnl">
+        <Num className={tone(pnl)}>{item.current_price ? (pnl === null ? "—" : signedMoney(pnl)) : "—"}</Num>
         <small><Num className={tone(pnl)}>{item.current_price && item.unrealized_plpc ? share(Number(item.unrealized_plpc) * 100) : ""}</Num></small>
       </strong>
     </motion.button>
+  );
+}
+
+function MiniLadder({ levels }: { levels: FlowTrade["levels"] }) {
+  const stop = num(levels?.stop);
+  const entry = num(levels?.entry);
+  const trail = num(levels?.trail_on);
+  const current = num(levels?.current);
+  if (stop === null && trail === null) return <span className="pos-miss">—</span>;
+  const marks = [stop, entry, current, trail].filter((value): value is number => value !== null);
+  const min = Math.min(...marks);
+  const max = Math.max(...marks);
+  const span = max - min || 1;
+  const at = (value: number) => `${((value - min) / span) * 100}%`;
+  return (
+    <span className="ladder" aria-hidden="true">
+      <i className="bar" />
+      {stop !== null ? <i className="mk stop" style={{ insetInlineStart: at(stop) }} /> : null}
+      {entry !== null ? <i className="mk entry" style={{ insetInlineStart: at(entry) }} /> : null}
+      {current !== null ? <i className="mk now" style={{ insetInlineStart: at(current) }} /> : null}
+      {trail !== null ? <i className="mk trail" style={{ insetInlineStart: at(trail) }} /> : null}
+    </span>
   );
 }
 

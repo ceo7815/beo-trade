@@ -69,6 +69,7 @@ export type SystemStatus = {
   alerts: string[];
   paper_only: boolean;
   trading_halted?: boolean;
+  daily_kill_loss_usd?: string | null;
 };
 
 export type BuyCard = {

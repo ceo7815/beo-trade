@@ -115,6 +115,9 @@ class TradingConfig:
     daily_warning_pct: float = 0.025
     daily_entry_stop_pct: float = 0.04
     daily_hard_stop_pct: float = 0.05
+    # Desk gauge and read payloads. 0 falls back to equity × daily_hard_stop_pct.
+    # Does not change daily_loss_state or any order.
+    daily_kill_loss_usd: float = 3500
     max_capital_per_trade_pct: float = 0.07
     max_total_open_exposure_pct: float = 0.35
     max_concurrent_positions: int = 10

@@ -408,6 +408,8 @@ def register(app: FastAPI, settings: Settings) -> None:
             warning = True
         if count is not None and count >= trading.max_concurrent_positions:
             warning = True
+        from app.analytics.kill_line import display_kill_usd
+
         if equity is None:
             state = "אין נתוני חשבון"
         elif counted is None:
@@ -431,7 +433,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "per_trade_limit": None if equity is None else str((equity * Decimal(str(trading.max_capital_per_trade_pct))).quantize(Decimal("0.01"))),
             "exposure_limit": None if equity is None else str((equity * Decimal(str(trading.max_total_open_exposure_pct))).quantize(Decimal("0.01"))),
             "daily_loss_limit": None if equity is None else str((equity * Decimal(str(trading.daily_entry_stop_pct))).quantize(Decimal("0.01"))),
-            "daily_kill_loss_usd": None if equity is None else str((equity * Decimal(str(trading.daily_hard_stop_pct))).quantize(Decimal("0.01"))),
+            "daily_kill_loss_usd": display_kill_usd(trading, equity),
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,

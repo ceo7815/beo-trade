@@ -134,6 +134,25 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
     assert snap["day"]["pnl"] == "-250.50"
     assert snap["day"]["pnl_source"] == "risk"
     assert snap["day"]["daily_kill_loss_usd"] == "3500.00"
+    # 70,000 × 5% is also 3,500. A different equity must still read the dollar line.
+    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "100000", "cash": "1000", "last_equity": "90000", "buying_power": "1000"})
+    live._mem["account"] = (0.0, None)
+    larger = live.build_snapshot(settings)
+    assert larger["day"]["mark_pnl"] == "10000.00"
+    assert larger["day"]["daily_kill_loss_usd"] == "3500.00"
     assert snap["day"]["mark_pnl"] == "1000.00"
     assert "status" in snap and snap["status"]["market_phase"]
     assert "positions" in snap and "day" in snap and "quotes" in snap
+
+
+def test_kill_line_falls_back_to_five_percent_only_when_dollars_are_off(tmp_path):
+    from app.analytics.kill_line import display_kill_usd
+
+    path = tmp_path / "trading.toml"
+    path.write_text("daily_kill_loss_usd = 0\ndaily_hard_stop_pct = 0.05\n", encoding="utf-8")
+    trading = Settings(trading_config_path=str(path)).trading()
+    assert display_kill_usd(trading, Decimal("80000")) == "4000.00"
+    assert display_kill_usd(trading, None) is None
+    configured = Settings().trading()
+    assert display_kill_usd(configured, Decimal("100000")) == "3500.00"
+    assert display_kill_usd(configured, None) == "3500.00"

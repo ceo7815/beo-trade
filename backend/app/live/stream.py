@@ -183,7 +183,9 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     trading = settings.trading()
     equity = _dec((account or {}).get("equity"))
     last_equity = _dec((account or {}).get("last_equity"))
-    kill = None if equity is None else str((equity * Decimal(str(trading.daily_hard_stop_pct))).quantize(Decimal("0.01")))
+    from app.analytics.kill_line import display_kill_usd
+
+    kill = display_kill_usd(trading, equity)
     mark = None if equity is None or last_equity is None else str((equity - last_equity).quantize(Decimal("0.01")))
     pnl = None
     source = "none"

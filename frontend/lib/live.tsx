@@ -118,7 +118,7 @@ function toast(key: string, title: string, tone: ToastItem["tone"]) {
   recentToast.set(key, now);
   const mobile = typeof window !== "undefined" && window.matchMedia("(max-width: 980px)").matches;
   const item: ToastItem = { id: `${now}-${toastSeq++}`, title, tone };
-  commit({ toasts: [item, ...state.toasts].slice(0, 4) });
+  commit({ toasts: [item, ...state.toasts].slice(0, 3) });
   window.setTimeout(() => {
     commit({ toasts: state.toasts.filter((row) => row.id !== item.id) });
   }, mobile ? 3000 : 4200);
@@ -141,6 +141,7 @@ function applySnap(incoming: LiveSnap, mode: "snapshot" | "diff") {
   for (const quote of next.quotes || []) {
     series[`q:${quote.symbol}`] = pushSeries(`q:${quote.symbol}`, num(quote.price));
   }
+  if (next.account) series.eq = pushSeries("eq", num(next.account.equity));
   if (previous) {
     const before = new Map((previous.positions?.items || []).map((item) => [item.symbol || "", item]));
     const after = new Map((next.positions?.items || []).map((item) => [item.symbol || "", item]));

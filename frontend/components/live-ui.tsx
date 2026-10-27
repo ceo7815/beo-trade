@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { signedMoney, tone } from "@/lib/format";
+import { money, signedMoney } from "@/lib/format";
 import { copy } from "@/lib/copy";
 
 export function Num({ children, className = "", title }: { children: ReactNode; className?: string; title?: string }) {
@@ -75,7 +75,8 @@ export function Odometer({ value, digits = 0, className = "" }: { value: number 
           cell.appendChild(col);
         } else {
           cell.textContent = ch;
-          if (ch === "$" || ch === "+" || ch === "−") cell.classList.add("cur");
+          if (ch === "$") cell.classList.add("cur", "mark");
+          else if (ch === "+" || ch === "−") cell.classList.add("cur", "sign");
         }
         root.appendChild(cell);
       }
@@ -151,11 +152,12 @@ export function Gauge({ pnl, kill }: { pnl: number | null; kill: number | null }
   const loss = pnl !== null && pnl < 0 ? -pnl : 0;
   const near = span !== null && loss >= span * 0.7 && loss < span;
   const hot = span !== null && loss >= span;
+  const room = pnl === null || span === null ? null : pnl + span;
   return (
     <div className={`gauge${near ? " near" : ""}${hot ? " hot" : ""}`} dir="ltr">
       <div className="gauge-top">
-        <span>{copy.kill.gauge}</span>
-        <Num className={tone(pnl)}>{pnl === null ? "—" : signedMoney(pnl, 0)}</Num>
+        <span>{span === null ? copy.kill.gauge : <>{copy.kill.brake} · <Num>{signedMoney(-span, 0)}</Num></>}</span>
+        <span>{room === null ? "—" : <>{copy.kill.distance} <Num className={room < 0 ? "down" : ""}>{room < 0 ? signedMoney(room, 0) : money(room, 0)}</Num></>}</span>
       </div>
       <div className="track">
         <b className="knob" style={{ insetInlineStart: `${at}%` }} />
