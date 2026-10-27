@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import socket
+import threading
+import time
 from decimal import Decimal
 
 import httpx
@@ -21,6 +24,36 @@ def _clean():
     reset_sec_state()
     yield
     reset_sec_state()
+
+
+def test_a_silent_host_cannot_hold_a_sec_request_open(monkeypatch):
+    monkeypatch.setattr("app.providers.sec.REQUEST_TIMEOUT", httpx.Timeout(0.4, connect=0.4))
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+    monkeypatch.setattr("app.providers.sec.TICKERS_URL", f"http://127.0.0.1:{port}/company_tickers.json")
+
+    def accept_and_hold():
+        try:
+            conn, _addr = server.accept()
+        except OSError:
+            return
+        try:
+            time.sleep(2)
+        finally:
+            conn.close()
+
+    threading.Thread(target=accept_and_hold, daemon=True).start()
+    feed = SecFeed(_settings())
+    started = time.perf_counter()
+    try:
+        with pytest.raises(SecError):
+            feed.health(AS_OF)
+        assert time.perf_counter() - started < 2
+    finally:
+        server.close()
 
 
 def test_access_denied_and_rate_limit_are_not_success():

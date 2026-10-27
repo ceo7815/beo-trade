@@ -1,12 +1,15 @@
 from __future__ import annotations
 
+import socket
+import threading
+import time
 from decimal import Decimal
 
 import httpx
 import pytest
 
 from app.integrations.probes import probe_fred
-from app.providers.fred import FredFeed, fred_status, reset_fred_state
+from app.providers.fred import FredError, FredFeed, fred_status, reset_fred_state
 from app.providers.registry import ProviderSet, build_providers
 from app.providers.thetadata import ThetaMarketProvider, ThetaOptionsProvider
 from app.providers.unconfigured import UnconfiguredProvider
@@ -44,6 +47,35 @@ def _transport(payloads: dict[str, dict]):
         return httpx.Response(200, json={"seriess": body["seriess"]})
 
     return httpx.MockTransport(handler)
+
+
+def test_a_silent_host_cannot_hold_a_fred_request_open(monkeypatch):
+    monkeypatch.setattr("app.providers.fred.REQUEST_TIMEOUT", httpx.Timeout(0.4, connect=0.4))
+    server = socket.socket()
+    server.bind(("127.0.0.1", 0))
+    server.listen(1)
+    server.settimeout(2)
+    port = server.getsockname()[1]
+
+    def accept_and_hold():
+        try:
+            conn, _addr = server.accept()
+        except OSError:
+            return
+        try:
+            time.sleep(2)
+        finally:
+            conn.close()
+
+    threading.Thread(target=accept_and_hold, daemon=True).start()
+    feed = FredFeed(_settings(fred_api_key="test-fred-key"))
+    started = time.perf_counter()
+    try:
+        with pytest.raises(FredError):
+            feed._get(f"http://127.0.0.1:{port}/fred/series", {"series_id": "FEDFUNDS"})
+        assert time.perf_counter() - started < 2
+    finally:
+        server.close()
 
 
 def test_empty_provider_is_unconfigured(monkeypatch):
