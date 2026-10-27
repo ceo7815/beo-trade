@@ -1,6 +1,8 @@
+import json
 import subprocess
 import sys
 import time
+from io import BytesIO
 from pathlib import Path
 
 import pytest
@@ -8,13 +10,61 @@ import pytest
 from app.config.settings import Settings, load_trading_config
 from app.core.sessions import OPEN
 from app.ops.lock import acquire_single_worker_lock
-from app.ops.safety import assert_boot_safe, policy_errors
+from app.ops.safety import OFFICIAL_POLICY, assert_boot_safe, policy_errors
 from app.workers.runner import cycle_plan
 
 
 def test_official_policy_is_intact():
     assert policy_errors(load_trading_config()) == []
     assert_boot_safe(Settings())
+
+
+def _smoke_policy_source() -> str:
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "smoke-test.sh").read_text(encoding="utf-8")
+    return script.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+
+
+def _run_smoke_policy(monkeypatch, *, official_exit: str, reported_exit: str, official_risk: str, reported_risk: str) -> None:
+    monkeypatch.setitem(OFFICIAL_POLICY, "exit_policy_version", official_exit)
+    monkeypatch.setitem(OFFICIAL_POLICY, "risk_policy_version", official_risk)
+    ready = {
+        "components": {"thetadata": "BLOCKED", "risk_engine": "HEALTHY", "exit_engine": "HEALTHY"},
+        "trading_mode": "PAPER",
+        "paper_only": True,
+        "risk_policy_version": reported_risk,
+        "exit_policy_version": reported_exit,
+        "autonomous": False,
+        "database": "ok",
+    }
+    health = {"components": {"paper": "HEALTHY", "live": "DISABLED"}}
+    bodies = iter([ready, health])
+
+    def urlopen(url, timeout=10):
+        return BytesIO(json.dumps(next(bodies)).encode())
+
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    exec(compile(_smoke_policy_source(), "scripts/smoke-test.sh", "exec"), {"__name__": "smoke"})
+
+
+def test_smoke_script_reads_policy_versions_from_the_official_source(monkeypatch):
+    _run_smoke_policy(
+        monkeypatch,
+        official_exit="aggressive-exit-9",
+        reported_exit="aggressive-exit-9",
+        official_risk="risk-from-source",
+        reported_risk="risk-from-source",
+    )
+
+
+def test_smoke_script_rejects_a_stale_exit_policy(monkeypatch):
+    with pytest.raises(SystemExit, match="exit version"):
+        _run_smoke_policy(
+            monkeypatch,
+            official_exit="aggressive-exit-9",
+            reported_exit="aggressive-exit-1",
+            official_risk="risk-from-source",
+            reported_risk="risk-from-source",
+        )
 
 
 def test_the_release_ledger_starts_with_the_current_version():

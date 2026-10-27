@@ -3,12 +3,16 @@ import { createHash, createHmac, timingSafeEqual } from "crypto";
 export const SESSION_COOKIE = "beo_session";
 export const SESSION_DAYS = 30;
 
+function envValue(name: string): string {
+  return process.env[name] ?? "";
+}
+
 export function loginConfigured() {
-  return Boolean(process.env.DASHBOARD_USER && process.env.DASHBOARD_PASSWORD && process.env.SESSION_SECRET);
+  return Boolean(envValue("DASHBOARD_USER") && envValue("DASHBOARD_PASSWORD") && envValue("SESSION_SECRET"));
 }
 
 function signature(user: string, expires: number) {
-  return createHmac("sha256", process.env.SESSION_SECRET ?? "").update(`${user}|${expires}`).digest("base64url");
+  return createHmac("sha256", envValue("SESSION_SECRET")).update(`${user}|${expires}`).digest("base64url");
 }
 
 function same(given: string, expected: string) {
@@ -18,8 +22,8 @@ function same(given: string, expected: string) {
 }
 
 export function credentialsMatch(user: string, password: string) {
-  const userOk = same(user.trim().toLowerCase(), (process.env.DASHBOARD_USER ?? "").trim().toLowerCase());
-  const passwordOk = same(password, process.env.DASHBOARD_PASSWORD ?? "");
+  const userOk = same(user.trim().toLowerCase(), envValue("DASHBOARD_USER").trim().toLowerCase());
+  const passwordOk = same(password, envValue("DASHBOARD_PASSWORD"));
   return loginConfigured() && userOk && passwordOk;
 }
 

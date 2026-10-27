@@ -289,7 +289,7 @@ function Board() {
             <Odometer value={shownPnl} />
             {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
           </div>
-          <Gauge pnl={shownPnl} kill={kill} />
+          <Gauge pnl={shownPnl} kill={kill} state={lossState} />
         </article>
       </div>
 

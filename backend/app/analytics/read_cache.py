@@ -18,7 +18,7 @@ FINANCE_TTL_SECONDS = 45
 BROKER_TTL_SECONDS = 8
 FILL_TTL_SECONDS = 45
 
-# A new fill or an open/close event drops these families so the next read is fresh.
+# A new fill, an open/close event, or a write to the day's latch drops these families.
 _HEAVY_FAMILIES = {"trades", "learning-trades", "learning-lab", "finance", "risk", "fills", "broker"}
 
 

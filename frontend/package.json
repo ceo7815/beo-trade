@@ -4,7 +4,8 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start"
+    "start": "next start",
+    "test": "node --experimental-strip-types --test lib/proxyAccess.test.ts"
   },
   "dependencies": {
     "framer-motion": "^14.6.0",

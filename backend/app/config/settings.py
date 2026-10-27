@@ -229,6 +229,7 @@ class Settings(BaseSettings):
     alpaca_api_secret: str = ""
     alpaca_base_url: str = ""
     thetadata_api_key: str = ""
+    thetadata_client_key: str = ""
     thetadata_base_url: str = ""
     theta_terminal_host: str = ""
     theta_terminal_port: int = 25503

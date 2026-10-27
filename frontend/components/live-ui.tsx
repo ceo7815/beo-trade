@@ -145,13 +145,14 @@ export function Radar({ names, active }: { names: string[]; active: boolean }) {
   );
 }
 
-export function Gauge({ pnl, kill }: { pnl: number | null; kill: number | null }) {
+export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
   const span = kill && kill > 0 ? kill : null;
   const ratio = pnl === null || span === null ? 0 : Math.max(-1, Math.min(1, pnl / span));
   const at = ((ratio + 1) / 2) * 100;
   const loss = pnl !== null && pnl < 0 ? -pnl : 0;
-  const near = span !== null && loss >= span * 0.7 && loss < span;
-  const hot = span !== null && loss >= span;
+  const tripped = state === "hard_stop";
+  const near = !tripped && span !== null && loss >= span * 0.7 && loss < span;
+  const hot = tripped || (span !== null && loss >= span);
   const room = pnl === null || span === null ? null : pnl + span;
   return (
     <div className={`gauge${near ? " near" : ""}${hot ? " hot" : ""}`} dir="ltr">

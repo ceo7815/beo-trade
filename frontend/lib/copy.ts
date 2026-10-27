@@ -27,7 +27,8 @@ export const EXIT_REASONS: Record<string, string> = {
 
 export function exitLabel(reason: string | null | undefined) {
   if (!reason) return "—";
-  return EXIT_REASONS[reason] || reason;
+  const code = reason.trim().split(/\s+/)[0];
+  return EXIT_REASONS[code] || reason;
 }
 
 export const blockReasons: Record<string, string> = {

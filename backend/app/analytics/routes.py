@@ -401,7 +401,11 @@ def register(app: FastAPI, settings: Settings) -> None:
         count = None if positions is None else len(positions)
         stopped = False
         warning = False
+        from app.options.risk_limits import day_flatten_reason
+
         level = "ok" if equity is None or counted is None else daily_loss_state(equity, counted, trading)
+        if day_flatten_reason(equity, measured, trading) == "DAILY_HARD_STOP":
+            level = "hard_stop"
         if level in {"entry_stop", "hard_stop"}:
             stopped = True
         elif level == "warning":
@@ -427,6 +431,9 @@ def register(app: FastAPI, settings: Settings) -> None:
             day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None else public_from_store(settings, moment)
         except Exception:
             day_floor = {"armed": False, "closed": False, "arm": None, "floor": None}
+        if isinstance(day_floor, dict) and day_floor.get("closed") and not day_floor.get("cleared") and day_floor.get("reason") == "DAILY_HARD_STOP":
+            level = "hard_stop"
+            state = "עצור"
         return {
             "environment": "PAPER",
             "state": state,

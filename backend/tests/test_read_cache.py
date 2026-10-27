@@ -202,7 +202,7 @@ def test_today_asks_alpaca_for_a_short_window_and_the_second_read_is_cached(tmp_
         auth_required=False,
         trading_mode="PAPER",
     )
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         first = client.get("/api/v1/report/trades", params={"period": "today"})
         second = client.get("/api/v1/report/trades", params={"period": "today"})
     assert first.status_code == 200

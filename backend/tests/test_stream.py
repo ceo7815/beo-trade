@@ -145,6 +145,32 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
     assert "positions" in snap and "day" in snap and "quotes" in snap
 
 
+def test_snapshot_reports_hard_stop_at_the_dollar_kill(tmp_path, monkeypatch):
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr("app.options.day_floor.observe_day_floor", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")))
+    monkeypatch.setattr(live, "_fetch_positions", lambda settings: {"items": []})
+    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "100000", "cash": "1", "last_equity": "103500", "buying_power": "1"})
+    read_cache.clear()
+    live._mem["positions"] = (0.0, None)
+    live._mem["account"] = (0.0, None)
+    read_cache.set(("risk",), {"today_pnl": "-3500.00", "daily_loss_state": "ok", "available": True}, 30)
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "kill-stop.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    assert snap["day"]["daily_kill_loss_usd"] == "3500.00"
+    assert snap["day"]["daily_loss_state"] == "hard_stop"
+    read_cache.set(("risk",), {"today_pnl": "-3499.00", "daily_loss_state": "ok", "available": True}, 30)
+    live._mem["account"] = (0.0, None)
+    short = live.build_snapshot(settings)
+    assert short["day"]["daily_loss_state"] == "ok"
+
+
 def test_kill_line_falls_back_to_five_percent_only_when_dollars_are_off(tmp_path):
     from app.analytics.kill_line import display_kill_usd
 

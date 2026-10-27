@@ -67,7 +67,7 @@ def test_secrets_are_masked_and_scrubbed():
 
 def test_hub_does_not_claim_connections_or_leak_keys(tmp_path, monkeypatch):
     monkeypatch.setattr("app.integrations.secrets._read_file", lambda settings: {})
-    with TestClient(create_app(_settings(tmp_path))) as client:
+    with TestClient(create_app(_settings(tmp_path), allow_open_api=True)) as client:
         listed = client.get("/api/v1/integrations")
         assert listed.status_code == 200
         body = listed.json()
@@ -113,7 +113,7 @@ def test_alpaca_account_uses_paper_host_only(tmp_path, monkeypatch):
     settings = _settings(tmp_path)
     settings.alpaca_api_key = "PKPAPERKEY1234"
     settings.alpaca_api_secret = "secret-value-9999"
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         checked = client.post("/api/v1/integrations/alpaca/test")
         assert checked.status_code == 200
         assert checked.json()["status"] == "connected"

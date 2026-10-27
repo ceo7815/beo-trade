@@ -83,6 +83,11 @@ def record_scan_blocked(moment: datetime, reason: str) -> None:
 
 def scan_once(settings: Settings, now: datetime | None = None) -> dict:
     moment = now or datetime.now(timezone.utc)
+    from app.options.day_floor import day_close_reason
+
+    if day_close_reason(settings, moment) == "DAILY_HARD_STOP":
+        record_scan_blocked(moment, "DAILY_HARD_STOP")
+        return {"ok": False, "blocked": "DAILY_HARD_STOP"}
     publish_quiet("scan.requested", moment.isoformat())
     progress = _progress_writer(moment)
     progress("started", {})
@@ -201,7 +206,16 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
         session_open, book_close = _session_state(settings, adapter, moment)
         floor = _account_day_floor(settings, adapter, moment, session_open)
         if floor.get("closed") and submit:
-            _cancel_entry_orders(adapter)
+            if floor.get("reason") == "DAILY_HARD_STOP" and not floor.get("cleared"):
+                _cancel_open_orders(adapter, include_sells=True)
+                try:
+                    from app.options.day_floor import mark_kill_cleared
+
+                    floor = mark_kill_cleared(settings, moment)
+                except Exception:
+                    floor = {**floor, "cleared": True}
+            else:
+                _cancel_entry_orders(adapter)
         exits = []
         for position in positions:
             symbol = str(position.get("symbol") or "").replace(" ", "")
@@ -210,10 +224,11 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             underlying = bundle.get("underlying")
             entry = position.get("avg_entry_price")
             trade_id = str(position.get("trade_id") or symbol)
-            forced = _floor_exit(position, option, settings.trading()) if floor.get("closed") else None
+            close_reason = str(floor.get("reason") or "DAY_FLOOR") if floor.get("closed") else ""
+            forced = _floor_exit(position, option, settings.trading(), close_reason) if close_reason else None
             if forced is not None:
                 signal, session_close = forced, book_close
-                source = "day-floor"
+                source = "hard-stop" if forced.reason == "DAILY_HARD_STOP" else "day-floor"
             elif option is None or underlying is None or entry in {None, ""}:
                 _session_open, session_close = _session_state(settings, adapter, moment)
                 price = fallback_exit_price(position, moment, session_close, settings.trading())
@@ -323,13 +338,16 @@ def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, 
 
 
 def _account_day_floor(settings: Settings, adapter, moment: datetime, session_open: bool | None) -> dict:
-    """Latch the day floor from the account mark. A quote-only test adapter does not write the latch."""
+    """Latch the day floor, and the daily kill, from the account mark. A quote-only test adapter does not write the latch."""
     from app.options.day_floor import observe_day_floor, public_from_store
 
     if not hasattr(adapter, "get_account"):
         return public_from_store(settings, moment)
     pnl = None
+    account = None
+    already_closed = False
     if session_open is True:
+        already_closed = bool(public_from_store(settings, moment).get("closed"))
         try:
             account = adapter.get_account()
             activities = adapter.get_activities() if hasattr(adapter, "get_activities") else None
@@ -343,12 +361,33 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
             session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
             pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
     try:
-        return observe_day_floor(settings, pnl, moment, session_open is True)
+        view = observe_day_floor(settings, pnl, moment, session_open is True)
     except Exception:
-        return {"armed": False, "closed": False, "arm": "0.00", "floor": "0.00"}
+        view = {"armed": False, "closed": False, "arm": "0.00", "floor": "0.00", "reason": "", "cleared": False}
+    if session_open is True and account is not None and not already_closed:
+        view = _latch_kill(settings, account, pnl, moment, view)
+    return view
 
 
-def _floor_exit(position: dict, option, trading):
+def _latch_kill(settings: Settings, account: dict, day_pnl: Decimal | None, moment: datetime, view: dict) -> dict:
+    """Flatten once the dollar kill or the 5% hard stop is reached. The dollar line uses total day P&L versus last_equity."""
+    from app.options.day_floor import latch_hard_stop
+    from app.options.risk_limits import day_flatten_reason
+
+    raw = account.get("equity")
+    try:
+        equity = None if raw in {None, ""} else Decimal(str(raw))
+    except Exception:
+        equity = None
+    if day_flatten_reason(equity, day_pnl, settings.trading()) != "DAILY_HARD_STOP":
+        return view
+    try:
+        return latch_hard_stop(settings, moment)
+    except Exception:
+        return {**view, "closed": True, "reason": "DAILY_HARD_STOP", "cleared": False}
+
+
+def _floor_exit(position: dict, option, trading, reason: str = "DAY_FLOOR"):
     from app.options.day_floor import floor_sell_price
 
     bid = None if option is None else option.bid
@@ -362,10 +401,15 @@ def _floor_exit(position: dict, option, trading):
     price = floor_sell_price(bid, mark, Decimal(str(trading.fallback_exit_discount)))
     if price is None:
         return None
-    return SimpleNamespace(reason="DAY_FLOOR", exit_price=price)
+    exit_reason = reason if reason in {"DAY_FLOOR", "DAILY_HARD_STOP"} else "DAY_FLOOR"
+    return SimpleNamespace(reason=exit_reason, exit_price=price)
 
 
 def _cancel_entry_orders(adapter) -> None:
+    _cancel_open_orders(adapter, include_sells=False)
+
+
+def _cancel_open_orders(adapter, include_sells: bool) -> None:
     if not hasattr(adapter, "get_orders") or not hasattr(adapter, "cancel_order"):
         return
     try:
@@ -373,7 +417,8 @@ def _cancel_entry_orders(adapter) -> None:
     except Exception:
         return
     for row in rows:
-        if str(row.get("position_intent") or "") != "buy_to_open":
+        intent = str(row.get("position_intent") or "")
+        if intent == "sell_to_close" and not include_sells:
             continue
         order_id = str(row.get("broker_order_id") or row.get("id") or "")
         if not order_id:
@@ -799,8 +844,11 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             activities = None
         session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        if observe_day_floor(settings, measured, moment, session_open).get("closed"):
-            blocked_all("DAY_FLOOR")
+        floor = observe_day_floor(settings, measured, moment, session_open)
+        if session_open and not floor.get("closed"):
+            floor = _latch_kill(settings, account, measured, moment, floor)
+        if floor.get("closed"):
+            blocked_all(str(floor.get("reason") or "DAY_FLOOR"))
             return
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { FloorMark } from "@/components/FloorMark";
+import { exitLabel } from "@/lib/exits";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
 import { apiGet, poll } from "@/lib/api";
@@ -33,6 +34,7 @@ type Policy = {
   daily_warning_pct?: number;
   daily_entry_stop_pct?: number;
   daily_hard_stop_pct?: number;
+  daily_kill_loss_usd?: number;
   initial_stop_decline_pct?: number;
   protect_at_r?: number;
   protective_stop_r?: number;
@@ -290,7 +292,8 @@ export default function RiskPage() {
               <dt>נכס אחד</dt><dd>{policy?.max_positions_per_underlying === 1 ? "פוזיציה אחת" : "אין נתונים"}</dd>
               <dt>אזהרת הפסד</dt><dd className="num">{policy ? `${pct(policy.daily_warning_pct)}-` : "אין נתונים"}</dd>
               <dt>עצירת כניסות</dt><dd className="num">{policy ? `${pct(policy.daily_entry_stop_pct)}-` : "אין נתונים"}</dd>
-              <dt>{copy.riskLabels.hardStop}</dt><dd className="num">{policy ? `${pct(policy.daily_hard_stop_pct)}-` : "אין נתונים"}</dd>
+              <dt>עצירה יומית</dt><dd className="num">{policy ? `${pct(policy.daily_hard_stop_pct)}-` : "אין נתונים"}</dd>
+              <dt>עצירה בדולרים</dt><dd className="num">{policy?.daily_kill_loss_usd != null ? `−$${Number(policy.daily_kill_loss_usd).toLocaleString("en-US")}` : "אין נתונים"}</dd>
             </dl>
           </article>
           <article>
@@ -332,7 +335,7 @@ export default function RiskPage() {
             <h2>עקבות יציאה</h2>
             {closed && closed.length > 0 ? closed.slice(0, 8).map((row) => (
               <dl key={`${row.symbol}-${row.closed_at}`}>
-                <dt>סיבת יציאה</dt><dd>{row.exit_reason || "אין נתונים"}</dd>
+                <dt>סיבת יציאה</dt><dd>{row.exit_reason ? exitLabel(row.exit_reason) : "אין נתונים"}</dd>
                 <dt>{copy.riskLabels.entry}</dt><dd className="num">{row.entry_price || "אין נתונים"}</dd>
                 <dt>{copy.riskLabels.exit}</dt><dd className="num">{row.exit_price || "אין נתונים"}</dd>
                 <dt>{copy.riskLabels.pnl}</dt><dd className="num">{row.pnl || "אין נתונים"}</dd>

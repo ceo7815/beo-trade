@@ -179,6 +179,17 @@ def _scan() -> dict:
     }
 
 
+def _hard_stop_state(trading, equity: Decimal | None, pnl: str | None, state: str | None, floor: dict | None) -> str | None:
+    """Surface #3's DAILY_HARD_STOP. Read only: no floor write."""
+    from app.options.risk_limits import day_flatten_reason
+
+    if day_flatten_reason(equity, _dec(pnl), trading) == "DAILY_HARD_STOP":
+        return "hard_stop"
+    if isinstance(floor, dict) and floor.get("closed") and not floor.get("cleared") and floor.get("reason") == "DAILY_HARD_STOP":
+        return "hard_stop"
+    return state
+
+
 def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     trading = settings.trading()
     equity = _dec((account or {}).get("equity"))
@@ -207,6 +218,7 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         floor = public_from_store(settings, datetime.now(timezone.utc))
     except Exception:
         floor = None
+    state = _hard_stop_state(trading, equity, pnl, state, floor)
     return {
         "pnl": pnl,
         "mark_pnl": mark,

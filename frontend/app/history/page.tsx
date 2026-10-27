@@ -7,7 +7,7 @@ import { Num, Odometer } from "@/components/live-ui";
 import { signedPct } from "@/lib/format";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet, poll } from "@/lib/api";
-import { EXIT_REASONS } from "@/lib/exits";
+import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
 type Plan = {
@@ -216,7 +216,7 @@ function held(minutes: number | null | undefined) {
 
 function reason(trade: Trade) {
   if (!trade.exit_reason) return "לא נרשמה";
-  return EXIT_REASONS[trade.exit_reason] || trade.exit_reason;
+  return exitLabel(trade.exit_reason);
 }
 
 function side(trade: Trade) {
