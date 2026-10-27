@@ -61,11 +61,12 @@ class AlpacaAdapter:
                 fills.append(item)
         return fills
 
-    def get_all_fills(self, max_pages: int = 20) -> list[dict]:
+    def get_all_fills(self, max_pages: int = 20, after: str = "") -> list[dict]:
+        """Page through FILL activities. `after` is YYYY-MM-DD so a short window does not download the whole account."""
         fills = []
         token = ""
         for _ in range(max_pages):
-            page = self.client.activities("FILL", page_token=token)
+            page = self.client.activities("FILL", page_token=token, after=after)
             for row in page:
                 item = fill_from_activity(row)
                 if item is not None:

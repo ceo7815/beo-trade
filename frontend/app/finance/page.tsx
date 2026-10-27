@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 
 type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
 
@@ -77,7 +77,7 @@ export default function FinancePage() {
     let alive = true;
     const load = () => {
       const query = new URLSearchParams({ window: windowName, side, outcome, symbol, dte, start, end, exit_reason: "", hour: "" });
-      Promise.allSettled([
+      return Promise.allSettled([
         apiGet<Finance>(`/api/v1/finance?${query.toString()}`),
         apiGet<Risk>("/api/v1/risk"),
       ]).then(([financeResult, riskResult]) => {
@@ -91,11 +91,10 @@ export default function FinancePage() {
         setMaxPositions(riskResult.status === "fulfilled" ? riskResult.value.max_positions ?? null : null);
       });
     };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 60000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, [windowName, side, outcome, symbol, dte, start, end]);
 

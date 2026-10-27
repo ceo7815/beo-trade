@@ -1,9 +1,9 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shell } from "@/components/Shell";
+import { Shell, useDesk } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
-import { apiGet, type SystemStatus } from "@/lib/api";
+import { loadCached, peekCached, poll } from "@/lib/api";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
@@ -160,58 +160,53 @@ function expiryLabel(dte: number | null | undefined) {
 }
 
 export default function PositionsPage() {
-  const [positions, setPositions] = useState<BrokerPosition[] | null>(null);
-  const [report, setReport] = useState<Report | null>(null);
-  const [risk, setRisk] = useState<Risk | null>(null);
-  const [status, setStatus] = useState<SystemStatus | null>(null);
+  const { status } = useDesk();
+  const [positions, setPositions] = useState<BrokerPosition[] | null>(() => peekCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions")?.items ?? null);
+  const [report, setReport] = useState<Report | null>(() => peekCached<Report>("/api/v1/report/trades?period=today"));
+  const [risk, setRisk] = useState<Risk | null>(() => peekCached<Risk>("/api/v1/risk"));
   const [failed, setFailed] = useState(false);
   const [updated, setUpdated] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [picked, setPicked] = useState<{ position: BrokerPosition; trade: OpenTrade | null } | null>(null);
-  const [book, setBook] = useState<ClosedTrade[] | null>(null);
+  const [book, setBook] = useState<ClosedTrade[] | null>(() => peekCached<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all")?.closed ?? null);
   const [choice, setChoice] = useState<string | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const fast = () => {
-      apiGet<{ items: BrokerPosition[] }>("/api/v1/broker/alpaca/positions")
-        .then((body) => {
+    const stopLive = poll(async () => {
+      try {
+        await loadCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions", (body) => {
           if (!alive) return;
           setPositions(body.items || []);
           setFailed(false);
           setUpdated(Date.now());
-        })
-        .catch(() => alive && setFailed(true));
-    };
-    const slow = () => {
-      Promise.allSettled([
-        apiGet<Report>("/api/v1/report/trades?period=today"),
-        apiGet<Risk>("/api/v1/risk"),
-        apiGet<SystemStatus>("/api/v1/system"),
-      ]).then(([reportBody, riskBody, statusBody]) => {
-        if (!alive) return;
-        if (reportBody.status === "fulfilled") setReport(reportBody.value);
-        if (riskBody.status === "fulfilled") setRisk(riskBody.value);
-        if (statusBody.status === "fulfilled") setStatus(statusBody.value);
-      });
-    };
-    const history = () => {
-      apiGet<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all")
-        .then((body) => alive && setBook(body.closed ?? []))
-        .catch(() => undefined);
-    };
-    fast();
-    slow();
-    history();
-    const fastTimer = window.setInterval(fast, 8000);
-    const slowTimer = window.setInterval(slow, 20000);
-    const historyTimer = window.setInterval(history, 60000);
+        });
+      } catch {
+        if (alive) setFailed(true);
+      }
+    }, 12000);
+    const stopRisk = poll(async () => {
+      await loadCached<Risk>("/api/v1/risk", (body) => {
+        if (alive) setRisk(body);
+      }).catch(() => undefined);
+    }, 15000);
+    const stopToday = poll(async () => {
+      await loadCached<Report>("/api/v1/report/trades?period=today", (body) => {
+        if (alive) setReport(body);
+      }, 30000).catch(() => undefined);
+    }, 60000);
+    const stopHistory = poll(async () => {
+      await loadCached<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all", (body) => {
+        if (alive) setBook(body.closed ?? []);
+      }, 30000).catch(() => undefined);
+    }, 60000);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
-      window.clearInterval(fastTimer);
-      window.clearInterval(slowTimer);
-      window.clearInterval(historyTimer);
+      stopLive();
+      stopRisk();
+      stopToday();
+      stopHistory();
       window.clearInterval(tick);
     };
   }, []);
@@ -329,7 +324,13 @@ export default function PositionsPage() {
         ) : null}
         {failed && positions === null ? <p className="ops-line">השרת לא החזיר את ספר Alpaca.</p> : null}
 
-        {active === "live" ? <div className="live-grid">
+        {active === "live" && positions === null ? (
+          <div className="live-grid" aria-busy="true" aria-label="טוען פוזיציות">
+            <article className="live-card live-skeleton" />
+            <article className="live-card live-skeleton" />
+          </div>
+        ) : null}
+        {active === "live" && positions !== null ? <div className="live-grid">
           {items.map((item) => (
             <Card
               key={item.symbol}

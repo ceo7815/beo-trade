@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { PHASES, apiGet, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Tone = "ok" | "warn" | "bad" | "wait";
 
@@ -27,15 +27,14 @@ export default function StatusPage() {
 
   useEffect(() => {
     let alive = true;
-    const load = () => {
-      apiGet<SystemStatus>("/api/v1/system").then((body) => alive && setStatus(body)).catch(() => alive && setFailed(true));
-      apiGet<{ flags: Record<string, boolean> }>("/api/v1/broker/alpaca/health").then((body) => alive && setFlags(body.flags)).catch(() => alive && setFlags(null));
-    };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const load = () => Promise.all([
+      apiGet<SystemStatus>("/api/v1/system").then((body) => alive && setStatus(body)).catch(() => alive && setFailed(true)),
+      apiGet<{ flags: Record<string, boolean> }>("/api/v1/broker/alpaca/health").then((body) => alive && setFlags(body.flags)).catch(() => alive && setFlags(null)),
+    ]);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

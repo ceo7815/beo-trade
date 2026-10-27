@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 
 type Decision = {
   id: string;
@@ -107,7 +107,7 @@ export default function DecisionsPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      apiGet<{ ai_month_usd?: string | number; ai_hard_limit?: string | number }>("/api/v1/system")
+      const system = apiGet<{ ai_month_usd?: string | number; ai_hard_limit?: string | number }>("/api/v1/system")
         .then((body) => {
           if (!alive) return;
           const month = body.ai_month_usd;
@@ -115,19 +115,19 @@ export default function DecisionsPage() {
           setAiCost(month == null ? null : `$${month}${cap == null ? "" : ` / $${cap}`}`);
         })
         .catch(() => alive && setAiCost(null));
-      apiGet<{ items: Decision[] }>("/api/v1/decisions?limit=200")
+      const rows = apiGet<{ items: Decision[] }>("/api/v1/decisions?limit=200")
         .then((body) => {
           if (!alive) return;
           setItems(body.items);
           setFailed(false);
         })
         .catch(() => alive && setFailed(true));
+      return Promise.all([system, rows]);
     };
-    load();
-    const timer = window.setInterval(load, 30000);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

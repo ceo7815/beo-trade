@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Shell } from "@/components/Shell";
-import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
+import { Shell, useDesk } from "@/components/Shell";
+import { PHASES, loadCached, peekCached, poll, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
@@ -155,43 +155,43 @@ export default function HomePage() {
 }
 
 function Board() {
-  const [desk, setDesk] = useState<Desk | null>(null);
-  const [account, setAccount] = useState<BrokerAccount | null>(null);
-  const [positions, setPositions] = useState<Position[] | null>(null);
-  const [orders, setOrders] = useState<Order[] | null>(null);
-  const [today, setToday] = useState<TodayReport | null>(null);
+  const { status } = useDesk();
+  const [desk, setDesk] = useState<Desk | null>(() => peekCached<Desk>("/api/v1/desk"));
+  const [account, setAccount] = useState<BrokerAccount | null>(() => peekCached<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account")?.account ?? null);
+  const [positions, setPositions] = useState<Position[] | null>(() => peekCached<{ items?: Position[] }>("/api/v1/broker/alpaca/positions")?.items ?? null);
+  const [orders, setOrders] = useState<Order[] | null>(() => peekCached<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open")?.items ?? null);
+  const [today, setToday] = useState<TodayReport | null>(() => peekCached<TodayReport>("/api/v1/report/trades?period=today"));
   const [picked, setPicked] = useState<FlowTrade | null>(null);
-  const [audit, setAudit] = useState<AuditRow[] | null>(null);
-  const [status, setStatus] = useState<SystemStatus | null>(null);
-  const [risk, setRisk] = useState<Risk | null>(null);
-  const [totals, setTotals] = useState<TradeTotals | null>(null);
-  const [book, setBook] = useState<ClosedLite[] | null>(null);
+  const [audit, setAudit] = useState<AuditRow[] | null>(() => peekCached<{ items?: AuditRow[] }>("/api/v1/audit")?.items ?? null);
+  const [risk, setRisk] = useState<Risk | null>(() => peekCached<Risk>("/api/v1/risk"));
+  const [totals, setTotals] = useState<TradeTotals | null>(() => peekCached<{ summary?: TradeTotals }>("/api/v1/report/trades?period=all")?.summary ?? null);
+  const [book, setBook] = useState<ClosedLite[] | null>(() => peekCached<{ closed?: ClosedLite[] }>("/api/v1/report/trades?period=all")?.closed ?? null);
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const feed = <T,>(path: string, apply: (body: T) => void, everyMs: number) =>
+    const feed = <T,>(path: string, apply: (body: T) => void, everyMs: number, timeoutMs = 15000) =>
       poll(async () => {
-        const body = await apiGet<T>(path);
-        if (!alive) return;
-        apply(body);
-        setSyncedAt(Date.now());
+        await loadCached<T>(path, (body) => {
+          if (!alive) return;
+          apply(body);
+          setSyncedAt(Date.now());
+        }, timeoutMs);
       }, everyMs);
     const stops = [
-      feed<Desk>("/api/v1/desk", setDesk, 5000),
-      feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => setPositions(body.items || []), 5000),
-      feed<Risk>("/api/v1/risk", setRisk, 8000),
-      feed<TodayReport>("/api/v1/report/trades?period=today", setToday, 10000),
-      feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 10000),
-      feed<SystemStatus>("/api/v1/system", setStatus, 10000),
-      feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 15000),
+      feed<Desk>("/api/v1/desk", setDesk, 15000),
+      feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => setPositions(body.items || []), 12000),
+      feed<Risk>("/api/v1/risk", setRisk, 15000),
+      feed<TodayReport>("/api/v1/report/trades?period=today", setToday, 60000, 30000),
+      feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 15000),
+      feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 30000),
       feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => setAccount(body.account || null), 15000),
       feed<{ summary?: TradeTotals; closed?: ClosedLite[] }>("/api/v1/report/trades?period=all", (body) => {
         setTotals(body.summary ?? null);
         setBook(body.closed ?? []);
-      }, 60000),
+      }, 60000, 30000),
     ];
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {

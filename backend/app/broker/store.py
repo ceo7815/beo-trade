@@ -40,6 +40,10 @@ def record_trade_event(session: Session, trade_id: str, state: str, source: str,
     if previous is not None and previous.state == state and previous.reason == reason:
         return
     session.add(BrokerTradeEvent(trade_id=trade_id, state=state, source=source, reason=reason))
+    if state in {"ENTRY_SUBMITTED", "EXIT_SUBMITTED", "EXIT_TRIGGERED", "CLOSE_ALL"}:
+        from app.analytics.read_cache import invalidate_heavy_reads
+
+        invalidate_heavy_reads()
 
 
 def latest_account(session: Session) -> BrokerAccountSnapshot | None:
@@ -60,6 +64,34 @@ def latest_orders(session: Session) -> list[dict]:
         return []
     rows = session.scalars(select(BrokerOrderSnapshot).where(BrokerOrderSnapshot.observed_at == account.observed_at)).all()
     return [row.payload for row in rows]
+
+
+def commit_if_unlocked(session: Session) -> bool:
+    """Commit a dashboard snapshot without waiting out the worker's SQLite lock.
+
+    The busy timeout is restored before the connection returns to the pool so the
+    trading loop still waits for its own writes.
+    """
+    bind = session.get_bind()
+    sqlite = str(getattr(bind, "url", "") or "").startswith("sqlite")
+    connection = session.connection() if sqlite else None
+    if connection is not None:
+        try:
+            connection.exec_driver_sql("PRAGMA busy_timeout=50")
+        except Exception:
+            connection = None
+    try:
+        session.commit()
+        return True
+    except Exception:
+        session.rollback()
+        return False
+    finally:
+        if connection is not None:
+            try:
+                connection.exec_driver_sql("PRAGMA busy_timeout=30000")
+            except Exception:
+                pass
 
 
 def remember_account(session: Session, account: dict, observed_at: datetime | None = None) -> None:
@@ -123,6 +155,9 @@ def remember_fill(session: Session, fill: dict, observed_at: datetime | None = N
         capture_entry_fill(session, fill, get_settings().trading())
     except Exception:
         pass
+    from app.analytics.read_cache import invalidate_heavy_reads
+
+    invalidate_heavy_reads()
     return True
 
 
