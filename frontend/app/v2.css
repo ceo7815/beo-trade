@@ -278,7 +278,8 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 #toasts {
   position: fixed;
   z-index: 40;
-  inset-inline-start: 24px;
+  left: 24px;
+  right: auto;
   bottom: 24px;
   top: auto;
   display: flex;
@@ -742,7 +743,6 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
   .tab.on svg { color: var(--accent); }
   #toasts {
     top: auto;
-    inset-inline-start: 12px;
     left: 12px;
     right: 12px;
     bottom: calc(96px + env(safe-area-inset-bottom));

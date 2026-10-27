@@ -124,18 +124,24 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 }
 
 .ops-flow-copy {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 0;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+}
+.ops-flow-copy bdi,
+.ops-flow-copy em { font-style: normal; font-weight: 500; }
+.flow-bit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  unicode-bidi: isolate;
   white-space: nowrap;
 }
-
-.ops-flow-copy bdi,
-.ops-flow-copy em { font-style: normal; font-weight: 700; }
-.ops-flow-copy bdi { font-weight: 800; unicode-bidi: isolate; }
-.ops-flow-copy bdi::after,
-.ops-flow-copy em:not(:last-child)::after { content: " · "; font-weight: 700; }
+.flow-sep { padding-inline: 5px; color: var(--text-3); font-weight: 400; }
 
 .rail {
   position: sticky;
@@ -2052,17 +2058,15 @@ button.engine-cube { cursor: pointer; }
   .ops-flow-money { grid-area: money; font-size: 18px; }
   .ops-flow .ops-flow-copy {
     grid-area: copy;
-    display: grid;
-    gap: 3px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 0;
     overflow: visible;
     text-overflow: unset;
     white-space: normal;
     line-height: 1.45;
   }
-  .ops-flow .ops-flow-copy bdi { direction: ltr; text-align: right; }
-  .ops-flow .ops-flow-copy bdi::after,
-  .ops-flow .ops-flow-copy em::after { content: none; }
-  .ops-flow-copy em { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .ops-flow .ops-flow-copy bdi[dir="ltr"] { direction: ltr; }
   .ops-rail, .ops-matrix { grid-template-columns: 1fr 1fr; }
   .ops-node, .ops-matrix .ops-cell {
     border-bottom: 1px solid var(--line);

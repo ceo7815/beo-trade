@@ -1,7 +1,8 @@
 """Dollar kill line for read payloads and the desk gauge.
 
-Order and exit decisions still use ``daily_hard_stop_pct`` inside
-``daily_loss_state``. This helper never sells, blocks, or writes the floor.
+The key and default match trading.toml: ``daily_kill_loss_usd = 3500``.
+``0`` falls back to equity × ``daily_hard_stop_pct``. This helper does not
+place an order or write the floor.
 """
 
 from __future__ import annotations

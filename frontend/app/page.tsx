@@ -336,10 +336,7 @@ function Board() {
               >
                 <b className="num ops-flow-time">{clock(event.at)}</b>
                 <i>{event.kind === "entry" ? copy.dashboard.entry : event.kind === "exit" ? copy.dashboard.exit : copy.dashboard.blocked}</i>
-                <span className="ops-flow-copy">
-                  <bdi dir="ltr">{event.title}</bdi>
-                  {event.lines.map((line) => <em key={line}>{line}</em>)}
-                </span>
+                <FlowCopy event={event} />
                 {event.kind === "exit" && event.trade ? (
                   <b className={`num ops-flow-money ${tone(Number(event.trade.pnl))}`}>{money(event.trade.pnl)} · {share(event.trade.return_pct)}</b>
                 ) : event.kind === "entry" && event.trade ? (
@@ -634,6 +631,38 @@ function contractLabel(trade: FlowTrade) {
 
 function openedAt(today: TodayReport | null, symbol: string) {
   return openTrade(today, symbol)?.opened_at ?? null;
+}
+
+function FlowCopy({ event }: { event: FlowEvent }) {
+  const trade = event.trade;
+  if (!trade) {
+    return (
+      <span className="ops-flow-copy">
+        <span className="flow-bit"><bdi dir="ltr">{event.title}</bdi></span>
+        {event.lines.map((line) => (
+          <span className="flow-bit" key={line}>
+            <bdi className="flow-sep">·</bdi>
+            <bdi>{line}</bdi>
+          </span>
+        ))}
+      </span>
+    );
+  }
+  const side = trade.right === "CALL" || trade.right === "PUT" ? trade.right : "";
+  return (
+    <span className="ops-flow-copy">
+      <span className="flow-bit"><Num>{trade.underlying || trade.symbol}</Num></span>
+      {side ? <span className="flow-bit"><bdi className="flow-sep">·</bdi><bdi dir="ltr">{side}</bdi></span> : null}
+      <span className="flow-bit"><bdi className="flow-sep">·</bdi><Num>{contracts(trade.qty_open ?? trade.qty)}</Num><bdi>חוזים</bdi></span>
+      <span className="flow-bit"><bdi className="flow-sep">·</bdi><bdi>כניסה</bdi><Num>{price(trade.entry_price)}</Num></span>
+      {event.kind === "exit" ? (
+        <>
+          <span className="flow-bit"><bdi className="flow-sep">·</bdi><bdi>יציאה</bdi><Num>{price(trade.exit_price)}</Num></span>
+          <span className="flow-bit"><bdi className="flow-sep">·</bdi><bdi>{exitLabel(trade.exit_reason)}</bdi></span>
+        </>
+      ) : null}
+    </span>
+  );
 }
 
 function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[] {
