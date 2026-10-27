@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 import { EXIT_REASONS } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
@@ -232,7 +232,7 @@ export default function HistoryPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      apiGet<Report>("/api/v1/report/trades?period=all")
+      return apiGet<Report>("/api/v1/report/trades?period=all", 30000)
         .then((body) => {
           if (!alive) return;
           setReport(body);
@@ -240,11 +240,10 @@ export default function HistoryPage() {
         })
         .catch(() => alive && setFailed(true));
     };
-    load();
-    const timer = window.setInterval(load, 60000);
+    const stop = poll(() => load(), 60000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

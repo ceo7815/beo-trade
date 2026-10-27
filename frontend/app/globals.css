@@ -22,7 +22,7 @@ body {
     radial-gradient(720px 320px at 100% 0%, rgba(231, 201, 138, 0.08), transparent 58%),
     var(--bg);
   color: var(--text);
-  font-family: Rubik, Arial, sans-serif;
+  font-family: var(--font-rubik), Arial, sans-serif;
   font-weight: 500;
 }
 
@@ -458,7 +458,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 .halt-btn:disabled { opacity: 0.6; }
 
 .clock {
-  font-family: Rubik, Arial, sans-serif;
+  font-family: var(--font-rubik), Arial, sans-serif;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.05em;
@@ -671,7 +671,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   display: block;
   margin-top: 8px;
   color: #fffaf2;
-  font-family: Rubik, Arial, sans-serif;
+  font-family: var(--font-rubik), Arial, sans-serif;
   font-size: 22px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -722,7 +722,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 }
 
 .num {
-  font-family: Rubik, Arial, sans-serif;
+  font-family: var(--font-rubik), Arial, sans-serif;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   direction: ltr;
@@ -1253,6 +1253,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
+  min-height: 78px;
 }
 
 .live-stat {
@@ -1263,6 +1264,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   border-radius: 14px;
   padding: 9px 12px;
   background: rgba(255, 255, 255, 0.02);
+  min-height: 68px;
 }
 
 .live-stat span { color: var(--muted); font-size: 11px; font-weight: 700; }
@@ -1292,7 +1294,14 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   border-radius: 16px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.02);
+  min-height: 240px;
   animation: ops-in 260ms ease;
+}
+
+.live-skeleton {
+  min-height: 240px;
+  background: linear-gradient(90deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
+  animation: none;
 }
 
 .live-card.protected { border-inline-start-color: rgba(231, 201, 138, 0.9); }
@@ -2176,7 +2185,7 @@ button.engine-cube { cursor: pointer; }
     display: block;
     margin-bottom: 2px;
     color: var(--muted);
-    font-family: Rubik, Arial, sans-serif;
+    font-family: var(--font-rubik), Arial, sans-serif;
     font-size: 11px;
     font-weight: 700;
     direction: rtl;
@@ -2350,6 +2359,7 @@ button.engine-cube { cursor: pointer; }
 .desk-empty { margin: 0; padding: 18px 2px; color: var(--muted); }
 
 .desk-day-row {
+  min-height: 84px;
   display: flex;
   gap: 10px;
   overflow-x: auto;

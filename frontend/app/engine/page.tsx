@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 
 type Desk = {
   autonomous: boolean;
@@ -119,11 +119,10 @@ export default function EnginePage() {
   useEffect(() => {
     let alive = true;
     const load = () => apiGet<Desk>("/api/v1/desk").then((body) => alive && setDesk(body)).catch(() => alive && setDesk(null));
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 15000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

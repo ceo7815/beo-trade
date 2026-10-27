@@ -195,7 +195,10 @@ class AIAnalysis(Base):
 
 class RecommendationRow(Base):
     __tablename__ = "recommendations"
-    __table_args__ = (Index("ix_recommendations_decision_time", "decision", "created_at"),)
+    __table_args__ = (
+        Index("ix_recommendations_decision_time", "decision", "created_at"),
+        Index("ix_recommendations_underlying_decision", "underlying", "decision", "created_at"),
+    )
     id: Mapped[str] = mapped_column(String(36), primary_key=True)
     analysis_id: Mapped[str | None] = mapped_column(ForeignKey("ai_analyses.id"))
     user_id: Mapped[str | None] = mapped_column(ForeignKey("users.id"))
@@ -382,6 +385,7 @@ class IntegrationEvent(Base):
 
 class BrokerOrderRecord(Base):
     __tablename__ = "broker_orders"
+    __table_args__ = (Index("ix_broker_orders_broker_order_id", "broker_order_id"),)
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
     broker: Mapped[str] = mapped_column(String(24), nullable=False, default="alpaca")
     environment: Mapped[str] = mapped_column(String(16), nullable=False, default="PAPER")

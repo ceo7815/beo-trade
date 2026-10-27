@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet, type SystemStatus } from "@/lib/api";
+import { apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Summary = {
   items?: number;
@@ -28,7 +28,7 @@ export default function AiPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      Promise.allSettled([
+      return Promise.allSettled([
         apiGet<SystemStatus>("/api/v1/system"),
         apiGet<Summary>("/api/v1/ai/summary"),
       ]).then(([systemResult, summaryResult]) => {
@@ -37,11 +37,10 @@ export default function AiPage() {
         setSummary(summaryResult.status === "fulfilled" ? summaryResult.value : null);
       });
     };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 
