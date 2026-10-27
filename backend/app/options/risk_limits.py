@@ -36,12 +36,30 @@ def entry_pnl(mark: Decimal | None, realized: Decimal | None) -> Decimal | None:
 
 
 def daily_loss_reason(equity: Decimal, daily_pnl: Decimal, config: TradingConfig) -> str | None:
-    """Block a new buy at the entry stop. The hard stop also blocks buys and still allows sells."""
+    """Block a new buy at the entry stop. The hard stop also blocks buys."""
     state = daily_loss_state(equity, daily_pnl, config)
     if state == "hard_stop":
         return "DAILY_HARD_STOP"
     if state == "entry_stop":
         return "DAILY_LOSS_LIMIT_REACHED"
+    return None
+
+
+def day_flatten_reason(equity: Decimal | None, day_pnl: Decimal | None, config: TradingConfig) -> str | None:
+    """Close the session when total day P&L hits the dollar kill or the percent hard stop, whichever is first.
+
+    day_pnl is the account mark versus last_equity: realized plus the unrealized of open positions, after same-day funding.
+    A missing mark does not flatten. The dollar line is daily_kill_loss_usd; 0 turns that line off and leaves the percent stop.
+    """
+    if day_pnl is None:
+        return None
+    limit = Decimal(str(config.daily_kill_loss_usd))
+    if limit > 0 and day_pnl <= -limit:
+        return "DAILY_HARD_STOP"
+    if equity is None:
+        return None
+    if daily_loss_state(equity, day_pnl, config) == "hard_stop":
+        return "DAILY_HARD_STOP"
     return None
 
 

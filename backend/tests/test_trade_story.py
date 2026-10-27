@@ -51,6 +51,15 @@ def test_missing_records_are_said_plainly_not_invented():
     assert any("לא נמצא תיעוד לסיבת היציאה" in line for line in story["exit"])
 
 
+def test_a_daily_hard_stop_is_explained_in_hebrew():
+    trade = dict(HOOD, exit_reason="DAILY_HARD_STOP 0.70 hard-stop", exit_price="1.90", pnl="-700.00", return_pct="-15.55")
+    text = " ".join(trade_story(trade, RECOMMENDATION, TradingConfig())["exit"])
+    assert "עצירה היומית" in text
+    assert "$3,500" in text
+    assert "5%" in text
+    assert "-$700" in text
+
+
 def test_an_open_trade_lists_the_levels_that_would_close_it():
     trade = {key: value for key, value in HOOD.items() if key not in {"closed_at", "exit_price", "pnl", "return_pct", "exit_reason"}}
     trade["current_price"] = "3.10"

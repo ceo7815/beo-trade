@@ -232,10 +232,13 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         reasons.append("אין בדיקה מחדש")
     reasons.extend(fresh_quote_reasons(settings, symbol, intent, moment, quotes, context if isinstance(context, dict) else None))
     if intent == "buy_to_open":
-        from app.options.day_floor import day_is_closed
+        from app.options.day_floor import day_close_reason
 
-        if day_is_closed(settings, moment):
-            reasons.append("DAY_FLOOR")
+        closed_for = day_close_reason(settings, moment)
+        if not closed_for and clock.get("is_open") is True:
+            closed_for = _live_day_kill(settings, adapter, account, moment)
+        if closed_for:
+            reasons.append(closed_for)
         held = adapter.get_positions()
         if any(str(row.get("symbol") or "").replace(" ", "") == symbol and (_decimal(row.get("qty")) or Decimal("0")) > 0 for row in held):
             reasons.append("כבר קיימת פוזיציה פתוחה")
@@ -271,6 +274,32 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
 
     remember_orders(session, [order])
     return {"duplicate": False, "order": order, "trade_id": trade_id}
+
+
+def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime) -> str | None:
+    """Block the buy and latch the day when the dollar kill or the percent hard stop is already reached."""
+    from zoneinfo import ZoneInfo
+
+    from app.analytics.finance import trading_day_pnl
+    from app.options.day_floor import latch_hard_stop
+    from app.options.risk_limits import day_flatten_reason
+
+    if not hasattr(adapter, "get_activities"):
+        return None
+    try:
+        activities = adapter.get_activities()
+    except Exception:
+        return None
+    session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+    pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+    equity = _decimal(account.get("equity"))
+    if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":
+        return None
+    try:
+        latch_hard_stop(settings, moment)
+    except Exception:
+        pass
+    return "DAILY_HARD_STOP"
 
 
 def _aware(value: datetime) -> datetime:

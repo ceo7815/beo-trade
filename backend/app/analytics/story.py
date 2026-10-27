@@ -89,7 +89,7 @@ def entry_story(trade: dict, recommendation: dict | None, config: TradingConfig)
 def exit_story(trade: dict, config: TradingConfig) -> list[str]:
     entry = _dec(trade.get("entry_price"))
     exit_price = _dec(trade.get("exit_price"))
-    reason = trade.get("exit_reason")
+    reason = str(trade.get("exit_reason") or "").split(" ", 1)[0]
     plan = trade.get("plan") or {}
     peak = _dec(plan.get("peak_price"))
     stop = Decimal(str(config.initial_stop_decline_pct))
@@ -117,6 +117,13 @@ def exit_story(trade: dict, config: TradingConfig) -> list[str]:
     elif reason == "DAY_FLOOR":
         lines.append(
             "רווח היום ירד לרצפה שנפתחה אחרי שהרווח עלה. מכרנו את הפוזיציה וסגרנו את היום לקניות."
+        )
+    elif reason == "DAILY_HARD_STOP":
+        limit = Decimal(str(config.daily_kill_loss_usd))
+        percent = Decimal(str(config.daily_hard_stop_pct)) * 100
+        lines.append(
+            f"ההפסד של היום, כולל הפוזיציות שעדיין פתוחות, הגיע לעצירה היומית "
+            f"(${limit:,.0f}, או {percent:.0f}% מההון — מה שמגיע קודם). מכרנו את הפוזיציה וסגרנו את היום לקניות."
         )
     elif reason == "INVALIDATION":
         lines.append(f"המניה זזה {config.invalidation_underlying_percent * 100:.0f}% נגד הכיוון שהימרנו עליו. הסיבה שבגללה נכנסנו כבר לא הייתה נכונה, אז יצאנו.")
