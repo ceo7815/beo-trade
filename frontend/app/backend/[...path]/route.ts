@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import { SESSION_COOKIE, loginConfigured, sessionValid } from "@/lib/session";
+import { accessDecision, searchWithoutKey, serverEnv } from "@/lib/proxyAccess";
+import { SESSION_COOKIE, sessionValid } from "@/lib/session";
 
 export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
@@ -9,21 +10,20 @@ const DROP_RESPONSE = new Set(["content-encoding", "content-length", "transfer-e
 
 async function relay(request: NextRequest, { params }: { params: Promise<{ path: string[] }> }) {
   const { path } = await params;
-  const backend = (process.env.BACKEND_URL || "http://127.0.0.1:8000").replace(/\/$/, "");
-  const target = `${backend}/${path.map(encodeURIComponent).join("/")}${request.nextUrl.search}`;
+  const backend = (serverEnv("BACKEND_URL") || "http://127.0.0.1:8000").replace(/\/$/, "");
+  const target = `${backend}/${path.map(encodeURIComponent).join("/")}${searchWithoutKey(request.nextUrl.search)}`;
   const headers = new Headers();
   request.headers.forEach((value, name) => {
     if (!DROP_REQUEST.has(name.toLowerCase())) headers.set(name, value);
   });
-  const signedIn = sessionValid(request.cookies.get(SESSION_COOKIE)?.value);
-  const admin = process.env.API_ADMIN_KEY ?? "";
-  if (admin && (signedIn || !loginConfigured())) {
-    headers.set("x-beo-key", admin);
-    headers.delete("authorization");
-  } else {
-    const own = request.headers.get("x-beo-key");
-    if (own) headers.set("x-beo-key", own);
-  }
+  const decision = accessDecision({
+    signedIn: sessionValid(request.cookies.get(SESSION_COOKIE)?.value),
+    adminKey: serverEnv("API_ADMIN_KEY"),
+    clientKey: request.headers.get("x-beo-key") ?? "",
+    authorization: request.headers.get("authorization") ?? "",
+  });
+  if (decision.forwardKey) headers.set("x-beo-key", decision.forwardKey);
+  if (decision.dropAuthorization) headers.delete("authorization");
   const body = request.method === "GET" || request.method === "HEAD" ? undefined : await request.arrayBuffer();
   let response: Response;
   try {

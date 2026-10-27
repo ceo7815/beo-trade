@@ -291,7 +291,7 @@ def test_http_scan_continues_past_benzinga_and_exposes_provider_status(tmp_path,
     monkeypatch.setattr("app.integrations.secrets._read_file", lambda settings: {})
     database = tmp_path / "beo.db"
     settings = _settings(database_url="sqlite:///" + database.as_posix())
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         built = build_providers(settings)
         assert built.news.name == "benzinga"
         assert built.market.name == "unconfigured"
@@ -324,7 +324,7 @@ def test_http_scan_reports_benzinga_failure_without_articles(tmp_path, monkeypat
     monkeypatch.setattr("app.integrations.secrets._read_file", lambda settings: {})
     database = tmp_path / "beo.db"
     settings = _settings(database_url="sqlite:///" + database.as_posix())
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         scan = client.post("/api/v1/scan")
         assert scan.status_code == 502
         assert "test-key" not in scan.text
