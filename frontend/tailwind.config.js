@@ -13,7 +13,7 @@ module.exports = {
         mist: "#8ea0b5",
       },
       fontFamily: {
-        sans: ["Rubik", "Arial", "sans-serif"],
+        sans: ["var(--font-rubik)", "Arial", "sans-serif"],
       },
     },
   },

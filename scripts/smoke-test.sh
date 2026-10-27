@@ -26,6 +26,8 @@ docker compose exec -T api python - <<'PY'
 import json
 import urllib.request
 
+from app.ops.safety import OFFICIAL_POLICY
+
 ready = json.load(urllib.request.urlopen("http://127.0.0.1:8000/ready", timeout=10))
 health = json.load(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=10))
 errors = []
@@ -41,9 +43,9 @@ if ready.get("components", {}).get("risk_engine") != "HEALTHY":
     errors.append("risk")
 if ready.get("components", {}).get("exit_engine") != "HEALTHY":
     errors.append("exit")
-if ready.get("risk_policy_version") != "aggressive-1":
+if ready.get("risk_policy_version") != OFFICIAL_POLICY["risk_policy_version"]:
     errors.append("risk version")
-if ready.get("exit_policy_version") != "aggressive-exit-1":
+if ready.get("exit_policy_version") != OFFICIAL_POLICY["exit_policy_version"]:
     errors.append("exit version")
 if errors:
     raise SystemExit("SMOKE FAILED: " + ", ".join(errors))

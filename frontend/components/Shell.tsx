@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
-import { PHASES, apiGet, apiPost, poll, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, apiPost, poll, warm, type SystemStatus } from "@/lib/api";
 import { LogoLockup } from "@/components/Logo";
 
 type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
@@ -31,6 +31,15 @@ function TabIcon({ d }: { d: string }) {
     </svg>
   );
 }
+
+const WARM: Record<string, string[]> = {
+  "/": ["/api/v1/desk", "/api/v1/broker/alpaca/positions", "/api/v1/risk", "/api/v1/report/trades?period=today"],
+  "/positions": ["/api/v1/broker/alpaca/positions", "/api/v1/risk", "/api/v1/report/trades?period=today"],
+  "/history": ["/api/v1/report/trades?period=all"],
+  "/learning": ["/api/v1/learning/trades?period=all"],
+  "/finance": ["/api/v1/finance"],
+  "/risk": ["/api/v1/risk"],
+};
 
 const icons = {
   desk: "M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z",
@@ -145,7 +154,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           setNote("החיבור לשרת נקטע");
         }
       }
-    }, 10000);
+    }, 15000);
     return () => {
       alive = false;
       stop();
@@ -298,6 +307,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     key={item.href}
                     href={item.href}
                     className={`nav-link${active(item.href) ? " active" : ""}`}
+                    onMouseEnter={() => warm(WARM[item.href] ?? [])}
+                    onFocus={() => warm(WARM[item.href] ?? [])}
                   >
                     <span className="nav-name">
                       <NavIcon d={item.icon} />
@@ -374,7 +385,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </div>
         <nav className="tabbar" aria-label="ניווט ראשי">
           {tabs.map((tab) => (
-            <Link key={tab.href} href={tab.href} className={`tab${active(tab.href) ? " on" : ""}`}>
+            <Link key={tab.href} href={tab.href} className={`tab${active(tab.href) ? " on" : ""}`} onMouseEnter={() => warm(WARM[tab.href] ?? [])} onFocus={() => warm(WARM[tab.href] ?? [])}>
               <TabIcon d={tab.icon} />
               <span>{tab.label}</span>
             </Link>

@@ -318,7 +318,7 @@ def test_broker_unavailable_returns_502(tmp_path, monkeypatch):
         return AlpacaPaperClient(key, secret, trading_mode, httpx.MockTransport(handler))
 
     monkeypatch.setattr("app.broker.runtime.AlpacaPaperClient", factory)
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         response = client.get("/api/v1/broker/alpaca/account")
     assert response.status_code == 502
     assert "secret-value" not in response.text
@@ -341,7 +341,7 @@ def test_pre_order_risk_uses_alpaca_equity_not_the_internal_ledger():
 
 def test_capabilities_keep_strategy_exits_local(tmp_path):
     settings = _settings(tmp_path)
-    with TestClient(create_app(settings)) as client:
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
         body = client.get("/api/v1/broker/alpaca/capabilities").json()
     assert body["strategy_position_intents"] == ["buy_to_open", "sell_to_close"]
     assert "market" in body["order_types"]

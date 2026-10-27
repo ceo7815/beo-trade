@@ -26,7 +26,6 @@ def _post(url: str, *, transport: httpx.BaseTransport | None = None, timeout: fl
 
 
 THETADATA_AUTH_URL = "https://nexus-api.thetadata.us/identity/terminal/auth_user"
-THETADATA_CLIENT_KEY = "cf58ada4-4175-11f0-860f-1e2e95c79e64"
 
 
 def probe_openai(settings: Settings, transport: httpx.BaseTransport | None = None) -> tuple[str, int | None, str]:
@@ -87,7 +86,7 @@ def probe_thetadata(settings: Settings, transport: httpx.BaseTransport | None = 
     subscription = ""
     auth_result: tuple[str, int | None, str] | None = None
     if key:
-        auth_result = _probe_thetadata_key(key)
+        auth_result = _probe_thetadata_key(key, settings.thetadata_client_key)
         if auth_result[0] == "authenticated":
             subscription = auth_result[2]
     terminal = _probe_terminal_data(settings, transport, subscription)
@@ -113,18 +112,20 @@ def _tier(value: object) -> str:
     return "אין נתונים"
 
 
-def _probe_thetadata_key(key: str) -> tuple[str, int | None, str]:
+def _probe_thetadata_key(key: str, client_key: str) -> tuple[str, int | None, str]:
+    token = client_key.strip()
+    headers = {"TD-TERMINAL-KEY": token} if token else {}
     try:
         latency, response = _timed(
             lambda: _post(
                 THETADATA_AUTH_URL,
                 json={"apiKey": key, "authEnv": {"envType": "PROD"}},
-                headers={"TD-TERMINAL-KEY": THETADATA_CLIENT_KEY},
+                headers=headers,
                 timeout=15.0,
             )
         )
     except httpx.HTTPError as exc:
-        return "disconnected", None, scrub(str(exc), [key])
+        return "disconnected", None, scrub(str(exc), [key, token])
     if response.status_code in {401, 403}:
         return "error", latency, "האימות נכשל"
     if response.status_code != 200:

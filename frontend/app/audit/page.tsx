@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 
 type Row = { trade_id: string; state: string; source: string; reason: string; created_at: string };
 type Explain = { title: string; does: string; formula: string };
@@ -14,11 +14,10 @@ export default function AuditPage() {
   useEffect(() => {
     let alive = true;
     const load = () => apiGet<{ items: Row[] }>("/api/v1/audit").then((body) => alive && setItems(body.items)).catch(() => alive && setItems(null));
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

@@ -199,6 +199,12 @@ def _commit(prior: dict | None, updated: dict) -> dict:
     temporary = path.with_suffix(f".{os.getpid()}.tmp")
     temporary.write_text(json.dumps(merged), encoding="utf-8")
     temporary.replace(path)
+    try:
+        from app.analytics.read_cache import invalidate_heavy_reads
+
+        invalidate_heavy_reads()
+    except Exception:
+        pass
     return merged
 
 

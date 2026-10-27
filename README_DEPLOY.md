@@ -19,16 +19,26 @@ bash scripts/deploy.sh
 
 הפורט הציבורי היחיד הוא פורט האתר, ברירת מחדל `3000`. ה-API נשאר ברשת הפנימית `beo_trade`. XCloud מנתב HTTPS אל פורט זה.
 
-## מה ממלאים אחרי תשלום
+## מה ממלאים לפני Deploy Now
 
-רק ב-`.env` על השרת:
+בקובץ הסביבה של XCloud, לא בגיט. בלי החמישה הראשונים ה-API לא מחזיר נתונים (503 עד שמגדירים מפתח, 401 אחר כך):
+
+- `API_ADMIN_KEY`
+- `API_READ_KEY`
+- `DASHBOARD_USER`
+- `DASHBOARD_PASSWORD`
+- `SESSION_SECRET`
+- `THETADATA_CLIENT_KEY` — מזהה הלקוח לבדיקת הזהות, בלי ערך בקוד
+
+אחרי תשלום, באותו קובץ:
 
 - `THETADATA_BASE_URL` — הכתובת של המכונה שמריצה את Theta Terminal, לא `127.0.0.1` שבתוך הקונטיינר
+- `THETADATA_API_KEY`
 - `BENZINGA_API_KEY`
 - `OPENAI_API_KEY`
 - מפתחות Alpaca Paper
 
-אחר כך `bash scripts/deploy.sh`. אין צורך בשינוי קוד.
+אחר כך Deploy Now (או `bash scripts/deploy.sh` על שרת משלכם). אין צורך בשינוי קוד. בדיקת הסגירה אחרי העלייה: `curl` אנונימי אל `/backend/api/v1/report/trades` מחזיר 401. הפירוט ב-`docs/RUNBOOK.md`.
 
 Theta Terminal רץ כשירות `theta` על אותו שרת, עם Java 21, על פורט 25503 בתוך הרשת הפנימית. אחרי תשלום מוסיפים רק `THETADATA_API_KEY` ב-xCloud ופורסים מחדש. הכתובת הפנימית היא `http://theta:25503`. לא משתמשים ב-`127.0.0.1`.
 

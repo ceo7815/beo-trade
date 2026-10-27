@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { PHASES, apiGet, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
 
 type Desk = {
   last_scan: {
@@ -23,7 +23,7 @@ export default function ScannerPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      Promise.allSettled([
+      return Promise.allSettled([
         apiGet<Desk>("/api/v1/desk"),
         apiGet<SystemStatus>("/api/v1/system"),
       ]).then(([deskResult, statusResult]) => {
@@ -32,11 +32,10 @@ export default function ScannerPage() {
         setStatus(statusResult.status === "fulfilled" ? statusResult.value : null);
       });
     };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

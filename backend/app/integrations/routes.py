@@ -8,7 +8,7 @@ from app.config.settings import Settings
 from app.broker.execution import place_order
 from app.broker.runtime import open_paper_broker
 from app.broker.normalize import execution_pnl
-from app.broker.store import remember_account, remember_orders, remember_positions
+from app.broker.store import commit_if_unlocked, remember_account, remember_orders, remember_positions
 from app.broker.stream import ingest_update, probe_trade_stream
 from app.integrations.alpaca import (
     ALLOWED_INTENTS,
@@ -44,6 +44,22 @@ def _broker(settings: Settings):
         raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
+def _snapshot(work) -> None:
+    """Persist a live read without blocking the response on the trading loop's write lock."""
+    try:
+        with session_scope() as session:
+            work(session)
+            commit_if_unlocked(session)
+    except Exception:
+        return
+
+
+def _cached_broker(key: tuple, load):
+    from app.analytics.read_cache import BROKER_TTL_SECONDS, read_cache
+
+    return read_cache.get_or_compute(("broker",) + key, BROKER_TTL_SECONDS, load)
+
+
 def register(app: FastAPI, settings: Settings) -> None:
     @app.get("/api/v1/integrations")
     def integrations(authorization: str | None = Header(default=None)):
@@ -75,32 +91,36 @@ def register(app: FastAPI, settings: Settings) -> None:
     @app.get("/api/v1/broker/alpaca/account")
     def alpaca_account(authorization: str | None = Header(default=None)):
         user_id_from_header(settings, authorization)
-        adapter = _broker(settings)
-        try:
-            account = adapter.get_account()
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
-        finally:
-            adapter.close()
-        with session_scope() as session:
-            remember_account(session, account)
-            session.commit()
-        return {"environment": "PAPER", "source": "alpaca-paper", "source_provider": "alpaca", "account": account}
+
+        def load():
+            adapter = _broker(settings)
+            try:
+                account = adapter.get_account()
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
+            finally:
+                adapter.close()
+            _snapshot(lambda session: remember_account(session, account))
+            return {"environment": "PAPER", "source": "alpaca-paper", "source_provider": "alpaca", "account": account}
+
+        return _cached_broker(("account",), load)
 
     @app.get("/api/v1/broker/alpaca/positions")
     def alpaca_positions(authorization: str | None = Header(default=None)):
         user_id_from_header(settings, authorization)
-        adapter = _broker(settings)
-        try:
-            items = adapter.sync_positions()
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
-        finally:
-            adapter.close()
-        with session_scope() as session:
-            remember_positions(session, items)
-            session.commit()
-        return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
+
+        def load():
+            adapter = _broker(settings)
+            try:
+                items = adapter.sync_positions()
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
+            finally:
+                adapter.close()
+            _snapshot(lambda session: remember_positions(session, items))
+            return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
+
+        return _cached_broker(("positions",), load)
 
     @app.get("/api/v1/broker/alpaca/orders")
     def alpaca_orders(
@@ -112,17 +132,19 @@ def register(app: FastAPI, settings: Settings) -> None:
         until: str = "",
     ):
         user_id_from_header(settings, authorization)
-        adapter = _broker(settings)
-        try:
-            items = adapter.get_orders(status=status, symbol=symbol, asset_class=asset_class, after=after, until=until)
-        except httpx.HTTPError as exc:
-            raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
-        finally:
-            adapter.close()
-        with session_scope() as session:
-            remember_orders(session, items)
-            session.commit()
-        return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
+
+        def load():
+            adapter = _broker(settings)
+            try:
+                items = adapter.get_orders(status=status, symbol=symbol, asset_class=asset_class, after=after, until=until)
+            except httpx.HTTPError as exc:
+                raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
+            finally:
+                adapter.close()
+            _snapshot(lambda session: remember_orders(session, items))
+            return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
+
+        return _cached_broker(("orders", status, symbol, asset_class, after, until), load)
 
     @app.post("/api/v1/broker/alpaca/orders")
     def alpaca_submit(body: OrderBody, authorization: str | None = Header(default=None)):
@@ -227,12 +249,13 @@ def register(app: FastAPI, settings: Settings) -> None:
             raise HTTPException(status_code=502, detail=scrub(str(exc))) from exc
         finally:
             adapter.close()
-        with session_scope() as session:
+        def persist(session):
             from app.broker.store import remember_fill
 
             for item in items:
                 remember_fill(session, item)
-            session.commit()
+
+        _snapshot(persist)
         return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
 
     @app.get("/api/v1/broker/alpaca/clock")

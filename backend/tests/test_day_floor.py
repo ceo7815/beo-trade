@@ -65,6 +65,24 @@ def test_sell_uses_the_bid_and_otherwise_the_discounted_mark():
     assert floor_sell_price(None, None, Decimal("0.10")) is None
 
 
+def test_writing_the_day_latch_drops_the_read_cache(tmp_path, monkeypatch):
+    from app.analytics.read_cache import read_cache
+    from app.options.day_floor import latch_hard_stop
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    read_cache.set(("risk", "now"), {"available": True, "loss": "ok"}, 30)
+    read_cache.set(("trades", "all"), {"available": True, "closed": []}, 45)
+    quiet = observe_day_floor(settings, Decimal("100"), NOW, True)
+    assert quiet["closed"] is False
+    assert read_cache.get(("risk", "now"))["loss"] == "ok"
+    closed = latch_hard_stop(settings, NOW)
+    assert closed["reason"] == "DAILY_HARD_STOP"
+    assert read_cache.get(("risk", "now")) is None
+    assert read_cache.get(("trades", "all")) is None
+    read_cache.clear()
+
+
 def test_a_closed_session_does_not_arm_from_a_stale_mark(tmp_path, monkeypatch):
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER")

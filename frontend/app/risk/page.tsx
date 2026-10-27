@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { FloorMark } from "@/components/FloorMark";
 import { exitLabel } from "@/lib/exits";
 import { Shell } from "@/components/Shell";
-import { apiGet } from "@/lib/api";
+import { apiGet, poll } from "@/lib/api";
 
 type Risk = {
   state: string;
@@ -115,7 +115,7 @@ export default function RiskPage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      Promise.allSettled([
+      return Promise.allSettled([
         apiGet<Risk>("/api/v1/risk"),
         apiGet<{ exposure?: string | null; closed_trades?: ClosedTrade[] }>("/api/v1/finance"),
         apiGet<Policy>("/api/v1/policy"),
@@ -141,11 +141,10 @@ export default function RiskPage() {
         setTrace(latest?.policy ?? null);
       });
     };
-    load();
-    const timer = window.setInterval(load, 12000);
+    const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
-      window.clearInterval(timer);
+      stop();
     };
   }, []);
 

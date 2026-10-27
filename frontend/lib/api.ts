@@ -141,44 +141,126 @@ function toLogin(response: Response) {
   window.location.href = `/login?next=${encodeURIComponent(window.location.pathname + window.location.search)}`;
 }
 
-export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
-    toLogin(response);
-    if (!response.ok) {
-      throw new Error("הבקשה נכשלה");
-    }
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timer);
+type CacheEntry = { data: unknown; at: number };
+
+const memory = new Map<string, CacheEntry>();
+const flights = new Map<string, Promise<unknown>>();
+
+function windowFor(path: string) {
+  if (path.includes("/report/trades") || path.includes("/learning/") || path.includes("/finance")) {
+    return { fresh: 20_000, stale: 180_000 };
   }
+  if (
+    path.includes("/broker/alpaca/positions") ||
+    path.includes("/broker/alpaca/orders") ||
+    path.includes("/broker/alpaca/account") ||
+    path.includes("/risk") ||
+    path.includes("/desk")
+  ) {
+    return { fresh: 8_000, stale: 60_000 };
+  }
+  if (path.includes("/system") || path.includes("/release")) {
+    return { fresh: 12_000, stale: 90_000 };
+  }
+  return { fresh: 8_000, stale: 45_000 };
 }
 
-export function poll(task: () => Promise<unknown>, everyMs: number): () => void {
+function cachedEntry(path: string): CacheEntry | null {
+  const hit = memory.get(path);
+  if (!hit) return null;
+  if (Date.now() - hit.at > windowFor(path).stale) {
+    memory.delete(path);
+    return null;
+  }
+  return hit;
+}
+
+export function peekCached<T>(path: string): T | null {
+  const hit = cachedEntry(path);
+  return hit ? (hit.data as T) : null;
+}
+
+function fetchFresh<T>(path: string, timeoutMs: number): Promise<T> {
+  const existing = flights.get(path);
+  if (existing) return existing as Promise<T>;
+  const promise = (async () => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
+      toLogin(response);
+      if (!response.ok) throw new Error("הבקשה נכשלה");
+      const data = (await response.json()) as T;
+      memory.set(path, { data, at: Date.now() });
+      return data;
+    } finally {
+      clearTimeout(timer);
+      flights.delete(path);
+    }
+  })();
+  flights.set(path, promise);
+  return promise;
+}
+
+export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
+  const hit = cachedEntry(path);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  const { fresh } = windowFor(path);
+  if (hit && age < fresh) return hit.data as T;
+  if (hit) {
+    void fetchFresh(path, timeoutMs).catch(() => undefined);
+    return hit.data as T;
+  }
+  return fetchFresh<T>(path, timeoutMs);
+}
+
+/** Show the last payload immediately, then replace it when a refresh lands. */
+export function loadCached<T>(path: string, apply: (body: T) => void, timeoutMs = 15000): Promise<void> {
+  const hit = cachedEntry(path);
+  const age = hit ? Date.now() - hit.at : Infinity;
+  const { fresh } = windowFor(path);
+  if (hit) apply(hit.data as T);
+  if (hit && age < fresh) return Promise.resolve();
+  return fetchFresh<T>(path, timeoutMs).then(apply);
+}
+
+export function warm(paths: string[]) {
+  for (const path of paths) void apiGet(path).catch(() => undefined);
+}
+
+export function poll(task: () => Promise<unknown> | unknown, everyMs: number): () => void {
   let stopped = false;
   let busy = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const schedule = (delay: number) => {
+    if (!stopped) timer = setTimeout(run, delay);
+  };
   const run = async () => {
     if (stopped || busy) return;
+    if (typeof document !== "undefined" && document.hidden) {
+      schedule(1000);
+      return;
+    }
     busy = true;
     try {
-      await task().catch(() => undefined);
+      await task();
+    } catch {
+      /* the screen keeps the last good payload */
     } finally {
       busy = false;
-      if (!stopped) timer = setTimeout(run, document.hidden ? everyMs * 3 : everyMs);
+      schedule(everyMs);
     }
   };
   const wake = () => {
-    if (document.hidden || busy) return;
+    if (typeof document !== "undefined" && document.hidden) return;
+    if (busy) return;
     clearTimeout(timer);
-    run();
+    void run();
   };
   document.addEventListener("visibilitychange", wake);
   window.addEventListener("online", wake);
   window.addEventListener("focus", wake);
-  run();
+  void run();
   return () => {
     stopped = true;
     clearTimeout(timer);

@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import inspect
 import json
-from datetime import datetime, timedelta, timezone
+from concurrent.futures import ThreadPoolExecutor
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from zoneinfo import ZoneInfo
 from pathlib import Path
@@ -20,6 +22,8 @@ from app.models.tables import AIRequestLog, BrokerTradeEvent
 LAST_SCAN = Path(__file__).resolve().parents[2] / "data" / "last_scan.json"
 HEARTBEAT = Path(__file__).resolve().parents[2] / "data" / "worker_heartbeat.txt"
 _lab_cache: dict[tuple, dict] = {}
+# Buys that opened before the requested window still have to pair with today's sells.
+FILL_LOOKBACK_DAYS = 21
 
 
 def write_last_scan(payload: dict) -> None:
@@ -82,6 +86,71 @@ def _dte(contract: dict | None, closed_at: datetime | None) -> int | None:
         return (date.fromisoformat(str(expiration)) - closed_at.astimezone(timezone.utc).date()).days
     except ValueError:
         return None
+
+
+def _parallel_reads(calls: dict) -> dict:
+    """Run independent broker reads together. One failure becomes None and does not cancel the others."""
+    if not calls:
+        return {}
+
+    def run(fn):
+        try:
+            return fn()
+        except Exception:
+            return None
+
+    with ThreadPoolExecutor(max_workers=min(5, len(calls))) as pool:
+        futures = {key: pool.submit(run, fn) for key, fn in calls.items()}
+        return {key: future.result() for key, future in futures.items()}
+
+
+def _fills_after(frame: dict) -> str:
+    start = frame.get("start")
+    if not start:
+        return ""
+    try:
+        day = date.fromisoformat(str(start)) - timedelta(days=FILL_LOOKBACK_DAYS)
+    except ValueError:
+        return ""
+    return day.isoformat()
+
+
+def _pull_fills(adapter, after: str) -> list[dict]:
+    method = adapter.get_all_fills
+    try:
+        parameters = inspect.signature(method).parameters
+    except (TypeError, ValueError):
+        parameters = {}
+    if after and "after" in parameters:
+        rows = method(after=after)
+    else:
+        rows = method()
+    return list(rows or [])
+
+
+def _load_fills(adapter, after: str) -> list[dict]:
+    from app.analytics.read_cache import FILL_TTL_SECONDS, read_cache
+
+    if after:
+        full = read_cache.get(("fills", ""))
+        if full is not None:
+            return [row for row in full if str(row.get("timestamp") or "") >= after]
+    cached = read_cache.get(("fills", after))
+    if cached is not None:
+        return cached
+    fills = _pull_fills(adapter, after)
+    read_cache.set(("fills", after), fills, FILL_TTL_SECONDS)
+    return fills
+
+
+def _usage_since(frame: dict, zone: str) -> datetime:
+    start = frame.get("start")
+    if not start:
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
+    try:
+        return datetime.fromisoformat(str(start)).replace(tzinfo=ZoneInfo(zone))
+    except ValueError:
+        return datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 
 def _history_window(name: str) -> tuple[str, str]:
@@ -162,8 +231,13 @@ def register(app: FastAPI, settings: Settings) -> None:
         hour: str = "",
     ):
         from app.main import user_id_from_header
+        from app.analytics.read_cache import FINANCE_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
+        cache_key = ("finance", window, side, outcome, symbol, dte, start, end, exit_reason, hour)
+        cached = read_cache.get(cache_key)
+        if cached is not None:
+            return cached
         period, timeframe = _history_window(window)
         account = None
         positions = None
@@ -175,27 +249,21 @@ def register(app: FastAPI, settings: Settings) -> None:
         except Exception:
             adapter = None
         if adapter is not None:
-            try:
-                account = adapter.get_account()
-            except Exception:
-                account = None
-            try:
-                positions = adapter.get_positions()
-            except Exception:
-                positions = None
-            try:
-                history = adapter.get_portfolio_history(period, timeframe)
-            except Exception:
-                history = None
-            try:
-                year = adapter.get_portfolio_history("1A", "1D")
-            except Exception:
-                year = None
-            try:
-                activities = adapter.get_activities()
-            except Exception:
-                activities = None
+            fetched = _parallel_reads(
+                {
+                    "account": adapter.get_account,
+                    "positions": adapter.get_positions,
+                    "history": lambda: adapter.get_portfolio_history(period, timeframe),
+                    "year": lambda: adapter.get_portfolio_history("1A", "1D"),
+                    "activities": adapter.get_activities,
+                }
+            )
             adapter.close()
+            account = fetched.get("account")
+            positions = fetched.get("positions")
+            history = fetched.get("history")
+            year = fetched.get("year")
+            activities = fetched.get("activities")
         exposure = None
         if positions is not None:
             total = Decimal("0")
@@ -225,7 +293,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
         points = [] if history is None else history.get("points") or []
         year_points = [] if year is None else year.get("points") or []
-        return {
+        payload = {
             "environment": "PAPER",
             "account": None
             if account is None
@@ -257,12 +325,28 @@ def register(app: FastAPI, settings: Settings) -> None:
             "sector": {"available": False, "note": "נתוני סקטור אינם זמינים"},
             "best_worst": {"note": "אין מספיק מידע לניתוח"} if len(filtered) < 3 else _best_worst(filtered),
         }
+        read_cache.set(cache_key, payload, FINANCE_TTL_SECONDS)
+        return payload
 
     @app.get("/api/v1/risk")
     def risk_view(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
+        from app.analytics.read_cache import RISK_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
+        cached = read_cache.get(("risk",))
+        if cached is None:
+            cached = _risk_body(settings)
+            read_cache.set(("risk",), cached, RISK_TTL_SECONDS)
+        try:
+            from app.options.day_floor import public_from_store
+
+            cached["day_floor"] = public_from_store(settings, datetime.now(timezone.utc))
+        except Exception:
+            pass
+        return cached
+
+    def _risk_body(settings) -> dict:
         trading = settings.trading()
         account = None
         positions = None
@@ -271,13 +355,23 @@ def register(app: FastAPI, settings: Settings) -> None:
         try:
             adapter = open_paper_broker(settings)
             try:
-                account = adapter.get_account()
-                positions = adapter.get_positions()
-                activities = adapter.get_activities()
-                try:
-                    session_open = adapter.get_market_clock().get("is_open") is True
-                except Exception:
-                    session_open = False
+                fetched = _parallel_reads(
+                    {
+                        "account": adapter.get_account,
+                        "positions": adapter.get_positions,
+                        "activities": adapter.get_activities,
+                        "clock": adapter.get_market_clock,
+                    }
+                )
+                account = fetched.get("account")
+                positions = fetched.get("positions")
+                activities = fetched.get("activities")
+                clock = fetched.get("clock")
+                if account is None or positions is None or activities is None:
+                    account = None
+                    positions = None
+                    activities = None
+                session_open = isinstance(clock, dict) and clock.get("is_open") is True
             finally:
                 adapter.close()
         except Exception:
@@ -347,15 +441,23 @@ def register(app: FastAPI, settings: Settings) -> None:
     @app.get("/api/v1/report/trades")
     def trades_report(authorization: str | None = Header(default=None), period: str = "all", start: str = "", end: str = ""):
         from app.main import user_id_from_header
+        from app.analytics.read_cache import REPORT_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
+        return read_cache.get_or_compute(
+            ("trades", period, start, end),
+            REPORT_TTL_SECONDS,
+            lambda: _trades_report(period, start, end),
+        )
+
+    def _trades_report(period: str, start: str, end: str) -> dict:
         frame = window(period, start, end, zone=settings.exchange_timezone)
         try:
             adapter = open_paper_broker(settings)
         except Exception as exc:
             return {"environment": "PAPER", "available": False, "detail": type(exc).__name__}
         try:
-            fills = adapter.get_all_fills()
+            fills = _load_fills(adapter, _fills_after(frame))
             positions = adapter.get_positions()
         except Exception as exc:
             return {"environment": "PAPER", "available": False, "detail": type(exc).__name__}
@@ -373,7 +475,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                 from app.ai.budget import make_ledger
                 from app.models.store import load_usage
 
-                entries = load_usage(session, datetime(2000, 1, 1, tzinfo=timezone.utc), make_ledger(settings).cost_of)
+                entries = load_usage(session, _usage_since(frame, settings.exchange_timezone), make_ledger(settings).cost_of)
                 ai_cost = sum((entry.cost for entry in entries if within(entry.created_at, frame)), Decimal("0"))
         return {
             "environment": "PAPER",
@@ -389,6 +491,17 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/api/v1/learning/trades")
     def learning_trades(authorization: str | None = Header(default=None), period: str = "all"):
+        from app.main import user_id_from_header
+        from app.analytics.read_cache import REPORT_TTL_SECONDS, read_cache
+
+        user_id_from_header(settings, authorization)
+        return read_cache.get_or_compute(
+            ("learning-trades", period),
+            REPORT_TTL_SECONDS,
+            lambda: _learning_trades(authorization, period),
+        )
+
+    def _learning_trades(authorization: str | None, period: str) -> dict:
         from app.analytics import learning
 
         report = trades_report(authorization=authorization, period=period, start="", end="")
@@ -443,6 +556,17 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/api/v1/learning/lab")
     def learning_lab(authorization: str | None = Header(default=None), period: str = "all"):
+        from app.main import user_id_from_header
+        from app.analytics.read_cache import REPORT_TTL_SECONDS, read_cache
+
+        user_id_from_header(settings, authorization)
+        return read_cache.get_or_compute(
+            ("learning-lab", period),
+            REPORT_TTL_SECONDS,
+            lambda: _learning_lab(authorization, period),
+        )
+
+    def _learning_lab(authorization: str | None, period: str) -> dict:
         from app.analytics import learning
 
         report = trades_report(authorization=authorization, period=period, start="", end="")
@@ -474,6 +598,9 @@ def register(app: FastAPI, settings: Settings) -> None:
         if not report.get("available"):
             return report
         started = learning.start_backfill(settings, report["closed"])
+        from app.analytics.read_cache import invalidate_heavy_reads
+
+        invalidate_heavy_reads()
         return {"started": started, **learning.BACKFILL}
 
     @app.get("/api/v1/ai/summary")
@@ -687,8 +814,95 @@ def _levels(session, trades: list[dict], settings) -> None:
 def _explain(session, trades: list[dict], config) -> None:
     from app.analytics.story import trade_story
 
+    found = _entry_recommendations(session, trades)
+    for trade, entry in zip(trades, found):
+        trade["story"] = trade_story(trade, entry, config)
+
+
+def _entry_recommendations(session, trades: list[dict]) -> list[dict | None]:
+    """Same match as one trade at a time: broker order first, then the nearest BUY on that contract."""
+    from sqlalchemy import select
+
+    from app.models.tables import AIAnalysis, BrokerOrderRecord, RecommendationRow
+
+    if not trades:
+        return []
+    order_ids: list[str] = []
+    underlyings: list[str] = []
     for trade in trades:
-        trade["story"] = trade_story(trade, _entry_recommendation(session, trade), config)
+        order_ids.extend(str(item) for item in trade.get("order_ids") or [] if item)
+        name = str(trade.get("underlying") or "")
+        if name:
+            underlyings.append(name)
+    orders: list = []
+    if order_ids:
+        orders = list(
+            session.scalars(
+                select(BrokerOrderRecord).where(
+                    BrokerOrderRecord.broker_order_id.in_(set(order_ids)),
+                    BrokerOrderRecord.position_intent == "buy_to_open",
+                    BrokerOrderRecord.recommendation_id != "",
+                )
+            )
+        )
+    recs = {}
+    rec_ids = {order.recommendation_id for order in orders if order.recommendation_id}
+    if rec_ids:
+        for row in session.scalars(select(RecommendationRow).where(RecommendationRow.id.in_(rec_ids))):
+            recs[row.id] = row
+    by_underlying: dict[str, list] = {}
+    if underlyings:
+        for row in session.scalars(
+            select(RecommendationRow).where(
+                RecommendationRow.underlying.in_(set(underlyings)),
+                RecommendationRow.decision == "BUY",
+            )
+        ):
+            by_underlying.setdefault(row.underlying, []).append(row)
+    chosen = []
+    for trade in trades:
+        wanted = {str(item) for item in trade.get("order_ids") or [] if item}
+        row = None
+        for order in orders:
+            if order.broker_order_id not in wanted:
+                continue
+            row = recs.get(order.recommendation_id)
+            if row is not None:
+                break
+        opened = _parsed_time(trade.get("opened_at") or "")
+        if row is None and opened is not None:
+            symbol = str(trade.get("symbol") or "").replace(" ", "").upper()
+            best = None
+            for candidate in by_underlying.get(str(trade.get("underlying") or ""), []):
+                if candidate.option_symbol.replace(" ", "").upper() != symbol:
+                    continue
+                made = candidate.created_at if candidate.created_at.tzinfo else candidate.created_at.replace(tzinfo=timezone.utc)
+                gap = (opened - made).total_seconds()
+                if -120 <= gap <= 1800 and (best is None or abs(gap) < best[0]):
+                    best = (abs(gap), candidate)
+            row = None if best is None else best[1]
+        chosen.append(row)
+    analysis_ids = {row.analysis_id for row in chosen if row is not None and row.analysis_id}
+    analyses = {}
+    if analysis_ids:
+        for row in session.scalars(select(AIAnalysis).where(AIAnalysis.id.in_(analysis_ids))):
+            analyses[row.id] = row
+    described = []
+    for row in chosen:
+        if row is None:
+            described.append(None)
+            continue
+        analysis = analyses.get(row.analysis_id) if row.analysis_id else None
+        described.append(
+            {
+                "thesis": row.thesis,
+                "catalyst": row.catalyst,
+                "reason_codes": list(row.reason_codes or []),
+                "underlying_price": str(row.underlying_price),
+                "ai_reviewed": bool(analysis is not None and analysis.model),
+            }
+        )
+    return described
 
 
 def _stored_closed() -> list[dict]:

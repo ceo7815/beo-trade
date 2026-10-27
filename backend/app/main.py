@@ -46,26 +46,41 @@ from app.security.auth import user_id_from_header
 from app.security.middleware import ApiKeyMiddleware, RateLimitMiddleware, SecurityHeadersMiddleware
 
 log = structlog.get_logger()
-_feed_refresh = threading.Lock()
+# A hung FRED or SEC fetch must not keep this gate shut until the process restarts.
+_REFRESH_LIMIT_SECONDS = 45.0
 
 
-def _refresh_feeds(provider_set, now: datetime) -> None:
-    if not _feed_refresh.acquire(blocking=False):
+def _refresh_feeds(provider_set, now: datetime, lock: threading.Lock) -> None:
+    """Refresh macro and research off the request path. Skip when one is already running."""
+    if not lock.acquire(blocking=False):
         return
 
     def run() -> None:
-        try:
-            for feed in (provider_set.macro, provider_set.research):
-                if feed is None:
-                    continue
-                try:
-                    feed.latest(now)
-                except Exception as exc:
-                    log.warning("feed_refresh_failed", feed=getattr(feed, "name", "?"), error=type(exc).__name__)
-        finally:
-            _feed_refresh.release()
+        done = threading.Event()
 
-    threading.Thread(target=run, name="feed-refresh", daemon=True).start()
+        def work() -> None:
+            try:
+                for feed in (provider_set.macro, provider_set.research):
+                    if feed is None:
+                        continue
+                    try:
+                        feed.latest(now)
+                    except Exception as exc:
+                        log.warning("feed_refresh_failed", feed=getattr(feed, "name", "?"), error=type(exc).__name__)
+            finally:
+                done.set()
+
+        try:
+            threading.Thread(target=work, name="feed-refresh-worker", daemon=True).start()
+            done.wait(_REFRESH_LIMIT_SECONDS)
+        finally:
+            lock.release()
+
+    try:
+        threading.Thread(target=run, name="feed-refresh", daemon=True).start()
+    except Exception:
+        lock.release()
+        raise
 
 
 def _money(value) -> str:
@@ -150,8 +165,9 @@ def _decision_analyzer(settings: Settings, ledger):
     return OpenAIResponsesClient(settings, ledger)
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, allow_open_api: bool = False) -> FastAPI:
     current = settings or get_settings()
+    feed_lock = threading.Lock()
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -175,7 +191,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     # production ceiling so a single open tab cannot lock itself out.
     rate_limit = 600 if current.app_env == "production" else 2000
     app.add_middleware(RateLimitMiddleware, limit=rate_limit)
-    app.add_middleware(ApiKeyMiddleware, admin_key=current.api_admin_key.strip(), read_key=current.api_read_key.strip())
+    app.add_middleware(
+        ApiKeyMiddleware,
+        admin_key=current.api_admin_key.strip(),
+        read_key=current.api_read_key.strip(),
+        allow_open_api=allow_open_api,
+    )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=[item.strip() for item in current.cors_origins.split(",") if item.strip()],
@@ -223,7 +244,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         bounds = session_bounds(now, calendar)
         provider_set = build_providers(current)
         providers = provider_set.status()
-        _refresh_feeds(provider_set, now)
+        _refresh_feeds(provider_set, now, feed_lock)
         feeds = merged_feed_statuses(provider_set)
         news_status = feeds["news_status"]
         market_status = feeds["market_status"]

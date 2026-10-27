@@ -52,6 +52,9 @@ def init_db(settings: Settings) -> None:
         configure_database(settings)
     if settings.auto_create_tables:
         Base.metadata.create_all(_engine)
+    from app.models.indexes import ensure_read_indexes
+
+    ensure_read_indexes(_engine)
     assert SessionLocal is not None
     with SessionLocal() as session:
         user = session.get(User, settings.dev_user_id)
