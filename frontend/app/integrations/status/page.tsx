@@ -1,6 +1,7 @@
 "use client";
 
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { useIntegrations } from "@/components/IntegrationBoard";
 
 export default function IntegrationStatusPage() {
@@ -16,7 +17,7 @@ function StatusBody() {
   const items = data?.items.filter((item) => item.group === "active") ?? [];
   return (
     <div>
-      <h1>סטטוס מערכת</h1>
+      <h1>{copy.screens.integrationStatus}</h1>
       <p className="mt-2 font-bold text-[var(--muted)]">מצב אחרון שנבדק. אין כאן ירוק בלי בדיקה.</p>
       {error ? <p className="mt-4 font-bold text-[var(--rose)]">{error}</p> : null}
       <section className="panel mt-6 max-w-3xl">

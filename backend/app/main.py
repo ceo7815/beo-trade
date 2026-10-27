@@ -311,6 +311,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         else:
             alerts.append("הסורק עדיין לא עלה.")
         health_state = "ok" if database == "ok" and not alerts else "degraded"
+        from app.analytics.kill_line import display_kill_usd
         from app.control.halt import is_halted
 
         return {
@@ -350,6 +351,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "worker_heartbeat_age_seconds": heartbeat_age,
             "paper_only": True,
             "trading_halted": is_halted(),
+            "daily_kill_loss_usd": display_kill_usd(current.trading(), equity if equity > 0 else None),
         }
 
     @app.get("/api/v1/control/trading")

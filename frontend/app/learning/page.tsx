@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet, apiPost, poll } from "@/lib/api";
 import { exitLabel } from "@/lib/exits";
 
@@ -173,7 +174,7 @@ export default function LearningPage() {
       <section className="engine book">
         <header className="ops-head">
           <div>
-            <h1>מה עובד</h1>
+            <h1>{copy.screens.learning}</h1>
             <p>כל עסקה סגורה: שיא, שפל, כמה ויתרנו, ומה היו נותנים כללי יציאה אחרים · PAPER</p>
           </div>
           <div className="ops-pips">

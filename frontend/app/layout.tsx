@@ -1,12 +1,34 @@
 import type { Metadata, Viewport } from "next";
-import { Rubik } from "next/font/google";
+import localFont from "next/font/local";
 import "./globals.css";
+import "./v2.css";
 
-const rubik = Rubik({
-  subsets: ["latin", "hebrew"],
-  weight: ["500", "700", "800", "900"],
+const rubik = localFont({
+  src: "../fonts/Rubik-latin.woff2",
+  weight: "300 700",
+  style: "normal",
   display: "swap",
   variable: "--font-rubik",
+  adjustFontFallback: "Arial",
+});
+
+const rubikHebrew = localFont({
+  src: "../fonts/Rubik-hebrew.woff2",
+  weight: "300 700",
+  style: "normal",
+  display: "swap",
+  variable: "--font-rubik-hebrew",
+  adjustFontFallback: false,
+});
+
+const rubikLatinExt = localFont({
+  src: "../fonts/Rubik-latin-ext.woff2",
+  weight: "300 700",
+  style: "normal",
+  display: "swap",
+  preload: false,
+  adjustFontFallback: false,
+  variable: "--font-rubik-ext",
 });
 
 export const metadata: Metadata = {
@@ -19,13 +41,13 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#0b0c0e",
+  themeColor: "#07080a",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="he" dir="rtl" className={rubik.variable}>
-      <body className={`${rubik.className} antialiased`}>{children}</body>
+    <html lang="he" dir="rtl" className={`${rubik.variable} ${rubikHebrew.variable} ${rubikLatinExt.variable}`}>
+      <body className="antialiased">{children}</body>
     </html>
   );
 }

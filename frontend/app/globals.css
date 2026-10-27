@@ -22,7 +22,7 @@ body {
     radial-gradient(720px 320px at 100% 0%, rgba(231, 201, 138, 0.08), transparent 58%),
     var(--bg);
   color: var(--text);
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 500;
 }
 
@@ -124,18 +124,24 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 }
 
 .ops-flow-copy {
-  display: block;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px 0;
   min-width: 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+}
+.ops-flow-copy bdi,
+.ops-flow-copy em { font-style: normal; font-weight: 500; }
+.flow-bit {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  unicode-bidi: isolate;
   white-space: nowrap;
 }
-
-.ops-flow-copy bdi,
-.ops-flow-copy em { font-style: normal; font-weight: 700; }
-.ops-flow-copy bdi { font-weight: 800; unicode-bidi: isolate; }
-.ops-flow-copy bdi::after,
-.ops-flow-copy em:not(:last-child)::after { content: " · "; font-weight: 700; }
+.flow-sep { padding-inline: 5px; color: var(--text-3); font-weight: 400; }
 
 .rail {
   position: sticky;
@@ -458,7 +464,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 .halt-btn:disabled { opacity: 0.6; }
 
 .clock {
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
   letter-spacing: -0.05em;
@@ -671,7 +677,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   display: block;
   margin-top: 8px;
   color: #fffaf2;
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-size: 22px;
   font-weight: 800;
   font-variant-numeric: tabular-nums;
@@ -722,7 +728,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 }
 
 .num {
-  font-family: var(--font-rubik), Arial, sans-serif;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   direction: ltr;
@@ -2052,17 +2058,15 @@ button.engine-cube { cursor: pointer; }
   .ops-flow-money { grid-area: money; font-size: 18px; }
   .ops-flow .ops-flow-copy {
     grid-area: copy;
-    display: grid;
-    gap: 3px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px 0;
     overflow: visible;
     text-overflow: unset;
     white-space: normal;
     line-height: 1.45;
   }
-  .ops-flow .ops-flow-copy bdi { direction: ltr; text-align: right; }
-  .ops-flow .ops-flow-copy bdi::after,
-  .ops-flow .ops-flow-copy em::after { content: none; }
-  .ops-flow-copy em { display: block; color: var(--muted); font-size: 13px; line-height: 1.45; }
+  .ops-flow .ops-flow-copy bdi[dir="ltr"] { direction: ltr; }
   .ops-rail, .ops-matrix { grid-template-columns: 1fr 1fr; }
   .ops-node, .ops-matrix .ops-cell {
     border-bottom: 1px solid var(--line);
@@ -2185,7 +2189,7 @@ button.engine-cube { cursor: pointer; }
     display: block;
     margin-bottom: 2px;
     color: var(--muted);
-    font-family: var(--font-rubik), Arial, sans-serif;
+    font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
     font-size: 11px;
     font-weight: 700;
     direction: rtl;
@@ -2220,10 +2224,10 @@ button.engine-cube { cursor: pointer; }
 .desk-home {
   display: flex;
   flex-direction: column;
-  gap: 22px;
-  width: min(1120px, 100%);
+  gap: 12px;
+  width: 100%;
   margin-inline: auto;
-  padding: 8px 8px 28px;
+  padding: 2px 0 24px;
 }
 
 .desk-home .up, .live .up, .book .up { color: var(--up); }
@@ -2327,10 +2331,11 @@ button.engine-cube { cursor: pointer; }
 .desk-stat b { font-size: 18px; font-weight: 800; }
 
 .desk-home .ops-pane {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 16px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.035), rgba(255, 255, 255, 0.012)), rgba(14, 16, 19, 0.78);
+  box-shadow: var(--shadow-float);
+  padding: 12px 14px 14px;
 }
 
 .desk-home .ops-pane-head h2 { font-size: 15px; letter-spacing: 0.04em; }

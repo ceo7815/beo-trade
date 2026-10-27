@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet, apiPost } from "@/lib/api";
 
 type Account = Record<string, string | number | boolean | null>;
@@ -79,8 +80,8 @@ function AlpacaBody() {
   return (
     <section className="grid gap-4">
       <div className="panel">
-        <h1>מרכז פקודות</h1>
-        <p className="mt-2 font-bold text-[var(--gold)]">Alpaca Paper · אין מסחר אמיתי</p>
+        <h1>{copy.screens.broker}</h1>
+        <p className="mt-2 font-bold text-[var(--warn)]">{copy.screens.engineHint}</p>
         <p className="mt-2 font-bold">{missing ? "אין נתוני חשבון" : message}</p>
         <div className="mt-4 flex gap-2">
           <button className="nav-link" onClick={test}>בדוק חיבור</button>

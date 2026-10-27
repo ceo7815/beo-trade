@@ -167,6 +167,10 @@ def _history_window(name: str) -> tuple[str, str]:
 
 
 def register(app: FastAPI, settings: Settings) -> None:
+    from app.live.stream import register as register_stream
+
+    register_stream(app, settings)
+
     @app.get("/api/v1/desk")
     def desk(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
@@ -397,13 +401,19 @@ def register(app: FastAPI, settings: Settings) -> None:
         count = None if positions is None else len(positions)
         stopped = False
         warning = False
+        from app.options.risk_limits import day_flatten_reason
+
         level = "ok" if equity is None or counted is None else daily_loss_state(equity, counted, trading)
+        if day_flatten_reason(equity, measured, trading) == "DAILY_HARD_STOP":
+            level = "hard_stop"
         if level in {"entry_stop", "hard_stop"}:
             stopped = True
         elif level == "warning":
             warning = True
         if count is not None and count >= trading.max_concurrent_positions:
             warning = True
+        from app.analytics.kill_line import display_kill_usd
+
         if equity is None:
             state = "אין נתוני חשבון"
         elif counted is None:
@@ -421,12 +431,16 @@ def register(app: FastAPI, settings: Settings) -> None:
             day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None else public_from_store(settings, moment)
         except Exception:
             day_floor = {"armed": False, "closed": False, "arm": None, "floor": None}
+        if isinstance(day_floor, dict) and day_floor.get("closed") and not day_floor.get("cleared") and day_floor.get("reason") == "DAILY_HARD_STOP":
+            level = "hard_stop"
+            state = "עצור"
         return {
             "environment": "PAPER",
             "state": state,
             "per_trade_limit": None if equity is None else str((equity * Decimal(str(trading.max_capital_per_trade_pct))).quantize(Decimal("0.01"))),
             "exposure_limit": None if equity is None else str((equity * Decimal(str(trading.max_total_open_exposure_pct))).quantize(Decimal("0.01"))),
             "daily_loss_limit": None if equity is None else str((equity * Decimal(str(trading.daily_entry_stop_pct))).quantize(Decimal("0.01"))),
+            "daily_kill_loss_usd": display_kill_usd(trading, equity),
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,

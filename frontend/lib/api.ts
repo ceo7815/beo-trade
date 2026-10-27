@@ -1,3 +1,5 @@
+import { copy, phases } from "./copy";
+
 export type FeedStatus = {
   provider: string;
   authenticated: boolean | null;
@@ -67,6 +69,7 @@ export type SystemStatus = {
   alerts: string[];
   paper_only: boolean;
   trading_halted?: boolean;
+  daily_kill_loss_usd?: string | null;
 };
 
 export type BuyCard = {
@@ -126,15 +129,22 @@ export type PaperAccount = {
   }[];
 };
 
-export const PHASES: Record<string, string> = {
-  CLOSED: "השוק סגור",
-  PRE_MARKET: "טרום מסחר",
-  OPEN: "פתיחה",
-  INTRADAY_SCAN: "מסחר פעיל",
-  PRE_CLOSE: "לפני סגירה",
-  POST_MARKET: "אחרי סגירה",
-  DAILY_REPORT: "סיכום יומי",
-};
+export const PHASES: Record<string, string> = phases;
+
+export type LiveMode = "connecting" | "sse" | "poll";
+let liveMode: LiveMode = "connecting";
+
+export function transportMode() {
+  return liveMode;
+}
+
+export function setTransportMode(mode: LiveMode) {
+  liveMode = mode;
+}
+
+export function seedCache(path: string, data: unknown) {
+  memory.set(path, { data, at: Date.now() });
+}
 
 function toLogin(response: Response) {
   if (response.status !== 401 || typeof window === "undefined" || window.location.pathname === "/login") return;
@@ -189,7 +199,7 @@ function fetchFresh<T>(path: string, timeoutMs: number): Promise<T> {
     try {
       const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
       toLogin(response);
-      if (!response.ok) throw new Error("הבקשה נכשלה");
+      if (!response.ok) throw new Error(copy.errors.request);
       const data = (await response.json()) as T;
       memory.set(path, { data, at: Date.now() });
       return data;
@@ -273,7 +283,7 @@ export function poll(task: () => Promise<unknown> | unknown, everyMs: number): (
 export async function apiDelete(path: string): Promise<void> {
   const response = await fetch(`/backend${path}`, { method: "DELETE" });
   toLogin(response);
-  if (!response.ok) throw new Error("הבקשה נכשלה");
+  if (!response.ok) throw new Error(copy.errors.request);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
@@ -285,7 +295,7 @@ export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
   toLogin(response);
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(typeof payload.detail === "string" ? payload.detail : "הבקשה נכשלה");
+    throw new Error(typeof payload.detail === "string" ? payload.detail : copy.errors.request);
   }
   return payload as T;
 }

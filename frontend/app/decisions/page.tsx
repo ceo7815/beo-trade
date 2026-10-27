@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { apiGet, poll } from "@/lib/api";
+import { blockReasons, copy } from "@/lib/copy";
 
 type Decision = {
   id: string;
@@ -23,31 +24,7 @@ type Decision = {
 
 const WEEKDAYS = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
-const REASONS: Record<string, string> = {
-  scan_cap: "הסריקה כבר קנתה את המכסה",
-  model_suppress: "המודל דחה",
-  ai_missing: "המודל לא ענה",
-  ai_validation: "התשובה לא עברה בדיקה",
-  symbol_not_in_shortlist: "החוזה לא ברשימה",
-  quant: "השערים לא עברו",
-  AI_BUDGET_EXCEEDED: "תקציב ה-AI נגמר",
-  SECTOR_EXPOSURE_LIMIT: "תקרת סקטור",
-  EXPOSURE_LIMIT: "תקרת חשיפה",
-  AGGREGATE_RISK_LIMIT: "תקרת סיכון",
-  UNDERLYING_POSITION_LIMIT: "כבר יש פוזיציה בשם",
-  MAX_POSITIONS: "תקרת פוזיציות",
-  BUYING_POWER: "אין כוח קנייה",
-  CAPITAL_LIMIT: "תקרת הון לעסקה",
-  HARD_CAP: "תקרה קשיחה",
-  RISK_BUDGET: "תקציב הסיכון",
-  DAILY_LOSS_LIMIT_REACHED: "הפסד יומי",
-  DAILY_HARD_STOP: "עצירת הפסד יומית",
-  DAY_FLOOR: "רצפת היום",
-  REGIME_WAITING: "השוק עדיין לא ברור",
-  REGIME_UNKNOWN: "מצב השוק לא ידוע",
-  REGIME_STRESSED: "השוק לחוץ",
-  REGIME_DIRECTION: "הכיוון לא מתאים",
-};
+const REASONS = blockReasons;
 
 function why(item: Decision) {
   if (item.decision === "BUY") return "עבר את השערים";
@@ -165,7 +142,7 @@ export default function DecisionsPage() {
       <section className="engine book">
         <header className="ops-head">
           <div>
-            <h1>החלטות</h1>
+            <h1>{copy.screens.decisions}</h1>
             <p>200 ההחלטות האחרונות</p>
           </div>
           <span className={`ops-pip ${failed || items === null ? "warn" : "on"}`}>

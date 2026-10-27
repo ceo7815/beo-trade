@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet, poll } from "@/lib/api";
 
 type Row = { trade_id: string; state: string; source: string; reason: string; created_at: string };
@@ -48,7 +49,7 @@ export default function AuditPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>ביקורת מערכת</h1>
+            <h1>{copy.screens.audit}</h1>
             <p>Audit · PAPER</p>
           </div>
           <span className={`ops-pip ${items ? "on" : "warn"}`}><i />{items ? "המסד" : "טוען"}</span>

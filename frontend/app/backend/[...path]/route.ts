@@ -35,6 +35,11 @@ async function relay(request: NextRequest, { params }: { params: Promise<{ path:
   response.headers.forEach((value, name) => {
     if (!DROP_RESPONSE.has(name.toLowerCase())) out.set(name, value);
   });
+  if ((response.headers.get("content-type") || "").includes("text/event-stream")) {
+    out.set("Cache-Control", "no-cache, no-transform");
+    out.set("X-Accel-Buffering", "no");
+    out.set("Connection", "keep-alive");
+  }
   return new Response(response.body, { status: response.status, headers: out });
 }
 

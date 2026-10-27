@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { copy } from "@/lib/copy";
 import { apiGet } from "@/lib/api";
 
 type Release = { version: string; date: string; title: string; changes: string[] };
@@ -30,7 +31,7 @@ export default function VersionsPage() {
       <section className="engine">
         <header className="ops-head">
           <div>
-            <h1>גרסאות</h1>
+            <h1>{copy.screens.versions}</h1>
             <p>כל דחיפה לגיטהאב היא גרסה. האתר מציג אותה אחרי Deploy.</p>
           </div>
           <span className={`ops-pip ${body?.current ? "on" : "warn"}`}>
