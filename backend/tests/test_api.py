@@ -109,10 +109,10 @@ def test_a_stuck_refresh_in_one_app_does_not_block_another(tmp_path, monkeypatch
 
     monkeypatch.setattr("app.main.build_providers", slow_set)
     try:
-        with TestClient(create_app(_local_settings(tmp_path, "blocked.db"))) as blocked:
+        with TestClient(create_app(_local_settings(tmp_path, "blocked.db"), allow_open_api=True)) as blocked:
             assert blocked.get("/api/v1/system").status_code == 200
             holder["feed"] = Other
-            with TestClient(create_app(_local_settings(tmp_path, "other.db"))) as other:
+            with TestClient(create_app(_local_settings(tmp_path, "other.db"), allow_open_api=True)) as other:
                 assert other.get("/api/v1/system").status_code == 200
                 deadline = time.perf_counter() + 2
                 while calls.count("other") < 1 and time.perf_counter() < deadline:
@@ -148,7 +148,7 @@ def test_a_stuck_feed_gives_the_refresh_gate_back(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.main.build_providers", slow_set)
     try:
-        with TestClient(create_app(_local_settings(tmp_path, "stuck.db"))) as client:
+        with TestClient(create_app(_local_settings(tmp_path, "stuck.db"), allow_open_api=True)) as client:
             assert client.get("/api/v1/system").status_code == 200
             deadline = time.perf_counter() + 2
             while len(calls) < 2 and time.perf_counter() < deadline:
