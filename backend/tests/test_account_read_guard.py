@@ -302,13 +302,25 @@ def test_the_protection_line_follows_the_configured_ladder():
     assert early["distance"] == "3000.00"
     assert early["line"] == "עוד 3,000$ (ב-4,000$) נכנסת הגנה של 2,000$"
 
+    flat = preview_at(Decimal("0"))
+    assert flat["protection_kind"] == "kill"
+    assert flat["distance"] == "4000.00"
+    assert flat["line"] == "עוד 4,000$ (ב-4,000$) נכנסת הגנה של 2,000$"
+
+    crossed = preview_at(Decimal("4500"))
+    assert crossed["floor"] == "2000.00"
+    assert crossed["next_threshold"] == "7000.00"
+    assert crossed["next_floor"] == "3000.00"
+    assert crossed["distance"] == "2500.00"
+    assert crossed["line"] == "מוגנים 2,000$ · עוד 2,500$ (ב-7,000$) ההגנה עולה ל-3,000$"
+
     locked = preview_at(Decimal("5500"))
     assert locked["floor"] == "2000.00"
     assert locked["peak"] == "5500.00"
     assert locked["next_threshold"] == "7000.00"
     assert locked["next_floor"] == "3000.00"
     assert locked["distance"] == "1500.00"
-    assert locked["line"] == "עוד 1,500$ (ב-7,000$) ההגנה עולה ל-3,000$"
+    assert locked["line"] == "מוגנים 2,000$ · עוד 1,500$ (ב-7,000$) ההגנה עולה ל-3,000$"
 
     seven = preview_at(Decimal("7500"))
     assert seven["floor"] == "3000.00"
@@ -321,14 +333,62 @@ def test_the_protection_line_follows_the_configured_ladder():
     assert eight["next_threshold"] == "9000.00"
     assert eight["next_floor"] == "5000.00"
     assert eight["distance"] == "800.00"
-    assert eight["line"] == "עוד 800$ (ב-9,000$) ההגנה עולה ל-5,000$"
+    assert eight["line"] == "מוגנים 4,000$ · עוד 800$ (ב-9,000$) ההגנה עולה ל-5,000$"
+
+    almost = preview_at(Decimal("7366"))
+    assert almost["floor"] == "3000.00"
+    assert almost["next_threshold"] == "8000.00"
+    assert almost["next_floor"] == "4000.00"
+    assert almost["distance"] == "634.00"
+    assert almost["line"] == "מוגנים 3,000$ · עוד 634$ (ב-8,000$) ההגנה עולה ל-4,000$"
 
     top = preview_at(Decimal("15000"))
     assert top["floor"] == "11000.00"
     assert top["next_threshold"] is None
     assert top["next_floor"] is None
     assert top["distance"] is None
-    assert top["line"] == "ההגנה נעולה על 11,000$"
+    assert top["line"] == "מוגנים 11,000$"
+
+    from app.options.protection_view import protection_progress
+
+    steps = TradingConfig().day_floor_steps
+    kill = Decimal(str(TradingConfig().daily_kill_loss_usd))
+    unarmed = protection_progress(Decimal("4500"), None, steps, kill, armed=False)
+    assert unarmed["floor"] is None
+    assert unarmed["armed"] is False
+    assert unarmed["distance"] == "2500.00"
+    assert unarmed["line"] == "עוד 2,500$ (ב-7,000$) נכנסת הגנה של 3,000$"
+    assert "עוד 0$" not in unarmed["line"]
+    stale_mark = protection_progress(Decimal("7367"), None, steps, kill, armed=False)
+    assert stale_mark["line"] != "עוד 0$ (ב-4,000$) נכנסת הגנה של 2,000$"
+    assert "עוד 0$" not in stale_mark["line"]
+
+    from app.options.protection_view import present_broker_day
+
+    preopen = datetime(2026, 10, 28, 7, 50, tzinfo=timezone.utc)
+    fresh = present_broker_day(Decimal("7367"), preopen, Settings().calendar())
+    assert fresh["stale"] is True
+    assert fresh["pnl"] == Decimal("0")
+    assert fresh["note"] == "יום חדש — מתאפס בפתיחה"
+    fresh_line = protection_progress(fresh["pnl"], None, steps, kill, armed=False)
+    assert fresh_line["pnl"] == "0.00"
+    assert fresh_line["line"] == "עוד 4,000$ (ב-4,000$) נכנסת הגנה של 2,000$"
+    assert "עוד 0$" not in fresh_line["line"]
+
+    session = datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc)
+    live_mark = present_broker_day(Decimal("7367"), session, Settings().calendar())
+    assert live_mark["stale"] is False
+    assert live_mark["pnl"] == Decimal("7367")
+    assert live_mark["note"] is None
+
+    after_close = datetime(2026, 10, 28, 21, 30, tzinfo=timezone.utc)
+    same_day = present_broker_day(Decimal("7367"), after_close, Settings().calendar())
+    assert same_day["stale"] is False
+    assert same_day["pnl"] == Decimal("7367")
+
+    weekend = present_broker_day(Decimal("7367"), datetime(2026, 10, 31, 15, 0, tzinfo=timezone.utc), Settings().calendar())
+    assert weekend["stale"] is True
+    assert weekend["pnl"] == Decimal("0")
 
     state = apply_failure(None, NOW)
     state = apply_failure(state, NOW)

@@ -193,17 +193,32 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     if unknown:
         pnl = None
         state = "unknown"
-    from app.options.protection_view import build_protection
+    from app.options.protection_view import build_protection, display_moment, present_broker_day
 
-    protection = build_protection(settings, None if unknown else _dec(pnl), floor, unknown=unknown)
+    # The kill state above still uses the raw mark. The card uses one presented figure.
+    source_pnl = _dec(mark) if mark is not None else (None if unknown else _dec(pnl))
+    presented = present_broker_day(source_pnl, display_moment(), settings.calendar())
+    if presented["stale"]:
+        display = presented["pnl"]
+    elif unknown:
+        display = None
+    else:
+        display = presented["pnl"]
+    protection = build_protection(
+        settings,
+        display,
+        floor,
+        unknown=display is None,
+    )
     from app.analytics.trades import cached_day_capital, day_return_fields
 
-    shown = None if unknown else (_dec(mark) if mark is not None else _dec(pnl))
-    opened = None if unknown else cached_day_capital(settings)
-    returns = day_return_fields(shown, opened)
+    opened = None if display is None or presented["stale"] else cached_day_capital(settings)
+    returns = day_return_fields(None if presented["stale"] else display, opened)
     return {
         "pnl": pnl,
         "mark_pnl": mark,
+        "display_pnl": None if display is None else str(Decimal(display).quantize(Decimal("0.01"))),
+        "day_pnl_note": presented["note"],
         "pnl_source": source,
         "daily_loss_used": None if unknown or not isinstance(risk, dict) else risk.get("daily_loss_used"),
         "daily_loss_limit": None if not isinstance(risk, dict) else risk.get("daily_loss_limit"),

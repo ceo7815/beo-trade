@@ -143,6 +143,8 @@ export const copy = {
   },
   dashboard: {
     today: "רווח/הפסד יומי",
+    freshDay: "יום חדש — מתאפס בפתיחה",
+    noStake: "אין השקעה היום",
     lastSession: "יום המסחר האחרון",
     closedNote: "השוק סגור",
     positions: "פוזיציות פתוחות",
@@ -188,6 +190,8 @@ export const copy = {
     gauge: "בלם יומי",
     brake: "בלם",
     distance: "מרחק עד הבלם",
+    distanceSub: "עד עצירת ההפסד היומית",
+    distanceHint: "המרחק מהרווח או ההפסד של היום עד קו העצירה. כשההפסד מגיע לקו האדום, כל הפוזיציות נסגרות ואין כניסות חדשות עד יום המסחר הבא.",
   },
   positions: {
     title: "פוזיציות פתוחות",

@@ -11,7 +11,8 @@ import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
 import { copy } from "@/lib/copy";
 import { money as usd, parseStamp, sessionStamp, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { regimeLine } from "@/lib/regime";
-import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
+import { Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
+import { returnCaption, shownDayPnl } from "@/lib/protection";
 import { observeTrades, useLive } from "@/lib/live";
 
 type Desk = {
@@ -130,6 +131,8 @@ type Risk = {
   daily_loss_used: string | null;
   daily_loss_state?: string | null;
   today_pnl?: string | null;
+  display_pnl?: string | null;
+  day_pnl_note?: string | null;
   day_return_pct?: string | null;
   day_invested_usd?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
@@ -165,10 +168,9 @@ function tone(value: number | null) {
   return value > 0 ? "up" : "down";
 }
 
-function DayReturn({ pct }: { pct: string | null | undefined }) {
-  const value = num(pct);
-  if (value === null) return <p className="desk-hero-return">—</p>;
-  return <p className={`desk-hero-return ${tone(value)}`}>{signedPct(value, 1)} מההשקעה היום</p>;
+function DayReturn({ pct, note }: { pct: string | null | undefined; note?: string | null }) {
+  const caption = returnCaption(num(pct), note ?? null);
+  return <p className={`desk-hero-return ${caption.tone}`}>{caption.text}</p>;
 }
 
 function clock(iso: string | null | undefined) {
@@ -264,9 +266,11 @@ function Board() {
   const sseAccount = transportMode() === "sse" ? live.snap?.account : undefined;
   const viewPositions = ssePositions ?? positions;
   const viewAccount = (sseAccount as BrokerAccount | null | undefined) ?? account;
+  const sse = transportMode() === "sse";
+  const dayNote = (sse ? live.snap?.day?.day_pnl_note : null) ?? risk?.day_pnl_note ?? live.snap?.day?.day_pnl_note ?? null;
+  const displayPnl = num(sse ? live.snap?.day?.display_pnl : undefined) ?? num(risk?.display_pnl) ?? num(live.snap?.day?.display_pnl);
   const dayPnl = num(live.snap?.day?.pnl) ?? num(risk?.today_pnl);
   const markPnl = num(live.snap?.day?.mark_pnl);
-  const heroPnl = markPnl ?? dayPnl;
   const kill = num(live.snap?.day?.daily_kill_loss_usd) ?? num(risk?.daily_kill_loss_usd) ?? num(status?.daily_kill_loss_usd);
   const scan = desk?.last_scan ?? null;
   const exposure = exposureOf(viewPositions);
@@ -278,19 +282,27 @@ function Board() {
   const floor = liveFloor ?? risk?.day_floor ?? live.snap?.day?.day_floor ?? null;
   const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? risk?.protection ?? live.snap?.day?.protection ?? null;
   const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : risk?.daily_loss_state;
-  const lossUnknown = dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown");
+  const lossUnknown = !dayNote && (dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown"));
   const lossState = lossUnknown ? "unknown" : live.snap?.day?.daily_loss_state;
   const sync = syncOf(syncedAt, now);
   const days = recentDays(book);
   const lastDay = days?.[0] ?? null;
-  const showLast = closed && (dayPnl === null || dayPnl === 0) && lastDay !== null;
+  const dayView = shownDayPnl({
+    display: displayPnl,
+    mark: markPnl,
+    risk: dayPnl,
+    note: dayNote,
+    closed,
+    lastDay: lastDay?.pnl ?? null,
+  });
+  const showLast = dayView.showLast;
+  const shownPnl = dayView.pnl;
 
   const equityUp = (num(viewAccount?.equity) ?? 0) >= (num(viewAccount?.last_equity) ?? num(viewAccount?.equity) ?? 0);
-  const shownPnl = showLast && lastDay ? lastDay.pnl : heroPnl;
 
   return (
     <section className="desk-home">
-      <KillBanner pnl={heroPnl} kill={kill} state={lossState} />
+      <KillBanner pnl={shownPnl} kill={kill} state={dayView.note ? null : lossState} />
       <div className="desk-top">
         <article className="ops-pane account-card">
           <header className="ops-pane-head">
@@ -323,12 +335,11 @@ function Board() {
           <div className="desk-hero-main">
             <div className="desk-hero-figure">
               <Odometer value={shownPnl} />
-              {showLast ? null : <DayReturn pct={transportMode() === "sse" ? live.snap?.day?.day_return_pct : risk?.day_return_pct} />}
+              {showLast ? null : <DayReturn pct={sse ? live.snap?.day?.day_return_pct : risk?.day_return_pct ?? live.snap?.day?.day_return_pct} note={dayView.note} />}
             </div>
             {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
-          <Gauge pnl={shownPnl} kill={kill} state={lossState} />
-          {protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
+          {showLast ? null : protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
         </article>
       </div>
 

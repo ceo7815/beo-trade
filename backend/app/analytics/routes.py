@@ -464,10 +464,26 @@ def register(app: FastAPI, settings: Settings) -> None:
         if isinstance(day_floor, dict) and day_floor.get("closed") and not day_floor.get("cleared") and day_floor.get("reason") == "DAILY_HARD_STOP":
             level = "hard_stop"
             state = "עצור"
-        protection = build_protection(settings, measured if not no_account else None, day_floor, unknown=no_account or level == "unknown")
+        from app.options.protection_view import display_moment, present_broker_day
+
+        presented = (
+            present_broker_day(measured, display_moment(), settings.calendar())
+            if not no_account and measured is not None
+            else {"pnl": None, "stale": False, "note": None}
+        )
+        display = presented["pnl"]
+        # The floor latch above still saw `measured`. Only the sentence and the
+        # number on the card use the presented figure.
+        protection = build_protection(
+            settings,
+            None if no_account or level == "unknown" else display,
+            day_floor,
+            unknown=no_account or level == "unknown",
+        )
         from app.analytics.trades import cached_day_capital, day_return_fields
 
-        returns = day_return_fields(None if no_account or level == "unknown" else measured, None if no_account or level == "unknown" else cached_day_capital(settings))
+        hide_return = no_account or level == "unknown" or presented["stale"]
+        returns = day_return_fields(None if hide_return else display, None if hide_return else cached_day_capital(settings))
         return {
             "environment": "PAPER",
             "state": state,
@@ -478,6 +494,8 @@ def register(app: FastAPI, settings: Settings) -> None:
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,
+            "display_pnl": None if display is None else str(Decimal(display).quantize(Decimal("0.01"))),
+            "day_pnl_note": presented["note"],
             "day_return_pct": returns["day_return_pct"],
             "day_invested_usd": returns["day_invested_usd"],
             "account_read_failures": account_read.get("consecutive_failures"),

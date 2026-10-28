@@ -207,6 +207,11 @@ def test_snapshot_day_return_uses_the_shown_pnl_and_capital_opened_today(tmp_pat
 
     from app.broker import snapshot as broker_snapshot
 
+    monkeypatch.setattr(
+        "app.options.protection_view.display_moment",
+        lambda: datetime(2026, 10, 28, 18, 0, tzinfo=timezone.utc),
+    )
+
     monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
     monkeypatch.setattr("app.options.day_floor.observe_day_floor", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")))
     monkeypatch.setattr("app.broker.runtime.open_paper_broker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not call Alpaca")))
@@ -244,10 +249,56 @@ def test_snapshot_day_return_uses_the_shown_pnl_and_capital_opened_today(tmp_pat
     )
     snap = live.build_snapshot(settings)
     assert snap["day"]["mark_pnl"] == "1840.00"
+    assert snap["day"]["display_pnl"] == "1840.00"
+    assert snap["day"]["day_pnl_note"] is None
+    assert snap["day"]["protection"]["pnl"] == "1840.00"
     assert snap["day"]["day_invested_usd"] == "2000.00"
     assert snap["day"]["day_return_pct"] == "92.00"
     read_cache.set(("risk",), {"today_pnl": None, "daily_loss_state": "unknown", "available": True}, 30)
     blind = live.build_snapshot(settings)
     assert blind["day"]["day_return_pct"] is None
     assert blind["day"]["day_invested_usd"] is None
+    assert blind["day"]["display_pnl"] is None
+    read_cache.clear()
+
+
+def test_preopen_snapshot_shows_a_fresh_day_without_changing_the_raw_mark(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+
+    from app.broker import snapshot as broker_snapshot
+
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr("app.options.day_floor.observe_day_floor", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")))
+    monkeypatch.setattr("app.broker.runtime.open_paper_broker", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not call Alpaca")))
+    monkeypatch.setattr(
+        "app.options.protection_view.display_moment",
+        lambda: datetime(2026, 10, 28, 7, 50, tzinfo=timezone.utc),
+    )
+    broker_snapshot.isolate(tmp_path)
+    broker_snapshot.prime(
+        {
+            "positions": [],
+            "account": {"equity": "107367.00", "cash": "1", "last_equity": "100000.00", "buying_power": "1"},
+        }
+    )
+    read_cache.clear()
+    read_cache.set(("risk",), {"today_pnl": "7367.00", "daily_loss_state": "ok", "available": True}, 30)
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "fresh.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    assert snap["day"]["pnl"] == "7367.00"
+    assert snap["day"]["mark_pnl"] == "7367.00"
+    assert snap["day"]["daily_loss_state"] == "ok"
+    assert snap["day"]["display_pnl"] == "0.00"
+    assert snap["day"]["day_pnl_note"] == "יום חדש — מתאפס בפתיחה"
+    assert snap["day"]["protection"]["pnl"] == "0.00"
+    assert snap["day"]["protection"]["line"] == "עוד 4,000$ (ב-4,000$) נכנסת הגנה של 2,000$"
+    assert "עוד 0$" not in snap["day"]["protection"]["line"]
+    assert snap["day"]["day_return_pct"] is None
     read_cache.clear()
