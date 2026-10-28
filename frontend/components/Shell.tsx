@@ -249,6 +249,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
         { href: "/positions", label: "פוזיציות פתוחות", icon: icons.positions },
         { href: "/history", label: "היסטוריית עסקאות", icon: icons.history },
         { href: "/decisions", label: "היסטוריית החלטות", icon: icons.buy },
+        { href: "/opportunities", label: "המלצות", icon: icons.buy },
       ],
     },
     {

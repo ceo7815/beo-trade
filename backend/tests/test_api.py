@@ -218,7 +218,8 @@ def test_dashboard_api_exposes_buys_only(tmp_path, monkeypatch):
         assert body["display_timezone"] == "Asia/Dubai"
         assert "suppress" not in body
         recommendations = client.get("/api/v1/recommendations")
-        assert recommendations.json() == {"items": []}
+        assert recommendations.json()["items"] == []
+        assert recommendations.json()["next_cursor"] is None
         scan = client.post("/api/v1/scan")
         assert scan.status_code == 409
         missing = client.get("/api/v1/recommendations/does-not-exist")

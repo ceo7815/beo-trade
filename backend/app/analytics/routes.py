@@ -18,6 +18,7 @@ from app.config.settings import Settings
 from app.models.db import database_ready, session_scope
 from app.models.store import list_decisions
 from app.models.tables import AIRequestLog, BrokerTradeEvent
+from app.models.utc_time import iso_utc
 
 LAST_SCAN = Path(__file__).resolve().parents[2] / "data" / "last_scan.json"
 HEARTBEAT = Path(__file__).resolve().parents[2] / "data" / "worker_heartbeat.txt"
@@ -650,7 +651,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             rows = list(session.scalars(select(BrokerTradeEvent).order_by(BrokerTradeEvent.created_at.desc()).limit(40)))
             return {
                 "items": [
-                    {"trade_id": row.trade_id, "state": row.state, "source": row.source, "reason": row.reason, "created_at": row.created_at.isoformat()}
+                    {"trade_id": row.trade_id, "state": row.state, "source": row.source, "reason": row.reason, "created_at": iso_utc(row.created_at)}
                     for row in rows
                 ]
             }

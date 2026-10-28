@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import base64
 from collections.abc import Callable
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy import and_, or_, select
+from sqlalchemy.orm import Session, load_only
 
 from app.ai.budget import UsageEntry
 from app.ai.prompts import PROMPT_VERSION
@@ -21,6 +22,7 @@ from app.models.tables import (
     User,
     WatchItem,
 )
+from app.models.utc_time import iso_utc, parse_utc
 from app.paper_trading.engine import pnl
 from app.schemas.domain import REASON_HEBREW, DecisionKind, Recommendation
 
@@ -159,6 +161,61 @@ def list_buys(session: Session) -> list[RecommendationRow]:
             .order_by(RecommendationRow.created_at.desc())
         )
     )
+
+
+_BUY_LIST_COLUMNS = (
+    RecommendationRow.id,
+    RecommendationRow.created_at,
+    RecommendationRow.underlying,
+    RecommendationRow.option_symbol,
+    RecommendationRow.call_put,
+    RecommendationRow.strike,
+    RecommendationRow.expiration,
+    RecommendationRow.option_price,
+    RecommendationRow.quantity,
+    RecommendationRow.reason_codes,
+    RecommendationRow.decision,
+)
+
+
+def page_buys(session: Session, limit: int, before: tuple[datetime, str] | None = None) -> list[RecommendationRow]:
+    """One page of BUY rows, newest first, without the long text and JSON bodies."""
+    stmt = (
+        select(RecommendationRow)
+        .options(load_only(*_BUY_LIST_COLUMNS))
+        .where(RecommendationRow.decision == "BUY")
+    )
+    if before is not None:
+        moment, row_id = before
+        stmt = stmt.where(
+            or_(
+                RecommendationRow.created_at < moment,
+                and_(RecommendationRow.created_at == moment, RecommendationRow.id < row_id),
+            )
+        )
+    stmt = stmt.order_by(RecommendationRow.created_at.desc(), RecommendationRow.id.desc()).limit(limit)
+    return list(session.scalars(stmt))
+
+
+def encode_buy_cursor(moment: datetime, row_id: str) -> str:
+    raw = f"{iso_utc(moment)}|{row_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
+
+
+def decode_buy_cursor(cursor: str) -> tuple[datetime, str]:
+    text = cursor.strip()
+    if not text or len(text) > 200:
+        raise ValueError("cursor")
+    pad = "=" * (-len(text) % 4)
+    try:
+        decoded = base64.urlsafe_b64decode(text + pad).decode()
+        stamp, row_id = decoded.split("|", 1)
+        moment = parse_utc(stamp)
+    except (ValueError, UnicodeDecodeError):
+        raise ValueError("cursor") from None
+    if not row_id or len(row_id) > 64:
+        raise ValueError("cursor")
+    return moment, row_id
 
 
 def get_buy(session: Session, recommendation_id: str) -> RecommendationRow | None:

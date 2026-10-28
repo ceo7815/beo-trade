@@ -55,10 +55,30 @@ export function dubaiTime(date = new Date(), withSeconds = true) {
   }).format(date);
 }
 
+function nyTime(date: Date) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/New_York",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(date);
+}
+
+// Legacy API strings have no offset. Those wall clocks are UTC. Parsing them
+// as Asia/Dubai local time shows the event about four hours early.
+export function parseStamp(iso: string | null | undefined) {
+  if (!iso) return null;
+  const trimmed = iso.trim();
+  if (!trimmed) return null;
+  const hasZone = /(?:Z|[+-]\d{2}:?\d{2})$/.test(trimmed);
+  const normalized = hasZone ? trimmed : `${trimmed.replace(" ", "T")}Z`;
+  const date = new Date(normalized);
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
 export function dubaiStamp(iso: string | null | undefined) {
-  if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "—";
+  const date = parseStamp(iso);
+  if (!date) return "—";
   const day = new Intl.DateTimeFormat("en-GB", {
     timeZone: "Asia/Dubai",
     day: "2-digit",
@@ -66,4 +86,10 @@ export function dubaiStamp(iso: string | null | undefined) {
     year: "numeric",
   }).format(date);
   return `${day.replace(/\//g, ".")} · ${dubaiTime(date, false)}`;
+}
+
+export function sessionStamp(iso: string | null | undefined, withSeconds = false) {
+  const date = parseStamp(iso);
+  if (!date) return "—";
+  return `${dubaiTime(date, withSeconds)} (${nyTime(date)} ET)`;
 }

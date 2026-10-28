@@ -6,6 +6,8 @@ from uuid import uuid4
 from sqlalchemy import JSON, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
+from app.models.utc_time import UtcDateTime
+
 
 def _id() -> str:
     return str(uuid4())
@@ -330,7 +332,7 @@ class AuditLog(Base):
     entity: Mapped[str] = mapped_column(String(80), nullable=False)
     entity_id: Mapped[str] = mapped_column(String(36), nullable=False)
     payload: Mapped[dict] = mapped_column(JSON, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
 
 class SystemEvent(Base):
@@ -359,8 +361,8 @@ class Alert(Base):
     recommendation_id: Mapped[str | None] = mapped_column(ForeignKey("recommendations.id"))
     kind: Mapped[str] = mapped_column(String(24), nullable=False)
     message: Mapped[str] = mapped_column(Text, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
-    read_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
+    read_at: Mapped[datetime | None] = mapped_column(UtcDateTime())
 
 
 class IntegrationCheck(Base):
@@ -553,7 +555,7 @@ class BrokerTradeEvent(Base):
     state: Mapped[str] = mapped_column(String(32), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     reason: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
 
 class AIFingerprintLock(Base):

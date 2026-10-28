@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { apiGet, poll } from "@/lib/api";
 import { blockReasons, copy } from "@/lib/copy";
+import { parseStamp, sessionStamp } from "@/lib/format";
 
 type Decision = {
   id: string;
@@ -39,16 +40,14 @@ function strike(value: string) {
 }
 
 function clock(iso: string | null) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false, timeZone: "Asia/Dubai" }).format(date);
+  const date = parseStamp(iso);
+  if (!date) return "";
+  return sessionStamp(iso);
 }
 
 function nyDay(iso: string | null) {
-  if (!iso) return "";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return "";
+  const date = parseStamp(iso);
+  if (!date) return "";
   return new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
 }
 
@@ -126,7 +125,7 @@ export default function DecisionsPage() {
   const dayRows = showingAll ? rows : rows.filter((item) => nyDay(item.created_at) === active);
   const shown = dayRows
     .filter((item) => side === "all" || item.decision === side)
-    .sort((a, b) => new Date(b.created_at ?? 0).getTime() - new Date(a.created_at ?? 0).getTime());
+    .sort((a, b) => (parseStamp(b.created_at)?.getTime() ?? 0) - (parseStamp(a.created_at)?.getTime() ?? 0));
   const buys = dayRows.filter((item) => item.decision === "BUY").length;
   const nos = dayRows.length - buys;
   const selected = showingAll ? null : days.find((group) => group.day === active);

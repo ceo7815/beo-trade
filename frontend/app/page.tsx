@@ -8,7 +8,7 @@ import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
 import { copy } from "@/lib/copy";
-import { money as usd, signedMoney as usdSigned, signedPct } from "@/lib/format";
+import { money as usd, parseStamp, sessionStamp, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
 import { observeTrades, useLive } from "@/lib/live";
 
@@ -156,9 +156,9 @@ function tone(value: number | null) {
 
 function clock(iso: string | null | undefined) {
   if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso.slice(11, 19) || iso;
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Dubai" }).format(date);
+  const date = parseStamp(iso);
+  if (!date) return iso.slice(11, 19) || iso;
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Dubai", hourCycle: "h23" }).format(date);
 }
 
 export default function HomePage() {
@@ -411,7 +411,7 @@ function Board() {
           {(audit || []).slice(0, 2).map((item, index) => (
             <div className="ops-feed" key={`${item.created_at}-${index}`}>
               <span className="num">{item.state}</span>
-              <b className="num">{clock(item.created_at)}</b>
+              <b className="num">{sessionStamp(item.created_at, true)}</b>
             </div>
           ))}
         </section>

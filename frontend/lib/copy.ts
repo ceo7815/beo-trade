@@ -235,6 +235,7 @@ export const copy = {
   },
   screens: {
     decisions: "היסטוריית החלטות",
+    recommendations: "המלצות",
     engine: "המערכת האוטונומית",
     engineHint: "חשבון Paper",
     finance: "בקרת כספים",
