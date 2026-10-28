@@ -61,6 +61,10 @@ _state = _State()
 _bundle: tuple[datetime, dict] | None = None
 # Prior-session bars do not change during a session. Keyed by (kind, symbol, session day).
 _prior: dict[tuple[str, str, date], list[dict]] = {}
+# A 400 is logged once per path and symbol list. A single-symbol 400 is remembered so history is not requested again this session.
+_LOGGED_400: set[tuple[str, tuple[str, ...]]] = set()
+_SKIPPED_400: set[tuple[str, str]] = set()
+_REQUEST_KEYS = ("start_date", "end_date", "interval", "start_time", "end_time", "expiration", "strike", "right", "max_dte", "strike_range")
 # A month of minute bars per symbol is heavy; rotating symbols beyond this many are refetched.
 MAX_ROTATING_PRIOR = 40
 # Minute bars not fetched within this budget are fetched in the background for the next scan.
@@ -75,6 +79,8 @@ def reset_theta_state() -> None:
     _bundle = None
     _prior.clear()
     _PERMISSION_DENIED.clear()
+    _LOGGED_400.clear()
+    _SKIPPED_400.clear()
 
 
 def feed_status() -> dict:
@@ -295,6 +301,44 @@ def _permission_denied(response: httpx.Response) -> bool:
     return kind == "PERMISSION_DENIED" or "professional subscription" in message.lower()
 
 
+def _response_excerpt(response: httpx.Response, limit: int = 300) -> str:
+    try:
+        text = response.text
+    except Exception:
+        return ""
+    compact = " ".join(text.split())
+    if len(compact) <= limit:
+        return compact
+    return compact[:limit]
+
+
+def _log_bad_request_once(path: str, symbols: list[str], params: dict, body: str) -> None:
+    """One line per path and symbol list. The next cycle must not repeat it."""
+    key = (path, tuple(symbols))
+    if key in _LOGGED_400:
+        return
+    _LOGGED_400.add(key)
+    logged = {name: params[name] for name in _REQUEST_KEYS if params.get(name) not in (None, "")}
+    log.warning(
+        "thetadata.bad_request",
+        upstream="thetadata",
+        path=path,
+        symbols=symbols,
+        params=logged,
+        status_code=400,
+        body=body,
+    )
+
+
+def _fallback_prior(key: tuple[str, str, date]) -> list[dict]:
+    """Rows already stored for this symbol, from an earlier session day."""
+    kind, symbol, day = key
+    found = [item for item in _prior if item[0] == kind and item[1] == symbol and item[2] != day and _prior[item]]
+    if not found:
+        return []
+    return list(_prior[max(found, key=lambda item: item[2])])
+
+
 def _remember_permission_denial(path: str, status_code: int, now: datetime | None = None) -> None:
     moment = now or _exchange_now()
     if _denial_active(path, moment):
@@ -364,25 +408,35 @@ class ThetaFeed:
             _warm_thread = threading.Thread(target=run, name="theta-warm", daemon=True)
             _warm_thread.start()
 
-    def _prior_rows(self, key: tuple[str, str, date], path: str, params: dict, required: bool) -> list[dict]:
-        cached = _prior.get(key)
-        if cached is not None:
-            return cached
-        rows = self._get(path, params, required=required)
-        if rows:
-            for stale in [item for item in list(_prior) if item[2] != key[2]]:
-                _prior.pop(stale, None)
-            if key[0] == "1m":
-                rows = [
-                    {"timestamp": row.get("timestamp") or row.get("created") or row.get("last_trade"), "volume": row.get("volume")}
-                    for row in rows
-                ]
+    def _remember_prior(self, key: tuple[str, str, date], rows: list[dict]) -> list[dict]:
+        """Keep this session's rows. Another symbol's refresh does not drop this symbol's older bars."""
+        stored = list(rows)
+        if stored and key[0] == "1m":
+            stored = [
+                {"timestamp": row.get("timestamp") or row.get("created") or row.get("last_trade"), "volume": row.get("volume")}
+                for row in stored
+            ]
+        for stale in [item for item in list(_prior) if item[0] == key[0] and item[1] == key[1] and item[2] != key[2]]:
+            _prior.pop(stale, None)
+        if stored:
             pinned = {item.strip().upper() for item in self.settings.trading().core_symbols}
             if key[1] not in pinned:
                 rotating = [item for item in _prior if item[0] == key[0] and item[1] not in pinned]
                 for oldest in rotating[: max(0, len(rotating) - MAX_ROTATING_PRIOR + 1)]:
                     _prior.pop(oldest, None)
-            _prior[key] = rows
+        _prior[key] = stored
+        return stored
+
+    def _prior_rows(self, key: tuple[str, str, date], path: str, params: dict, required: bool) -> list[dict]:
+        cached = _prior.get(key)
+        if cached is not None:
+            return cached
+        rows = self._get(path, params, required=required)
+        if not rows and (path, key[1]) in _SKIPPED_400:
+            # A 400 never used to be stored, so the next cycle asked for the same corrupt history again.
+            return self._remember_prior(key, _fallback_prior(key))
+        if rows:
+            return self._remember_prior(key, rows)
         return rows
 
     def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
@@ -409,7 +463,24 @@ class ThetaFeed:
         if _permission_denied(response):
             _remember_permission_denial(path, code, now)
             return []
-        if code != 200:
+        symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
+        if code == 400:
+            # One bad name (corrupt history, or an index on a stock path) must not abort the scan.
+            # A multi-symbol 400 is split the same way as 472: keep the names that answer, skip the one that does not.
+            _log_bad_request_once(path, symbols, params, _response_excerpt(response))
+            if len(symbols) > 1:
+                rows: list[dict] = []
+                for symbol in symbols:
+                    one = dict(params)
+                    one["symbol"] = symbol
+                    rows.extend(self._get(path, one, required=required))
+                return rows
+            if symbols:
+                _SKIPPED_400.add((path, symbols[0].upper()))
+                return []
+            if not required:
+                return []
+        if code != 200 and code != 400:
             log.warning(
                 "thetadata.http",
                 upstream="thetadata",
@@ -418,11 +489,10 @@ class ThetaFeed:
                 path=path,
                 host=urlsplit(self.base).hostname,
             )
-        symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
         if code in {403, 429} and _attempt < 1:
             return self._get(path, params, required=required, _attempt=_attempt + 1)
         if code in {403, 429, 472} and len(symbols) > 1:
-            rows: list[dict] = []
+            rows = []
             for symbol in symbols:
                 one = dict(params)
                 one["symbol"] = symbol
