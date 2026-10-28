@@ -441,6 +441,9 @@ def register(app: FastAPI, settings: Settings) -> None:
             level = "hard_stop"
             state = "עצור"
         protection = build_protection(settings, measured if not no_account else None, day_floor, unknown=no_account or level == "unknown")
+        from app.analytics.trades import cached_day_capital, day_return_fields
+
+        returns = day_return_fields(None if no_account or level == "unknown" else measured, None if no_account or level == "unknown" else cached_day_capital(settings))
         return {
             "environment": "PAPER",
             "state": state,
@@ -451,6 +454,8 @@ def register(app: FastAPI, settings: Settings) -> None:
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,
+            "day_return_pct": returns["day_return_pct"],
+            "day_invested_usd": returns["day_invested_usd"],
             "account_read_failures": account_read.get("consecutive_failures"),
             "account_read_last_success": account_read.get("last_success_at"),
             "max_positions": trading.max_concurrent_positions,

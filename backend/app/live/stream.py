@@ -230,6 +230,11 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     from app.options.protection_view import build_protection
 
     protection = build_protection(settings, None if unknown else _dec(pnl), floor, unknown=unknown)
+    from app.analytics.trades import cached_day_capital, day_return_fields
+
+    shown = None if unknown else (_dec(mark) if mark is not None else _dec(pnl))
+    opened = None if unknown else cached_day_capital(settings)
+    returns = day_return_fields(shown, opened)
     return {
         "pnl": pnl,
         "mark_pnl": mark,
@@ -241,6 +246,8 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         "open_positions": None if not isinstance(risk, dict) else risk.get("open_positions"),
         "day_floor": floor if floor is not None else (None if not isinstance(risk, dict) else risk.get("day_floor")),
         "protection": protection,
+        "day_return_pct": returns["day_return_pct"],
+        "day_invested_usd": returns["day_invested_usd"],
     }
 
 

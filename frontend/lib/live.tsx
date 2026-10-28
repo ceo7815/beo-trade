@@ -37,6 +37,8 @@ export type LiveDay = {
   daily_loss_state?: string | null;
   open_positions?: number | null;
   day_floor?: { armed?: boolean; closed?: boolean; arm?: string | null; floor?: string | null; reason?: string | null } | null;
+  day_return_pct?: string | null;
+  day_invested_usd?: string | null;
   protection?: {
     status?: string | null;
     line?: string | null;

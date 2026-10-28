@@ -124,6 +124,8 @@ type Risk = {
   daily_loss_used: string | null;
   daily_loss_state?: string | null;
   today_pnl?: string | null;
+  day_return_pct?: string | null;
+  day_invested_usd?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
   protection?: Protection | null;
   max_positions: number;
@@ -155,6 +157,12 @@ function share(value: string | number | null | undefined) {
 function tone(value: number | null) {
   if (value === null || value === 0) return "flat";
   return value > 0 ? "up" : "down";
+}
+
+function DayReturn({ pct }: { pct: string | null | undefined }) {
+  const value = num(pct);
+  if (value === null) return <p className="desk-hero-return">—</p>;
+  return <p className={`desk-hero-return ${tone(value)}`}>{signedPct(value, 1)} מההשקעה היום</p>;
 }
 
 function clock(iso: string | null | undefined) {
@@ -294,7 +302,10 @@ function Board() {
           </div>
           <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
           <div className="desk-hero-main">
-            <Odometer value={shownPnl} />
+            <div className="desk-hero-figure">
+              <Odometer value={shownPnl} />
+              {showLast ? null : <DayReturn pct={transportMode() === "sse" ? live.snap?.day?.day_return_pct : risk?.day_return_pct} />}
+            </div>
             {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
           <Gauge pnl={shownPnl} kill={kill} state={lossState} />
