@@ -744,3 +744,132 @@ def test_plain_403_is_not_treated_as_a_session_permission_denial():
     assert calls["n"] == 2
     assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
     assert calls["n"] == 4
+
+
+def _denied() -> httpx.Response:
+    return httpx.Response(403, json={"header": {"error_type": "PERMISSION_DENIED", "error_msg": _PRO_DENIED}})
+
+
+def _clock(monkeypatch, moment: datetime):
+    import app.providers.thetadata as theta
+
+    state = {"now": moment}
+
+    monkeypatch.setattr(theta, "_exchange_now", lambda: state["now"])
+    return state
+
+
+def test_quote_denial_expires_after_five_minutes_and_is_retried(monkeypatch):
+    from structlog.testing import capture_logs
+
+    clock = _clock(monkeypatch, datetime(2026, 10, 1, 11, 0, tzinfo=EXCHANGE))
+    calls = {"quote": 0, "ohlc": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v3/option/snapshot/quote":
+            calls["quote"] += 1
+            if calls["quote"] == 1:
+                return _denied()
+            return httpx.Response(200, json=[{"bid": 1.2, "ask": 1.3}])
+        if path == "/v3/option/snapshot/ohlc":
+            calls["ohlc"] += 1
+            if calls["ohlc"] == 1:
+                return _denied()
+            return httpx.Response(200, json=[{"close": 1.25}])
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    with capture_logs() as logs:
+        assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
+        assert feed._get("/v3/option/snapshot/ohlc", {"symbol": "NVDA"}, required=False) == []
+        assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
+        assert feed._get("/v3/option/snapshot/ohlc", {"symbol": "NVDA"}, required=False) == []
+        assert calls == {"quote": 1, "ohlc": 1}
+        clock["now"] += timedelta(minutes=4, seconds=59)
+        assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
+        assert calls["quote"] == 1
+        clock["now"] += timedelta(seconds=1)
+        quote = feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False)
+        ohlc = feed._get("/v3/option/snapshot/ohlc", {"symbol": "NVDA"}, required=False)
+    assert quote[0]["bid"] == 1.2
+    assert ohlc[0]["close"] == 1.25
+    assert calls == {"quote": 2, "ohlc": 2}
+    denied = [row for row in logs if row["event"] == "thetadata.permission_denied"]
+    assert len(denied) == 2
+    assert {row["path"] for row in denied} == {"/v3/option/snapshot/quote", "/v3/option/snapshot/ohlc"}
+
+
+def test_greeks_denial_persists_until_the_next_trading_day(monkeypatch):
+    from structlog.testing import capture_logs
+
+    # Friday. The next trading day is Monday, not Saturday.
+    clock = _clock(monkeypatch, datetime(2026, 10, 30, 15, 0, tzinfo=EXCHANGE))
+    paths = (
+        "/v3/option/snapshot/greeks/all",
+        "/v3/option/snapshot/open_interest",
+        "/v3/option/history/quote",
+        "/v3/stock/history/ohlc",
+    )
+    calls = {path: 0 for path in paths}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path in calls:
+            calls[path] += 1
+            return _denied()
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    with capture_logs() as logs:
+        for path in paths:
+            assert feed._get(path, {"symbol": "NVDA"}, required=False) == []
+        clock["now"] += timedelta(minutes=5)
+        for path in paths:
+            assert feed._get(path, {"symbol": "NVDA"}, required=False) == []
+        clock["now"] = datetime(2026, 10, 31, 12, 0, tzinfo=EXCHANGE)
+        for path in paths:
+            assert feed._get(path, {"symbol": "NVDA"}, required=False) == []
+        assert calls == {path: 1 for path in paths}
+        clock["now"] = datetime(2026, 11, 2, 0, 0, tzinfo=EXCHANGE)
+        for path in paths:
+            assert feed._get(path, {"symbol": "NVDA"}, required=False) == []
+    assert calls == {path: 2 for path in paths}
+    denied = [row for row in logs if row["event"] == "thetadata.permission_denied"]
+    assert len(denied) == len(paths) * 2
+    assert {row["path"] for row in denied} == set(paths)
+
+
+def test_exit_path_gets_quotes_after_a_transient_quote_denial(monkeypatch):
+    from app.providers.registry import ProviderSet
+    from app.providers.unconfigured import UnconfiguredProvider
+    from app.workers.loops import _loaded_bundles
+
+    clock = _clock(monkeypatch, datetime(2026, 10, 1, 11, 0, tzinfo=EXCHANGE))
+    base, _seen = _handler()
+    quote_calls = {"n": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v3/option/snapshot/quote":
+            quote_calls["n"] += 1
+            if quote_calls["n"] == 1:
+                return _denied()
+        return base(request)
+
+    feed = _feed(handle)
+    providers = ProviderSet(
+        market=ThetaMarketProvider(feed),
+        options=ThetaOptionsProvider(feed),
+        news=UnconfiguredProvider("news"),
+    )
+    monkeypatch.setattr("app.workers.loops.build_providers", lambda _settings: providers)
+    first = _loaded_bundles(_settings(), AS_OF, ("NVDA",))
+    assert first == {}
+    assert quote_calls["n"] == 1
+    clock["now"] += timedelta(minutes=5)
+    second = _loaded_bundles(_settings(), AS_OF, ("NVDA",))
+    assert second
+    option = next(iter(second.values()))["option"]
+    assert option.bid == Decimal("1.0")
+    assert option.ask == Decimal("1.1")
+    assert quote_calls["n"] >= 2
