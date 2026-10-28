@@ -605,17 +605,133 @@ def test_core_snapshots_that_all_return_400_still_fail_the_cycle():
         execute_scan(providers, loose_config(), None, ledger(), AS_OF, AS_OF.date(), Decimal("1000"), set())
 
 
-def test_eod_server_error_still_fails_the_cycle():
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_eod_server_error_skips_that_symbol_and_is_logged_once(status):
+    from structlog.testing import capture_logs
+
+    base, seen = _handler()
+    body = "Internal server error: Corrupt FIT data: record has more fields than the established tick width"
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        listed = request.url.params.get("symbol", "")
+        if path == "/v3/stock/history/eod" and listed == "AMD":
+            seen.append((path, listed))
+            return httpx.Response(status, text=body)
+        response = base(request)
+        if path.startswith("/v3/stock/snapshot/") and "AMD" in listed.split(","):
+            slot = {"ohlc": 0, "quote": 1, "trade": 2}[path.rsplit("/", 1)[-1]]
+            payload = response.json()
+            payload.append(_stock("AMD", FRESH)[slot])
+            return httpx.Response(200, json=payload)
+        return response
+
+    feed = _feed(handle)
+    feed.bind_symbols(("NVDA", "AMD"))
+    market = ThetaMarketProvider(feed)
+    with capture_logs() as logs:
+        first = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+        second = {item.symbol: item for item in market.load_underlyings(AS_OF + timedelta(seconds=60))}
+    assert "NVDA" in first and first["NVDA"].price == Decimal("102")
+    assert "AMD" not in first and "AMD" not in second
+    assert feed_status()["last_error"] is None
+    assert [symbol for path, symbol in seen if path == "/v3/stock/history/eod" and symbol == "AMD"] == ["AMD"]
+    bad = [row for row in logs if row["event"] == "thetadata.bad_request" and row["path"] == "/v3/stock/history/eod"]
+    assert len(bad) == 1
+    assert bad[0]["status_code"] == status
+    assert bad[0]["symbols"] == ["AMD"]
+    assert bad[0]["params"]["end_date"] == "20260930"
+    assert "Corrupt FIT data" in bad[0]["body"]
+
+
+def test_eod_server_error_reuses_cached_prior_rows():
+    import app.providers.thetadata as theta
+
+    base, _seen = _handler()
+    calls = {"amd": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/v3/stock/history/eod" and request.url.params.get("symbol") == "AMD":
+            calls["amd"] += 1
+            return httpx.Response(500, text="Internal server error: Corrupt FIT data: record has more fields than the established tick width")
+        return _with_symbol(base, "AMD", _stock("AMD", FRESH))(request)
+
+    session_day = AS_OF.astimezone(EXCHANGE).date()
+    theta._prior[("eod", "AMD", session_day - timedelta(days=1))] = [
+        {
+            "symbol": "AMD",
+            "created": "2026-09-29T17:15:00.000",
+            "last_trade": "2026-09-29T16:00:00.000",
+            "open": 49,
+            "high": 51,
+            "low": 48,
+            "close": 50,
+            "volume": 1_000_000,
+        }
+    ]
+    feed = _feed(handle)
+    feed.bind_symbols(("NVDA", "AMD"))
+    rows = {item.symbol: item for item in ThetaMarketProvider(feed).load_underlyings(AS_OF)}
+    assert rows["AMD"].prior_close == Decimal("50")
+    assert calls["amd"] == 1
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_snapshot_server_error_is_split_per_symbol(status):
+    from structlog.testing import capture_logs
+
+    base, _seen = _handler()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        symbol = request.url.params.get("symbol", "")
+        if request.url.path.startswith("/v3/stock/snapshot/") and "," in symbol:
+            return httpx.Response(status, text="Internal server error: Corrupt FIT data")
+        if request.url.path.startswith("/v3/stock/") and symbol == "VIX":
+            return httpx.Response(status, text="Corrupt FIT data for VIX")
+        return base(request)
+
+    market = ThetaMarketProvider(_feed(handle))
+    with capture_logs() as logs:
+        first = {item.symbol: item for item in market.load_underlyings(AS_OF)}
+        second = {item.symbol: item for item in market.load_underlyings(AS_OF + timedelta(seconds=60))}
+    assert first["NVDA"].price == Decimal("102")
+    assert second["NVDA"].price == Decimal("102")
+    assert market.context_quotes()["VIX"]["price"] == Decimal("18.4")
+    assert feed_status()["last_error"] is None
+    bad = [row for row in logs if row["event"] == "thetadata.bad_request" and row["symbols"] == ["VIX"]]
+    assert {row["path"] for row in bad} == {
+        "/v3/stock/snapshot/ohlc",
+        "/v3/stock/snapshot/quote",
+        "/v3/stock/snapshot/trade",
+    }
+    assert len(bad) == 3
+    assert {row["status_code"] for row in bad} == {status}
+    assert all("VIX" in row["body"] and len(row["body"]) <= 300 for row in bad)
+
+
+@pytest.mark.parametrize("status", [500, 502, 503, 504])
+def test_core_snapshots_that_all_return_5xx_fail_the_cycle(status):
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.startswith("/v3/stock/snapshot/"):
+            return httpx.Response(status, text="Internal server error")
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    with pytest.raises(ThetaDataError, match=str(status)):
+        ThetaMarketProvider(feed).load_underlyings(AS_OF)
+    assert feed_status()["last_error"] == f"ThetaData החזיר {status}"
+
+
+def test_eod_501_still_fails_the_cycle():
     base, _seen = _handler()
 
     def handle(request: httpx.Request) -> httpx.Response:
         if request.url.path == "/v3/stock/history/eod":
-            return httpx.Response(500, text="upstream down")
+            return httpx.Response(501, text="not implemented")
         return base(request)
 
-    market = ThetaMarketProvider(_feed(handle))
-    with pytest.raises(ThetaDataError, match="500"):
-        market.load_underlyings(AS_OF)
+    with pytest.raises(ThetaDataError, match="501"):
+        ThetaMarketProvider(_feed(handle)).load_underlyings(AS_OF)
 
 
 def test_forbidden_on_one_symbol_keeps_the_rest_of_the_snapshot():
