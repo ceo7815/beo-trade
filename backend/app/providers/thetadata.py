@@ -61,10 +61,17 @@ _state = _State()
 _bundle: tuple[datetime, dict] | None = None
 # Prior-session bars do not change during a session. Keyed by (kind, symbol, session day).
 _prior: dict[tuple[str, str, date], list[dict]] = {}
-# A 400 is logged once per path and symbol list. A single-symbol 400 is remembered so history is not requested again this session.
-_LOGGED_400: set[tuple[str, tuple[str, ...]]] = set()
-_SKIPPED_400: set[tuple[str, str]] = set()
+# A 400 or 5xx is logged once per path and symbol list. A single-symbol failure is remembered so history is not requested again this session.
+_LOGGED_SKIP: set[tuple[str, tuple[str, ...]]] = set()
+_SKIPPED: dict[tuple[str, str], int] = {}
 _REQUEST_KEYS = ("start_date", "end_date", "interval", "start_time", "end_time", "expiration", "strike", "right", "max_dte", "strike_range")
+# Corrupt per-symbol history comes back as 400 or 5xx. These are not a dead terminal.
+_SYMBOL_FAILURES = frozenset({400, 500, 502, 503, 504})
+_CORE_SNAPSHOTS = frozenset({
+    "/v3/stock/snapshot/ohlc",
+    "/v3/stock/snapshot/quote",
+    "/v3/stock/snapshot/trade",
+})
 # A month of minute bars per symbol is heavy; rotating symbols beyond this many are refetched.
 MAX_ROTATING_PRIOR = 40
 # Minute bars not fetched within this budget are fetched in the background for the next scan.
@@ -79,8 +86,8 @@ def reset_theta_state() -> None:
     _bundle = None
     _prior.clear()
     _PERMISSION_DENIED.clear()
-    _LOGGED_400.clear()
-    _SKIPPED_400.clear()
+    _LOGGED_SKIP.clear()
+    _SKIPPED.clear()
 
 
 def feed_status() -> dict:
@@ -312,12 +319,12 @@ def _response_excerpt(response: httpx.Response, limit: int = 300) -> str:
     return compact[:limit]
 
 
-def _log_bad_request_once(path: str, symbols: list[str], params: dict, body: str) -> None:
+def _log_symbol_failure_once(path: str, symbols: list[str], params: dict, body: str, status_code: int) -> None:
     """One line per path and symbol list. The next cycle must not repeat it."""
     key = (path, tuple(symbols))
-    if key in _LOGGED_400:
+    if key in _LOGGED_SKIP:
         return
-    _LOGGED_400.add(key)
+    _LOGGED_SKIP.add(key)
     logged = {name: params[name] for name in _REQUEST_KEYS if params.get(name) not in (None, "")}
     log.warning(
         "thetadata.bad_request",
@@ -325,7 +332,7 @@ def _log_bad_request_once(path: str, symbols: list[str], params: dict, body: str
         path=path,
         symbols=symbols,
         params=logged,
-        status_code=400,
+        status_code=status_code,
         body=body,
     )
 
@@ -432,14 +439,20 @@ class ThetaFeed:
         if cached is not None:
             return cached
         rows = self._get(path, params, required=required)
-        if not rows and (path, key[1]) in _SKIPPED_400:
-            # A 400 never used to be stored, so the next cycle asked for the same corrupt history again.
+        if not rows and (path, key[1]) in _SKIPPED:
+            # A skipped symbol was never stored, so the next cycle asked for the same corrupt history again.
             return self._remember_prior(key, _fallback_prior(key))
         if rows:
             return self._remember_prior(key, rows)
         return rows
 
-    def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
+    def _fail_core_snapshot(self, code: int) -> None:
+        """Every name failed a live stock snapshot. The terminal is down, not one corrupt file."""
+        self._fail(f"ThetaData החזיר {code}")
+        raise ThetaDataError(f"ThetaData החזיר {code}")
+
+    def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0, _split: bool = False) -> list[dict]:
+        self._last_skip_code = None
         now = _exchange_now()
         if _denial_active(path, now):
             return []
@@ -464,23 +477,32 @@ class ThetaFeed:
             _remember_permission_denial(path, code, now)
             return []
         symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
-        if code == 400:
+        if code in _SYMBOL_FAILURES:
             # One bad name (corrupt history, or an index on a stock path) must not abort the scan.
-            # A multi-symbol 400 is split the same way as 472: keep the names that answer, skip the one that does not.
-            _log_bad_request_once(path, symbols, params, _response_excerpt(response))
+            # A multi-symbol 400 or 5xx is split the same way as 472: keep the names that answer, skip the one that does not.
+            _log_symbol_failure_once(path, symbols, params, _response_excerpt(response), code)
             if len(symbols) > 1:
                 rows: list[dict] = []
+                server_failures = 0
                 for symbol in symbols:
                     one = dict(params)
                     one["symbol"] = symbol
-                    rows.extend(self._get(path, one, required=required))
+                    got = self._get(path, one, required=required, _split=True)
+                    rows.extend(got)
+                    if not got and self._last_skip_code in _SYMBOL_FAILURES and self._last_skip_code != 400:
+                        server_failures += 1
+                if server_failures == len(symbols) and not rows and required and path in _CORE_SNAPSHOTS:
+                    self._fail_core_snapshot(code)
                 return rows
             if symbols:
-                _SKIPPED_400.add((path, symbols[0].upper()))
+                self._last_skip_code = code
+                _SKIPPED[(path, symbols[0].upper())] = code
+                if not _split and required and code != 400 and path in _CORE_SNAPSHOTS:
+                    self._fail_core_snapshot(code)
                 return []
             if not required:
                 return []
-        if code != 200 and code != 400:
+        if code != 200 and code not in _SYMBOL_FAILURES:
             log.warning(
                 "thetadata.http",
                 upstream="thetadata",
