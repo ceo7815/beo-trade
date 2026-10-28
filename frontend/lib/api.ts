@@ -1,4 +1,5 @@
 import { copy, phases } from "./copy";
+import type { RegimeStatus } from "./regime";
 
 export type FeedStatus = {
   provider: string;
@@ -50,9 +51,10 @@ export type SystemStatus = {
   } | null;
   internal_candidates: number;
   active_buys: number;
-  paper_equity: string;
+  paper_equity: string | null;
   paper_cash: string;
   equity_basis: string;
+  regime_status?: RegimeStatus | null;
   ai_month_usd: string;
   ai_day_usd: string;
   ai_hour_usd: string;

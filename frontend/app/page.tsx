@@ -9,6 +9,7 @@ import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
 import { copy } from "@/lib/copy";
 import { money as usd, signedMoney as usdSigned, signedPct } from "@/lib/format";
+import { regimeLine } from "@/lib/regime";
 import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
 import { observeTrades, useLive } from "@/lib/live";
 
@@ -395,6 +396,7 @@ function Board() {
           <Feed label="FRED" row={macroOf(status)} />
           <Feed label="SEC" row={secOf(status)} />
           <Feed label="AI" row={aiOf(status)} />
+          <Feed label="משטר" row={regimeOf(status, now)} />
         </section>
         <section className="ops-pane">
           <h2>סיכון · {risk?.state || "אין נתונים"}</h2>
@@ -863,4 +865,11 @@ function aiOf(status: SystemStatus | null) {
   if (status.ai_mode === "stopped") return { text: "עצור", tone: "bad" };
   if (status.ai_mode === "unpriced" || status.ai_mode === "soft" || status.ai_mode === "critical") return { text: "מוגבל", tone: "warn" };
   return { text: status.ai_model || "פעיל", tone: "ok" };
+}
+
+function regimeOf(status: SystemStatus | null, now: number) {
+  const regime = status?.regime_status;
+  const text = regimeLine(regime, now);
+  const live = regime?.status === "CALCULATED" && Boolean(regime.market_regime);
+  return { text, tone: live ? "ok" : "wait" };
 }

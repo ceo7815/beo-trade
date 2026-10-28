@@ -2,9 +2,10 @@
 
 import { useParams } from "next/navigation";
 import { useState } from "react";
-import { Shell } from "@/components/Shell";
+import { Shell, useDesk } from "@/components/Shell";
 import { useIntegrations } from "@/components/IntegrationBoard";
 import { apiPost } from "@/lib/api";
+import { regimeLine } from "@/lib/regime";
 
 const FIELDS: Record<string, { name: string; label: string }[]> = {
   openai: [{ name: "openai_api_key", label: "OpenAI API Key" }],
@@ -29,6 +30,7 @@ export default function IntegrationDetailPage() {
 
 function Detail() {
   const params = useParams<{ id: string }>();
+  const { status } = useDesk();
   const { data, error, load } = useIntegrations();
   const item = data?.items.find((row) => row.id === params.id);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -89,6 +91,7 @@ function Detail() {
         {inputs.length ? <button className="nav-link" onClick={save}>שמור</button> : null}
         <button className="nav-link" onClick={test}>בדיקת חיבור</button>
       </div>
+      {params.id === "regime" ? <p className="mt-4 font-bold">{regimeLine(status?.regime_status)}</p> : null}
       {item ? <p className="mt-4 font-bold">{item.status_label}. {item.detail}</p> : null}
       {message ? <p className="mt-2 font-bold text-[var(--gold)]">{message}</p> : null}
     </section>
