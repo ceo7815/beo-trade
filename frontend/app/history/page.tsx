@@ -3,10 +3,10 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
-import { Num, Odometer } from "@/components/live-ui";
+import { Num, Odometer, StaleNote } from "@/components/live-ui";
 import { signedPct } from "@/lib/format";
 import { TradeStory, type Story } from "@/components/TradeStory";
-import { apiGet, poll } from "@/lib/api";
+import { apiGet, holdScreen, poll } from "@/lib/api";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
@@ -83,6 +83,8 @@ type Period = "today" | "yesterday" | "month" | "range" | "all";
 
 type Report = {
   available: boolean;
+  stale?: boolean;
+  as_of?: string | null;
   detail?: string;
   window?: { period: Period; start: string | null; end: string | null; includes_today: boolean };
   summary?: Summary;
@@ -228,6 +230,7 @@ function side(trade: Trade) {
 export default function HistoryPage() {
   const [report, setReport] = useState<Report | null>(null);
   const [failed, setFailed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   const [open, setOpen] = useState<Trade | null>(null);
   const [choice, setChoice] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
@@ -238,7 +241,7 @@ export default function HistoryPage() {
       return apiGet<Report>("/api/v1/report/trades?period=all", 30000)
         .then((body) => {
           if (!alive) return;
-          setReport(body);
+          setReport((current) => holdScreen(current, body) ?? body);
           setFailed(false);
         })
         .catch(() => alive && setFailed(true));
@@ -249,6 +252,12 @@ export default function HistoryPage() {
       stop();
     };
   }, []);
+
+  useEffect(() => {
+    if (!report?.stale) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [report?.stale]);
 
   useEffect(() => {
     if (!open && !menu) return;
@@ -286,9 +295,12 @@ export default function HistoryPage() {
             <h1>{copy.history.title}</h1>
             <p>{copy.history.subtitle}</p>
           </div>
-          <span className={`ops-pip ${failed || report?.available === false ? "warn" : report ? "on" : "warn"}`}>
-            <i />
-            {failed || report?.available === false ? "אין נתונים" : report ? "Alpaca Paper" : "טוען"}
+          <span className="head-meta">
+            <StaleNote stale={report?.stale} asOf={report?.as_of} now={now} />
+            <span className={`ops-pip ${failed || report?.available === false ? "warn" : report ? "on" : "warn"}`}>
+              <i />
+              {failed || report?.available === false ? "אין נתונים" : report ? "Alpaca Paper" : "טוען"}
+            </span>
           </span>
         </header>
 
@@ -310,7 +322,7 @@ export default function HistoryPage() {
             <Odometer value={report ? selectedPnl : null} digits={0} className="sm" />
           </button>
           {menu ? (
-            <div className="book-menu" role="listbox" aria-label="ימי מסחר">
+            <div className="book-menu lux-scroll" role="listbox" aria-label="ימי מסחר">
               <button type="button" className={`book-option${showingAll ? " on" : ""}`} onClick={() => pick("all")}>
                 <span>כל הימים<small>{closed.length} עסקאות</small></span>
                 <b className={`num ${tone(summary?.realized_pnl)}`}>{signed(summary?.realized_pnl)}</b>

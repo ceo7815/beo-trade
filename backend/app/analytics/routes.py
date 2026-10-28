@@ -329,8 +329,9 @@ def register(app: FastAPI, settings: Settings) -> None:
             "sector": {"available": False, "note": "נתוני סקטור אינם זמינים"},
             "best_worst": {"note": "אין מספיק מידע לניתוח"} if len(filtered) < 3 else _best_worst(filtered),
         }
-        read_cache.set(cache_key, payload, FINANCE_TTL_SECONDS)
-        return payload
+        if account is None or history is None:
+            payload["available"] = False
+        return read_cache.keep_or_stale(cache_key, payload, FINANCE_TTL_SECONDS)
 
     @app.get("/api/v1/risk")
     def risk_view(authorization: str | None = Header(default=None)):
@@ -551,7 +552,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                     "current_rules": None if replay is None else {**replay, "pnl": str(replay["pnl"])},
                 }
             )
-        return {
+        payload = {
             "environment": "PAPER",
             "available": True,
             "window": report["window"],
@@ -560,6 +561,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "backfill": dict(learning.BACKFILL),
             "rules": rules.label(),
         }
+        return _with_source_age(payload, report)
 
     @app.get("/api/v1/learning/path")
     def learning_path(authorization: str | None = Header(default=None), symbol: str = "", opened_at: str = "", closed_at: str = ""):
@@ -609,7 +611,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             cached = learning.lab(report["closed"], paths, config)
             _lab_cache.clear()
             _lab_cache[key] = cached
-        return {"environment": "PAPER", "available": True, "window": report["window"], **cached}
+        return _with_source_age({"environment": "PAPER", "available": True, "window": report["window"], **cached}, report)
 
     @app.get("/api/v1/learning/backfill")
     def learning_backfill_status(authorization: str | None = Header(default=None)):
@@ -669,6 +671,15 @@ def register(app: FastAPI, settings: Settings) -> None:
                     for row in rows
                 ]
             }
+
+
+def _with_source_age(payload: dict, source: dict) -> dict:
+    """A report built from a stale broker read must not be stored as a fresh one."""
+    if source.get("stale"):
+        payload["stale"] = True
+        if source.get("as_of"):
+            payload["as_of"] = source.get("as_of")
+    return payload
 
 
 def _decision_policy(session, analysis_id: str | None) -> dict:

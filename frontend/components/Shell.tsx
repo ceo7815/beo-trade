@@ -2,7 +2,8 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { motion, useReducedMotion } from "framer-motion";
 import { PHASES, apiGet, apiPost, poll, warm, type SystemStatus } from "@/lib/api";
 import { copy } from "@/lib/copy";
@@ -113,6 +114,41 @@ function Clock({ timeZone, label }: { timeZone: string; label: string }) {
         <span className="dim">{clock.second}</span>
       </div>
     </div>
+  );
+}
+
+function MobileTabBar({ children }: { children: React.ReactNode }) {
+  const dock = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  useEffect(() => {
+    if (!mounted) return;
+    const node = dock.current;
+    if (!node) return;
+    const pin = () => {
+      const viewport = window.visualViewport;
+      const lift = viewport ? Math.max(0, window.innerHeight - viewport.offsetTop - viewport.height) : 0;
+      node.style.setProperty("--tab-lift", `${lift}px`);
+    };
+    pin();
+    const viewport = window.visualViewport;
+    viewport?.addEventListener("resize", pin);
+    viewport?.addEventListener("scroll", pin);
+    window.addEventListener("orientationchange", pin);
+    return () => {
+      viewport?.removeEventListener("resize", pin);
+      viewport?.removeEventListener("scroll", pin);
+      window.removeEventListener("orientationchange", pin);
+    };
+  }, [mounted]);
+  if (!mounted) return null;
+  return createPortal(
+    <div className="tabbar-dock" ref={dock}>
+      <nav className="tabbar" aria-label="ניווט ראשי">
+        {children}
+      </nav>
+    </div>,
+    document.body,
   );
 }
 
@@ -449,7 +485,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             {children}
           </motion.div>
         </div>
-        <nav className="tabbar" aria-label="ניווט ראשי">
+        <MobileTabBar>
           {tabs.map((tab) => (
             <Link key={tab.href} href={tab.href} className={`tab${active(tab.href) ? " on" : ""}`} onMouseEnter={() => warm(WARM[tab.href] ?? [])} onFocus={() => warm(WARM[tab.href] ?? [])}>
               <TabIcon d={tab.icon} />
@@ -460,7 +496,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             <TabIcon d="M5 12h.01M12 12h.01M19 12h.01" />
             <span>עוד</span>
           </button>
-        </nav>
+        </MobileTabBar>
       </div>
     </DeskContext.Provider>
   );

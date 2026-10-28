@@ -123,7 +123,7 @@ export default function RiskPage() {
     const load = () => {
       return Promise.allSettled([
         apiGet<Risk>("/api/v1/risk"),
-        apiGet<{ exposure?: string | null; closed_trades?: ClosedTrade[] }>("/api/v1/finance"),
+        apiGet<{ available?: boolean; exposure?: string | null; closed_trades?: ClosedTrade[] }>("/api/v1/finance"),
         apiGet<Policy>("/api/v1/policy"),
         apiGet<{ items: { policy?: Trace }[] }>("/api/v1/decisions?limit=20"),
       ]).then(([riskResult, financeResult, policyResult, decisionResult]) => {
@@ -134,12 +134,9 @@ export default function RiskPage() {
         } else {
           setFailed(true);
         }
-        if (financeResult.status === "fulfilled") {
+        if (financeResult.status === "fulfilled" && financeResult.value.available !== false) {
           setExposure(financeResult.value.exposure ?? null);
           setClosed(financeResult.value.closed_trades ?? []);
-        } else {
-          setExposure(null);
-          setClosed(null);
         }
         setPolicy(policyResult.status === "fulfilled" ? policyResult.value : null);
         const items = decisionResult.status === "fulfilled" ? decisionResult.value.items : [];

@@ -2,11 +2,15 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { apiGet, poll } from "@/lib/api";
+import { StaleNote } from "@/components/live-ui";
+import { apiGet, holdScreen, poll } from "@/lib/api";
 
 type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
 
 type Finance = {
+  available?: boolean;
+  stale?: boolean;
+  as_of?: string | null;
   account: { equity?: string | null; cash?: string | null; buying_power?: string | null; portfolio_value?: string | null } | null;
   today_pnl: string | null;
   paper_limitation?: string;
@@ -73,6 +77,7 @@ export default function FinancePage() {
   const [body, setBody] = useState<Finance | null>(null);
   const [maxPositions, setMaxPositions] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -83,10 +88,11 @@ export default function FinancePage() {
       ]).then(([financeResult, riskResult]) => {
         if (!alive) return;
         if (financeResult.status === "fulfilled") {
-          setBody(financeResult.value);
+          setBody((current) => holdScreen(current, financeResult.value) ?? financeResult.value);
           setFailed(false);
         } else {
           setFailed(true);
+          setBody((current) => (current ? { ...current, stale: true, as_of: current.as_of ?? new Date().toISOString() } : current));
         }
         setMaxPositions(riskResult.status === "fulfilled" ? riskResult.value.max_positions ?? null : null);
       });
@@ -97,6 +103,12 @@ export default function FinancePage() {
       stop();
     };
   }, [windowName, side, outcome, symbol, dte, start, end]);
+
+  useEffect(() => {
+    if (!body?.stale) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [body?.stale]);
 
   useEffect(() => {
     if (!menu) return;
@@ -129,7 +141,7 @@ export default function FinancePage() {
     <Shell>
       <section className="engine book" onClick={() => setMenu(null)}>
         <header className="finance-hero">
-          <p>{failed ? "אין נתונים" : periodLabel}</p>
+          <p>{failed && !body ? "אין נתונים" : periodLabel} <StaleNote stale={body?.stale} asOf={body?.as_of} now={now} /></p>
           <p className={`num ${ink(headline)}`}>{body ? money(headline) : failed ? "אין נתונים" : "טוען"}</p>
         </header>
         <div className="period-row" onClick={(event) => event.stopPropagation()}>

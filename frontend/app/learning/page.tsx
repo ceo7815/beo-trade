@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
-import { apiGet, apiPost, poll } from "@/lib/api";
+import { apiGet, apiPost, holdScreen, poll } from "@/lib/api";
+import { StaleNote } from "@/components/live-ui";
 import { exitLabel } from "@/lib/exits";
 
 type Closed = {
@@ -42,7 +43,7 @@ type Replay = { exit_price: string; reason: string; at: string; pnl: string; com
 type LearnedTrade = Closed & { path: PathStats; current_rules: Replay | null };
 type Rules = { stop_pct: number; protect_at_pct: number; protective_pct: number; trail_arm_pct: number; trail_pct: number; invalidation_pct: number };
 type Backfill = { running: boolean; trades: number; done: number; marks: number; skipped: number; error: string | null; finished_at: string | null };
-type TradesBody = { available?: boolean; trades?: LearnedTrade[]; covered?: number; backfill?: Backfill; rules?: Rules };
+type TradesBody = { available?: boolean; stale?: boolean; as_of?: string | null; trades?: LearnedTrade[]; covered?: number; backfill?: Backfill; rules?: Rules };
 type LabRow = Rules & { pnl: string; wins: number; trades: number; complete: number; current: boolean; rank: number };
 type LabBody = { available?: boolean; trades_total?: number; trades_covered?: number; actual_pnl?: string; current?: LabRow | null; best?: LabRow[]; combinations?: number };
 type PathPoint = { at: string; bid: string; ask: string | null; underlying: string | null; source: string };
@@ -154,7 +155,7 @@ export default function LearningPage() {
       try {
         const next = await apiGet<TradesBody>(`/api/v1/learning/trades?period=${period}`, 30000);
         if (!alive) return;
-        setBody(next);
+        setBody((current) => holdScreen(current, next) ?? next);
         setFailed(false);
       } catch {
         if (alive) setFailed(true);
@@ -188,6 +189,7 @@ export default function LearningPage() {
           <button type="button" className={`ops-pip ${tab === "groups" ? "on" : ""}`} onClick={() => setTab("groups")}>קבוצות</button>
         </div>
         <p className="ops-line">
+          <StaleNote stale={body?.stale} asOf={body?.as_of} />
           {failed && !body
             ? "אין נתונים. השרת לא החזיר את דוח הלמידה."
             : !body

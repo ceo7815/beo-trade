@@ -1,4 +1,5 @@
 import { copy, phases } from "./copy";
+import { holdScreen, unavailable } from "./holdScreen";
 
 export type FeedStatus = {
   provider: string;
@@ -177,10 +178,13 @@ function windowFor(path: string) {
   return { fresh: 8_000, stale: 45_000 };
 }
 
+export { holdScreen, unavailable };
+
 function cachedEntry(path: string): CacheEntry | null {
   const hit = memory.get(path);
   if (!hit) return null;
-  if (Date.now() - hit.at > windowFor(path).stale) {
+  const expired = Date.now() - hit.at > windowFor(path).stale;
+  if (expired && unavailable(hit.data)) {
     memory.delete(path);
     return null;
   }
@@ -203,6 +207,16 @@ function fetchFresh<T>(path: string, timeoutMs: number): Promise<T> {
       toLogin(response);
       if (!response.ok) throw new Error(copy.errors.request);
       const data = (await response.json()) as T;
+      if (unavailable(data)) {
+        const previous = memory.get(path);
+        if (previous && !unavailable(previous.data)) {
+          const prior = previous.data as { available?: boolean; stale?: boolean; as_of?: string | null };
+          const kept = holdScreen(prior, data as typeof prior);
+          if (kept) kept.as_of = prior.as_of ?? new Date(previous.at).toISOString();
+          memory.set(path, { data: kept, at: previous.at });
+          return kept as T;
+        }
+      }
       memory.set(path, { data, at: Date.now() });
       return data;
     } finally {

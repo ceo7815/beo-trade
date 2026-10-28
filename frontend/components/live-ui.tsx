@@ -4,6 +4,14 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { money, signedMoney } from "@/lib/format";
 import { copy } from "@/lib/copy";
 
+export function StaleNote({ stale, asOf, now }: { stale?: boolean; asOf?: string | null; now?: number }) {
+  if (!stale) return null;
+  const parsed = asOf ? new Date(asOf).getTime() : Number.NaN;
+  const seconds = Number.isFinite(parsed) ? Math.max(0, Math.round(((now ?? Date.now()) - parsed) / 1000)) : null;
+  const label = seconds === null ? "עודכן לפני זמן מה" : `עודכן לפני ${seconds} שניות`;
+  return <span className="stale-badge">{label}</span>;
+}
+
 export function Num({ children, className = "", title }: { children: ReactNode; className?: string; title?: string }) {
   return (
     <bdi dir="ltr" title={title} className={className ? `num ${className}` : "num"}>
