@@ -118,6 +118,8 @@ services:
     environment:
       TZ: UTC
       THETA_LAUNCHER: v3-session
+      # Bump this nonce to force a theta recreate on deploy. start.sh ignores it.
+      THETA_RECREATE_NONCE: "2026-10-28-1"
     expose:
       - "25503"
     volumes:
