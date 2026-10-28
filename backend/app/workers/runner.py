@@ -29,6 +29,17 @@ def beat(path, phase: str) -> None:
     temporary.replace(path)
 
 
+def worker_process_alive(path, *, limit: int = 180, now: float | None = None) -> bool:
+    """Same rule as the Docker healthcheck on worker_heartbeat.txt.
+
+    This is process liveness only. A failed account read must not make it false.
+    """
+    if not path.exists():
+        return False
+    moment = time.time() if now is None else now
+    return moment - path.stat().st_mtime < limit
+
+
 def cycle_plan(*, stop: bool, halted: bool, phase: str, scan_due: bool, monitor_due: bool, reconcile_due: bool) -> dict[str, bool]:
     """New entries stop on shutdown or halt. Protective monitoring still runs."""
     if stop:
@@ -70,17 +81,22 @@ def record_monitor_result(ok: bool, moment: datetime | None = None) -> None:
 
 
 def run_monitor_cycle(settings, phase: str) -> bool:
-    """One protective pass. The heartbeat moves only when the pass finishes."""
+    """One protective pass.
+
+    worker_heartbeat.txt is rewritten either way so Docker sees a live process.
+    last_success moves only when the pass finishes.
+    """
     try:
         monitor_once(settings)
+        ok = True
     except Exception:
         log.warning("worker.monitor_failed", service="monitor")
-        record_monitor_result(False)
-        return False
+        ok = False
+    phase_name = "HALTED" if is_halted() else phase
+    beat(HEARTBEAT, phase_name)
     beat(MONITOR_HEARTBEAT, phase)
-    beat(HEARTBEAT, "HALTED" if is_halted() else phase)
-    record_monitor_result(True)
-    return True
+    record_monitor_result(ok)
+    return ok
 
 
 def _monitor_forever(settings, calendar, interval: int) -> None:

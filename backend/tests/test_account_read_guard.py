@@ -185,37 +185,59 @@ def test_the_first_good_read_after_a_blind_streak_kills_a_3500_loss(tmp_path, mo
     assert TradingConfig().daily_kill_loss_usd == 3500
 
 
-def test_a_failed_monitor_cycle_does_not_move_the_heartbeat(tmp_path, monkeypatch):
-    from app.workers.runner import beat, run_monitor_cycle
+def test_a_failed_cycle_refreshes_process_liveness_and_keeps_last_success(tmp_path, monkeypatch):
+    from pathlib import Path
+
+    from app.ops.readiness import build_ready
+    from app.workers.runner import beat, run_monitor_cycle, worker_process_alive
 
     heart = tmp_path / "worker_heartbeat.txt"
     monitor = tmp_path / "monitor_heartbeat.txt"
+    cycle_path = tmp_path / "monitor_cycle.json"
+    previous = "2026-10-28T14:00:00+00:00"
+    cycle_path.write_text(json.dumps({"last_attempt": previous, "last_success": previous, "ok": True}), encoding="utf-8")
     monkeypatch.setattr("app.workers.runner.HEARTBEAT", heart)
     monkeypatch.setattr("app.workers.runner.MONITOR_HEARTBEAT", monitor)
-    monkeypatch.setattr("app.ops.paths.MONITOR_CYCLE", tmp_path / "monitor_cycle.json")
+    monkeypatch.setattr("app.ops.paths.MONITOR_CYCLE", cycle_path)
+    monkeypatch.setattr("app.ops.readiness.HEARTBEAT", heart)
+    monkeypatch.setattr("app.ops.readiness.MONITOR_CYCLE", cycle_path)
+    monkeypatch.setattr("app.options.account_read.store_path", lambda: tmp_path / "account_read.json")
     beat(heart, "OPEN")
-    beat(monitor, "OPEN")
     before_heart = heart.read_text(encoding="utf-8")
-    before_monitor = monitor.read_text(encoding="utf-8")
 
     def boom(_settings):
         raise RuntimeError("502")
 
     monkeypatch.setattr("app.workers.runner.monitor_once", boom)
     assert run_monitor_cycle(Settings(), "OPEN") is False
-    assert heart.read_text(encoding="utf-8") == before_heart
-    assert monitor.read_text(encoding="utf-8") == before_monitor
-    cycle = json.loads((tmp_path / "monitor_cycle.json").read_text(encoding="utf-8"))
+    assert heart.read_text(encoding="utf-8") != before_heart
+    assert worker_process_alive(heart) is True
+    cycle = json.loads(cycle_path.read_text(encoding="utf-8"))
     assert cycle["ok"] is False
-    assert cycle["last_success"] is None
+    assert cycle["last_success"] == previous
+    _code, ready = build_ready(Settings())
+    assert ready["components"]["worker"] == "HEALTHY"
+    assert ready["components"]["monitor"] == "FAILED"
+    assert ready["monitor_last_success"] == previous
+    assert "monitor_heartbeat" in ready["blocked_reasons"]
+
+    stale = heart.stat().st_mtime - 181
+    os_utime = __import__("os").utime
+    os_utime(heart, (stale, stale))
+    assert worker_process_alive(heart) is False
+
+    compose = Path(__file__).resolve().parents[2] / "docker-compose.yml"
+    worker = compose.read_text(encoding="utf-8").split('command: ["python", "-m", "app.workers.runner"]', 1)[1].split("\n  theta:", 1)[0]
+    command = next(line for line in worker.splitlines() if "worker_heartbeat.txt" in line and "mtime" in line)
+    assert "mtime<180" in command
+    assert "monitor_cycle" not in command
+    assert "last_success" not in command
 
     monkeypatch.setattr("app.workers.runner.monitor_once", lambda _settings: {"positions": 0, "exits": []})
     assert run_monitor_cycle(Settings(), "OPEN") is True
-    assert heart.read_text(encoding="utf-8") != before_heart
-    assert monitor.read_text(encoding="utf-8") != before_monitor
-    done = json.loads((tmp_path / "monitor_cycle.json").read_text(encoding="utf-8"))
+    done = json.loads(cycle_path.read_text(encoding="utf-8"))
     assert done["ok"] is True
-    assert done["last_success"]
+    assert done["last_success"] != previous
 
 
 def test_risk_endpoint_reports_unknown_when_the_account_read_fails(tmp_path, monkeypatch):

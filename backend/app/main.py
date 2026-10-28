@@ -310,6 +310,11 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 alerts.append("הסורק לא דיווח לאחרונה.")
         else:
             alerts.append("הסורק עדיין לא עלה.")
+        from app.ops.readiness import monitor_success
+
+        cycle = monitor_success(current.trading().scan_interval_seconds * 3)
+        if cycle["ok"] is False or cycle["state"] == "FAILED":
+            alerts.append("התהליך חי, אבל מחזור היציאה האחרון לא הסתיים. הבלם לא נבדק.")
         from app.options.account_read import public_status
 
         if public_status().get("alert_open"):
@@ -353,6 +358,8 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "database": database,
             "alerts": alerts,
             "worker_heartbeat_age_seconds": heartbeat_age,
+            "monitor_last_success": cycle["last_success"],
+            "monitor_cycle_ok": cycle["ok"],
             "paper_only": True,
             "trading_halted": is_halted(),
             "daily_kill_loss_usd": display_kill_usd(current.trading(), equity if equity > 0 else None),
@@ -460,8 +467,16 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         report["regime"] = {"status": "blocked" if regime.get("status") != "CALCULATED" else "internal", "detail": "ממומש — ממתין לנתוני שוק" if regime.get("status") != "CALCULATED" else "חושב מנתוני הקשר", "latency_ms": None}
         worker_age = None if not HEARTBEAT.exists() else max(0, int(datetime.now(timezone.utc).timestamp() - HEARTBEAT.stat().st_mtime))
         worker_fresh = worker_age is not None and worker_age <= current.trading().scan_interval_seconds * 3
+        from app.ops.readiness import monitor_success
+
+        cycle = monitor_success(current.trading().scan_interval_seconds * 3)
         report["scan_worker"] = {"status": "internal" if worker_fresh else "not_verified", "detail": "פעימה טרייה" if worker_fresh else "הלולאה בקוד. אין פעימה טרייה.", "latency_ms": worker_age, "last_success": None if not worker_fresh else "heartbeat"}
-        report["position_monitor"] = report["scan_worker"]
+        report["position_monitor"] = {
+            "status": "internal" if cycle["state"] == "HEALTHY" else "not_verified",
+            "detail": "המחזור האחרון הסתיים" if cycle["state"] == "HEALTHY" else "התהליך חי. המחזור האחרון לא הסתיים.",
+            "latency_ms": worker_age,
+            "last_success": cycle["last_success"],
+        }
         report["reconciliation"] = {"status": "not_verified", "detail": "לולאת ההתאמה רצה עם ה-worker. אין פער מאומת בלי קריאה חיה.", "latency_ms": None}
         return {"paper_only": True, "items": report}
 

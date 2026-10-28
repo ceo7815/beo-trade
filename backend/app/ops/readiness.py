@@ -1,13 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.core.sessions import SCAN_PHASES, phase_at
 from app.models.db import database_ready
-import json
-
-from app.ops.paths import HEARTBEAT, MONITOR_CYCLE, MONITOR_HEARTBEAT, RECONCILE_HEARTBEAT
+from app.ops.paths import HEARTBEAT, MONITOR_CYCLE, RECONCILE_HEARTBEAT
 from app.ops.safety import policy_errors
 
 
@@ -29,15 +28,6 @@ def _configured(value: str) -> bool:
     return bool(value.strip())
 
 
-def _stamp(path) -> str | None:
-    if not path.exists():
-        return None
-    text = path.read_text(encoding="utf-8").strip()
-    if not text:
-        return None
-    return text.split(" ", 1)[0]
-
-
 def _monitor_cycle() -> dict:
     if not MONITOR_CYCLE.exists():
         return {}
@@ -46,6 +36,26 @@ def _monitor_cycle() -> dict:
     except (OSError, json.JSONDecodeError):
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def monitor_success(limit: int) -> dict:
+    """Whether the protective pass finished. Independent of the Docker liveness file."""
+    cycle = _monitor_cycle()
+    stamp = cycle.get("last_success")
+    state = "DEGRADED"
+    if cycle.get("ok") is False:
+        state = "FAILED"
+    elif stamp:
+        try:
+            moment = datetime.fromisoformat(str(stamp))
+        except ValueError:
+            moment = None
+        if moment is not None:
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            age = max(0, int(datetime.now(timezone.utc).timestamp() - moment.timestamp()))
+            state = "HEALTHY" if age <= limit else "FAILED"
+    return {"state": state, "last_success": stamp, "ok": cycle.get("ok") if cycle else None}
 
 
 def build_health(settings: Settings) -> tuple[int, dict]:
@@ -74,11 +84,9 @@ def build_ready(settings: Settings) -> tuple[int, dict]:
     trading = settings.trading()
     limit = trading.scan_interval_seconds * 3
     worker = _fresh(_age(HEARTBEAT), limit)
-    cycle = _monitor_cycle()
-    monitor = _fresh(_age(MONITOR_HEARTBEAT), limit)
-    if cycle.get("ok") is False:
-        monitor = "FAILED"
-    monitor_last_success = cycle.get("last_success") or _stamp(MONITOR_HEARTBEAT)
+    success = monitor_success(limit)
+    monitor = success["state"]
+    monitor_last_success = success["last_success"]
     reconcile = _fresh(_age(RECONCILE_HEARTBEAT), max(limit, trading.scan_interval_seconds * 3))
     from app.options.account_read import public_status
 

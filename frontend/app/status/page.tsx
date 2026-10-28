@@ -128,6 +128,11 @@ function healthRows(status: SystemStatus): { label: string; text: string; tone: 
     if (age > 180) return { text: "אזהרה", tone: "warn" };
     return { text: "תקין", tone: "ok" };
   };
+  const exits = (): { text: string; tone: Tone } => {
+    if (status.monitor_cycle_ok === false) return { text: "הבלם לא נבדק", tone: "warn" };
+    if (!status.monitor_last_success) return { text: "ממתין", tone: "wait" };
+    return { text: "תקין", tone: "ok" };
+  };
   const database = status.database === "ok" ? { text: "תקין", tone: "ok" as Tone } : status.database === "down" ? { text: "תקלה", tone: "bad" as Tone } : { text: "אין נתונים", tone: "wait" as Tone };
   const market = feedHealth(status.market_status, status.market_status?.quote_count ?? 0, status.providers.market);
   const news = newsHealth(status);
@@ -156,6 +161,7 @@ function healthRows(status: SystemStatus): { label: string; text: string; tone: 
     { label: "Supabase", text: "אין נתונים", tone: "wait" },
     { label: "מסד נתונים", ...database },
     { label: "Scanner", ...scanner() },
+    { label: "יציאות", ...exits() },
     { label: "Quant Engine", text: "אין נתונים", tone: "wait" },
     { label: "Paper Trading", text: status.paper_only ? "תקין" : "אין נתונים", tone: status.paper_only ? "ok" : "wait" },
   ];
