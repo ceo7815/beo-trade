@@ -5,7 +5,7 @@ import { Shell } from "@/components/Shell";
 import { StaleNote } from "@/components/live-ui";
 import { apiGet, holdScreen, poll } from "@/lib/api";
 
-type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
+type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; win_rate_pct?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
 
 type Finance = {
   available?: boolean;
@@ -150,6 +150,13 @@ export default function FinancePage() {
               <span>{item.label}</span>
             </button>
           ))}
+        </div>
+        <div className="plain-list">
+          <p className="desk-empty">ספר העסקאות הסגורות</p>
+          <div className="plain-row"><b>עסקאות סגורות</b><strong className="num">{body?.trades.enough ? String(body.trades.count ?? 0) : body ? "אין נתונים" : "טוען"}</strong></div>
+          <div className="plain-row"><b>רווח והפסד</b><strong className={`num ${ink(body?.trades.net)}`}>{body?.trades.enough ? money(body.trades.net) : body ? "אין נתונים" : "טוען"}</strong></div>
+          <div className="plain-row"><b>אחוז הצלחה</b><strong className="num">{body?.trades.enough ? percent(body.trades.win_rate) : body ? "אין נתונים" : "טוען"}</strong></div>
+          <div className="plain-row"><b>יחס רווח להפסד</b><strong className="num">{body?.trades.enough && body.trades.profit_factor ? body.trades.profit_factor : body ? "אין נתונים" : "טוען"}</strong></div>
         </div>
         <article className="curve-card">
           <Curve points={body?.history?.points || []} />

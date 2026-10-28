@@ -27,6 +27,7 @@ READ_PATHS = (
     "/api/v1/desk",
     "/api/v1/decisions",
     "/api/v1/finance",
+    "/api/v1/finance/reconciliation",
     "/api/v1/risk",
     "/api/v1/report/trades",
     "/api/v1/learning/trades",
