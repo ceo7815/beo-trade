@@ -182,3 +182,50 @@ def test_kill_line_falls_back_to_five_percent_only_when_dollars_are_off(tmp_path
     configured = Settings().trading()
     assert display_kill_usd(configured, Decimal("100000")) == "3500.00"
     assert display_kill_usd(configured, None) == "3500.00"
+
+
+def test_snapshot_day_return_uses_the_shown_pnl_and_capital_opened_today(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from zoneinfo import ZoneInfo
+
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr("app.options.day_floor.observe_day_floor", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")))
+    monkeypatch.setattr(live, "_fetch_positions", lambda settings: {"items": []})
+    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "101840", "cash": "1", "last_equity": "100000", "buying_power": "1"})
+    read_cache.clear()
+    live._mem["positions"] = (0.0, None)
+    live._mem["account"] = (0.0, None)
+    session = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York"))
+    opened = session.replace(hour=10, minute=0, second=0, microsecond=0).astimezone(timezone.utc).isoformat()
+    yesterday = session.replace(hour=10, minute=0, second=0, microsecond=0)
+    from datetime import timedelta
+
+    prior = (yesterday - timedelta(days=1)).astimezone(timezone.utc).isoformat()
+    read_cache.set(("risk",), {"today_pnl": "1.00", "daily_loss_state": "ok", "available": True}, 30)
+    read_cache.set(
+        ("trades", "today", "", ""),
+        {
+            "available": True,
+            "closed": [{"opened_at": opened, "entry_price": "2.00", "qty": "10"}],
+            "open": [{"opened_at": prior, "entry_price": "8.00", "qty": "10"}],
+        },
+        45,
+    )
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "return.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    assert snap["day"]["mark_pnl"] == "1840.00"
+    assert snap["day"]["day_invested_usd"] == "2000.00"
+    assert snap["day"]["day_return_pct"] == "92.00"
+    read_cache.set(("risk",), {"today_pnl": None, "daily_loss_state": "unknown", "available": True}, 30)
+    live._mem["account"] = (0.0, None)
+    blind = live.build_snapshot(settings)
+    assert blind["day"]["day_return_pct"] is None
+    assert blind["day"]["day_invested_usd"] is None
+    read_cache.clear()

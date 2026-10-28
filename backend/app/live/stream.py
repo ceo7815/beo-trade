@@ -201,7 +201,9 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     pnl = None
     source = "none"
     state = None
-    if isinstance(risk, dict) and risk.get("today_pnl") not in {None, ""}:
+    if isinstance(risk, dict) and risk.get("daily_loss_state") == "unknown":
+        state = "unknown"
+    elif isinstance(risk, dict) and risk.get("today_pnl") not in {None, ""}:
         pnl = str(risk.get("today_pnl"))
         source = "risk"
         state = risk.get("daily_loss_state")
@@ -219,16 +221,33 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     except Exception:
         floor = None
     state = _hard_stop_state(trading, equity, pnl, state, floor)
+    if state is None and isinstance(risk, dict):
+        state = risk.get("daily_loss_state")
+    unknown = state == "unknown" or (pnl is None and state != "hard_stop")
+    if unknown:
+        pnl = None
+        state = "unknown"
+    from app.options.protection_view import build_protection
+
+    protection = build_protection(settings, None if unknown else _dec(pnl), floor, unknown=unknown)
+    from app.analytics.trades import cached_day_capital, day_return_fields
+
+    shown = None if unknown else (_dec(mark) if mark is not None else _dec(pnl))
+    opened = None if unknown else cached_day_capital(settings)
+    returns = day_return_fields(shown, opened)
     return {
         "pnl": pnl,
         "mark_pnl": mark,
         "pnl_source": source,
-        "daily_loss_used": None if not isinstance(risk, dict) else risk.get("daily_loss_used"),
+        "daily_loss_used": None if unknown or not isinstance(risk, dict) else risk.get("daily_loss_used"),
         "daily_loss_limit": None if not isinstance(risk, dict) else risk.get("daily_loss_limit"),
         "daily_kill_loss_usd": kill if kill is not None else (None if not isinstance(risk, dict) else risk.get("daily_kill_loss_usd")),
-        "daily_loss_state": state if state is not None else (None if not isinstance(risk, dict) else risk.get("daily_loss_state")),
+        "daily_loss_state": state,
         "open_positions": None if not isinstance(risk, dict) else risk.get("open_positions"),
         "day_floor": floor if floor is not None else (None if not isinstance(risk, dict) else risk.get("day_floor")),
+        "protection": protection,
+        "day_return_pct": returns["day_return_pct"],
+        "day_invested_usd": returns["day_invested_usd"],
     }
 
 

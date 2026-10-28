@@ -146,6 +146,20 @@ export function Radar({ names, active }: { names: string[]; active: boolean }) {
 }
 
 export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
+  if (state === "unknown") {
+    return (
+      <div className="gauge" dir="ltr">
+        <div className="gauge-top">
+          <span>{copy.kill.brake}</span>
+          <span>לא ידוע</span>
+        </div>
+        <div className="track" />
+        <div className="gauge-scale">
+          <span>לא ידוע</span>
+        </div>
+      </div>
+    );
+  }
   const span = kill && kill > 0 ? kill : null;
   const ratio = pnl === null || span === null ? 0 : Math.max(-1, Math.min(1, pnl / span));
   const at = ((ratio + 1) / 2) * 100;
@@ -173,7 +187,7 @@ export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number |
 }
 
 export function KillBanner({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
-  if (pnl === null || kill === null || kill <= 0) return null;
+  if (state === "unknown" || pnl === null || kill === null || kill <= 0) return null;
   const loss = pnl < 0 ? -pnl : 0;
   const tripped = state === "hard_stop" || loss >= kill;
   const near = !tripped && loss >= kill * 0.7;

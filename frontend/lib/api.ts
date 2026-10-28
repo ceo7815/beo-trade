@@ -66,6 +66,8 @@ export type SystemStatus = {
   health: string;
   database?: string;
   worker_heartbeat_age_seconds?: number | null;
+  monitor_last_success?: string | null;
+  monitor_cycle_ok?: boolean | null;
   alerts: string[];
   paper_only: boolean;
   trading_halted?: boolean;

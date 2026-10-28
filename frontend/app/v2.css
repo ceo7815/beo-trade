@@ -140,6 +140,18 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 }
 .ops-head h1 { font-size: 24px; }
 .desk-hero-label { margin: 0; color: var(--text-3); letter-spacing: 0.04em; }
+.desk-hero-figure { display: grid; gap: 6px; min-width: 0; }
+.desk-hero-return {
+  margin: 0;
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.3;
+  color: var(--text-2);
+}
+.desk-hero-return.up { color: var(--up); }
+.desk-hero-return.down { color: var(--down); }
 .desk-hero-pnl, .finance-hero .num { font-weight: 300; letter-spacing: -0.045em; }
 
 .ticker {
@@ -257,6 +269,61 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 .gauge.near .knob, .gauge.hot .knob { background: var(--down); box-shadow: 0 0 16px rgba(242, 54, 69, 0.7); }
 .gauge.hot .track { background: var(--down); }
 @keyframes gpulse { 50% { filter: brightness(1.35); } }
+
+.protect { display: grid; gap: 8px; width: 100%; min-width: 0; margin-top: 12px; }
+.engine .protect { padding: 0 2px 14px; }
+.protect-line {
+  margin: 0;
+  color: var(--text);
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
+  font-size: 13px;
+  font-weight: 500;
+  line-height: 1.45;
+  text-align: right;
+}
+.protect-track {
+  position: relative;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, rgba(242, 54, 69, 0.72), rgba(236, 238, 241, 0.16) 42%, rgba(217, 164, 65, 0.72));
+}
+.protect-mark {
+  position: absolute;
+  top: 50%;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  transform: translate(-50%, -50%);
+}
+.protect-mark.kill { background: var(--down); box-shadow: 0 0 10px rgba(242, 54, 69, 0.7); }
+.protect-mark.kill.active { width: 16px; height: 16px; }
+.protect-mark.floor { background: var(--gold); box-shadow: 0 0 10px rgba(217, 164, 65, 0.75); }
+.protect-mark.floor.active { width: 16px; height: 16px; }
+.protect-mark.now { width: 9px; height: 9px; background: #f4f1ea; box-shadow: 0 0 8px rgba(244, 241, 234, 0.45); }
+.protect-mark.next { background: transparent; border: 2px solid #c5ccd6; }
+.protect-scale {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--text-2);
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+.protect-scale .kill { color: var(--down); }
+.protect-scale .floor { color: var(--gold); }
+.floor-mark.locked { animation: floor-lock 0.9s ease; }
+.floor-mark.unknown {
+  border-color: rgba(236, 238, 241, 0.45);
+  background: rgba(236, 238, 241, 0.06);
+  box-shadow: inset 0 0 0 6px rgba(236, 238, 241, 0.08);
+  color: var(--text);
+}
+@keyframes floor-lock {
+  0% { transform: scale(0.94); }
+  45% { transform: scale(1.06); box-shadow: 0 0 0 7px rgba(217, 164, 65, 0.28); }
+  100% { transform: scale(1); }
+}
 
 .kill-banner, .kill-full {
   display: flex;
@@ -760,7 +827,7 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .odo .d .col, .tk, .toast3, .gauge.near .track, .aura { transition: none; animation: none; }
+  .odo .d .col, .tk, .toast3, .gauge.near .track, .aura, .floor-mark.locked { transition: none; animation: none; }
   .tk-track, .radar::before, .hb i, .login-chart svg, .odo .d.hit { animation: none; }
   .fu, .fd { animation: none; }
   .fu { background: rgba(34, 195, 142, 0.16); }

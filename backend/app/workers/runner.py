@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import signal
 import threading
 import time
@@ -28,6 +29,17 @@ def beat(path, phase: str) -> None:
     temporary.replace(path)
 
 
+def worker_process_alive(path, *, limit: int = 180, now: float | None = None) -> bool:
+    """Same rule as the Docker healthcheck on worker_heartbeat.txt.
+
+    This is process liveness only. A failed account read must not make it false.
+    """
+    if not path.exists():
+        return False
+    moment = time.time() if now is None else now
+    return moment - path.stat().st_mtime < limit
+
+
 def cycle_plan(*, stop: bool, halted: bool, phase: str, scan_due: bool, monitor_due: bool, reconcile_due: bool) -> dict[str, bool]:
     """New entries stop on shutdown or halt. Protective monitoring still runs."""
     if stop:
@@ -45,17 +57,54 @@ def _request_stop(signum, _frame) -> None:
     log.info("worker.shutdown", signal=signum, service="worker")
 
 
+def record_monitor_result(ok: bool, moment: datetime | None = None) -> None:
+    """Remember whether the protective pass finished. A failure does not move last_success."""
+    from app.ops.paths import MONITOR_CYCLE
+
+    moment = moment or datetime.now(timezone.utc)
+    prior: dict = {}
+    if MONITOR_CYCLE.exists():
+        try:
+            loaded = json.loads(MONITOR_CYCLE.read_text(encoding="utf-8"))
+            prior = loaded if isinstance(loaded, dict) else {}
+        except (OSError, json.JSONDecodeError):
+            prior = {}
+    payload = {
+        "last_attempt": moment.isoformat(),
+        "last_success": moment.isoformat() if ok else prior.get("last_success"),
+        "ok": ok,
+    }
+    MONITOR_CYCLE.parent.mkdir(parents=True, exist_ok=True)
+    temporary = MONITOR_CYCLE.with_suffix(f".{threading.get_ident()}.tmp")
+    temporary.write_text(json.dumps(payload), encoding="utf-8")
+    temporary.replace(MONITOR_CYCLE)
+
+
+def run_monitor_cycle(settings, phase: str) -> bool:
+    """One protective pass.
+
+    worker_heartbeat.txt is rewritten either way so Docker sees a live process.
+    last_success moves only when the pass finishes.
+    """
+    try:
+        monitor_once(settings)
+        ok = True
+    except Exception:
+        log.warning("worker.monitor_failed", service="monitor")
+        ok = False
+    phase_name = "HALTED" if is_halted() else phase
+    beat(HEARTBEAT, phase_name)
+    beat(MONITOR_HEARTBEAT, phase)
+    record_monitor_result(ok)
+    return ok
+
+
 def _monitor_forever(settings, calendar, interval: int) -> None:
     """Exits and liveness do not wait for a long scan."""
     while not _stop:
         now = datetime.now(timezone.utc)
         phase = phase_at(now, calendar)
-        try:
-            monitor_once(settings)
-        except Exception:
-            log.warning("worker.monitor_failed", service="monitor")
-        beat(MONITOR_HEARTBEAT, phase)
-        beat(HEARTBEAT, "HALTED" if is_halted() else phase)
+        run_monitor_cycle(settings, phase)
         time.sleep(interval)
 
 

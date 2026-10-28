@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 from datetime import datetime, timezone
 
 from app.config.settings import Settings
 from app.core.sessions import SCAN_PHASES, phase_at
 from app.models.db import database_ready
-from app.ops.paths import HEARTBEAT, MONITOR_HEARTBEAT, RECONCILE_HEARTBEAT
+from app.ops.paths import HEARTBEAT, MONITOR_CYCLE, RECONCILE_HEARTBEAT
 from app.ops.safety import policy_errors
 
 
@@ -25,6 +26,36 @@ def _fresh(age: int | None, limit: int) -> str:
 
 def _configured(value: str) -> bool:
     return bool(value.strip())
+
+
+def _monitor_cycle() -> dict:
+    if not MONITOR_CYCLE.exists():
+        return {}
+    try:
+        body = json.loads(MONITOR_CYCLE.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return body if isinstance(body, dict) else {}
+
+
+def monitor_success(limit: int) -> dict:
+    """Whether the protective pass finished. Independent of the Docker liveness file."""
+    cycle = _monitor_cycle()
+    stamp = cycle.get("last_success")
+    state = "DEGRADED"
+    if cycle.get("ok") is False:
+        state = "FAILED"
+    elif stamp:
+        try:
+            moment = datetime.fromisoformat(str(stamp))
+        except ValueError:
+            moment = None
+        if moment is not None:
+            if moment.tzinfo is None:
+                moment = moment.replace(tzinfo=timezone.utc)
+            age = max(0, int(datetime.now(timezone.utc).timestamp() - moment.timestamp()))
+            state = "HEALTHY" if age <= limit else "FAILED"
+    return {"state": state, "last_success": stamp, "ok": cycle.get("ok") if cycle else None}
 
 
 def build_health(settings: Settings) -> tuple[int, dict]:
@@ -53,8 +84,20 @@ def build_ready(settings: Settings) -> tuple[int, dict]:
     trading = settings.trading()
     limit = trading.scan_interval_seconds * 3
     worker = _fresh(_age(HEARTBEAT), limit)
-    monitor = _fresh(_age(MONITOR_HEARTBEAT), limit)
+    success = monitor_success(limit)
+    monitor = success["state"]
+    monitor_last_success = success["last_success"]
     reconcile = _fresh(_age(RECONCILE_HEARTBEAT), max(limit, trading.scan_interval_seconds * 3))
+    from app.options.account_read import public_status
+
+    account_read = public_status()
+    failures = int(account_read.get("consecutive_failures") or 0)
+    if failures >= 3:
+        account_component = "FAILED"
+    elif failures > 0 or not account_read.get("last_success_at"):
+        account_component = "DEGRADED"
+    else:
+        account_component = "HEALTHY"
     phase = phase_at(datetime.now(timezone.utc), settings.calendar())
     session_open = phase in SCAN_PHASES
     theta = "BLOCKED"
@@ -68,6 +111,10 @@ def build_ready(settings: Settings) -> tuple[int, dict]:
         reasons.append("core")
     if worker != "HEALTHY":
         reasons.append("worker_heartbeat")
+    if monitor == "FAILED":
+        reasons.append("monitor_heartbeat")
+    if failures >= 3:
+        reasons.append("ACCOUNT_DATA_UNAVAILABLE")
     if not session_open:
         reasons.append("session_closed")
     if theta == "BLOCKED":
@@ -88,10 +135,14 @@ def build_ready(settings: Settings) -> tuple[int, dict]:
         "autonomous": autonomous,
         "blocked_reasons": reasons,
         "market_phase": phase,
+        "monitor_last_success": monitor_last_success,
+        "account_read_failures": failures,
+        "account_read_last_success": account_read.get("last_success_at"),
         "components": {
             **health["components"],
             "worker": worker,
             "monitor": monitor,
+            "account_read": account_component,
             "reconciliation": reconcile,
             "alpaca_paper": broker,
             "thetadata": theta,
