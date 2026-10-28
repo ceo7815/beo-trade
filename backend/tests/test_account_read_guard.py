@@ -215,9 +215,15 @@ def test_a_failed_cycle_refreshes_process_liveness_and_keeps_last_success(tmp_pa
     cycle = json.loads(cycle_path.read_text(encoding="utf-8"))
     assert cycle["ok"] is False
     assert cycle["last_success"] == previous
-    _code, ready = build_ready(Settings())
-    assert ready["components"]["worker"] == "HEALTHY"
-    assert ready["components"]["monitor"] == "FAILED"
+    _code, ready = build_ready(
+        Settings(),
+        broker_probe=lambda _settings: {"status": "FAILED", "reachable": False, "detail": "missing_key", "latency_ms": None},
+    )
+    assert ready["components"]["worker"]["alive"] is True
+    assert ready["components"]["worker"]["status"] == "HEALTHY"
+    assert ready["components"]["monitor_success"]["ok"] is False
+    assert ready["components"]["monitor_success"]["state"] == "FAILED"
+    assert ready["components"]["account_read"] == "DEGRADED"
     assert ready["monitor_last_success"] == previous
     assert "monitor_heartbeat" in ready["blocked_reasons"]
 
