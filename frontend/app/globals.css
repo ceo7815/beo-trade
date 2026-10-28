@@ -2368,10 +2368,35 @@ button.engine-cube { cursor: pointer; }
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  scrollbar-width: none;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+  touch-action: pan-x;
+  -webkit-overflow-scrolling: touch;
 }
 
-.desk-day-row::-webkit-scrollbar { display: none; }
+.lux-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #d9a441 rgba(255, 255, 255, 0.06);
+}
+
+.lux-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  display: block;
+}
+
+.lux-scroll::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(197, 204, 214, 0.18), rgba(255, 255, 255, 0.05));
+  border-radius: 99px;
+}
+
+.lux-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #c5ccd6, #d9a441);
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background-clip: padding-box;
+}
 
 .desk-day {
   display: grid;
@@ -2381,6 +2406,7 @@ button.engine-cube { cursor: pointer; }
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 14px 14px 12px;
+  scroll-snap-align: start;
 }
 
 .desk-day.on { border-color: rgba(231, 201, 138, 0.75); }

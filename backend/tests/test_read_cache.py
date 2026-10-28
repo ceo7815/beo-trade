@@ -1,5 +1,5 @@
 import threading
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,6 +34,54 @@ def test_a_failed_report_is_not_cached():
     cache = ReadCache()
     cache.set(("trades", "today"), {"available": False, "detail": "down"}, 45)
     assert cache.get(("trades", "today")) is None
+    cache.set(("trades", "today"), {"available": True, "stale": True, "closed": [1]}, 45)
+    assert cache.get(("trades", "today")) is None
+
+
+def test_a_failed_read_serves_the_last_good_payload_and_does_not_store_the_failure(monkeypatch):
+    clock = {"mono": 100.0, "wall": 1_762_000_000.0}
+    monkeypatch.setattr("app.analytics.read_cache.time.monotonic", lambda: clock["mono"])
+    monkeypatch.setattr("app.analytics.read_cache.time.time", lambda: clock["wall"])
+    cache = ReadCache()
+    cache.set(("trades", "all"), {"available": True, "closed": [1]}, 45)
+    clock["mono"] = 146
+    calls = {"n": 0}
+
+    def produce():
+        calls["n"] += 1
+        return {"available": False, "detail": "down"}
+
+    first = cache.get_or_compute(("trades", "all"), 45, produce)
+    second = cache.get_or_compute(("trades", "all"), 45, produce)
+    assert calls["n"] == 2
+    assert first["available"] is True
+    assert first["closed"] == [1]
+    assert first["stale"] is True
+    assert first["as_of"] == datetime.fromtimestamp(clock["wall"], timezone.utc).isoformat()
+    assert second["stale"] is True
+    assert second["closed"] == [1]
+    assert cache.get(("trades", "all")) is None
+    clock["mono"] = 100
+    stored = cache.get(("trades", "all"))
+    assert stored["closed"] == [1]
+    assert "stale" not in stored
+
+    clock["mono"] = 146
+
+    def recover():
+        return {"available": True, "closed": [1, 2]}
+
+    fresh = cache.get_or_compute(("trades", "all"), 45, recover)
+    assert fresh["closed"] == [1, 2]
+    assert fresh.get("stale") is not True
+    assert cache.get(("trades", "all"))["closed"] == [1, 2]
+
+
+def test_a_failure_with_no_prior_read_is_returned_and_not_stored():
+    cache = ReadCache()
+    body = cache.get_or_compute(("finance", "month"), 45, lambda: {"available": False, "account": None})
+    assert body["available"] is False
+    assert cache.get(("finance", "month")) is None
 
 
 def test_concurrent_callers_share_one_computation():
@@ -212,6 +260,88 @@ def test_today_asks_alpaca_for_a_short_window_and_the_second_read_is_cached(tmp_
     assert seen["calls"] == 1
     start = date.fromisoformat(body["window"]["start"])
     assert date.fromisoformat(seen["after"]) == start - timedelta(days=21)
+
+
+def test_trades_report_keeps_the_last_good_read_when_the_broker_fails(tmp_path, monkeypatch):
+    from app.main import create_app
+    from tests.test_trades_report import _fills
+
+    clock = {"mono": 1_000.0, "wall": 1_762_000_000.0}
+    monkeypatch.setattr("app.analytics.read_cache.time.monotonic", lambda: clock["mono"])
+    monkeypatch.setattr("app.analytics.read_cache.time.time", lambda: clock["wall"])
+    mode = {"fail": False}
+    seen = {"calls": 0}
+
+    class Adapter:
+        def get_all_fills(self, max_pages: int = 20, after: str = ""):
+            seen["calls"] += 1
+            if mode["fail"]:
+                raise RuntimeError("down")
+            return _fills()
+
+        def get_positions(self):
+            return []
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr("app.analytics.routes.open_paper_broker", lambda settings: Adapter())
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "report-stale.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        trading_mode="PAPER",
+    )
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
+        first = client.get("/api/v1/report/trades", params={"period": "all"})
+        mode["fail"] = True
+        clock["mono"] = 1_200.0
+        second = client.get("/api/v1/report/trades", params={"period": "all"})
+        third = client.get("/api/v1/report/trades", params={"period": "all"})
+    assert first.status_code == 200
+    good = first.json()
+    assert good["available"] is True
+    assert good.get("stale") is not True
+    stale = second.json()
+    assert stale["available"] is True
+    assert stale["stale"] is True
+    assert stale["as_of"] == datetime.fromtimestamp(clock["wall"], timezone.utc).isoformat()
+    assert stale["summary"] == good["summary"]
+    assert stale["closed"] == good["closed"]
+    assert third.json()["stale"] is True
+    assert third.json()["summary"] == good["summary"]
+    assert seen["calls"] == 3
+    assert read_cache.get(("trades", "all", "", "")) is None
+
+
+def test_finance_broker_failure_does_not_replace_the_last_good_account(tmp_path, monkeypatch):
+    from app.main import create_app
+
+    clock = {"mono": 1_000.0, "wall": 1_762_000_000.0}
+    monkeypatch.setattr("app.analytics.read_cache.time.monotonic", lambda: clock["mono"])
+    monkeypatch.setattr("app.analytics.read_cache.time.time", lambda: clock["wall"])
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "finance-stale.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        trading_mode="PAPER",
+    )
+    key = ("finance", "month", "", "", "", "", "", "", "", "")
+    read_cache.set(key, {"environment": "PAPER", "account": {"equity": "10.00"}, "history": {"points": [{"equity": 10}]}}, 45)
+    clock["mono"] = 1_200.0
+
+    def down(_settings):
+        raise RuntimeError("down")
+
+    monkeypatch.setattr("app.analytics.routes.open_paper_broker", down)
+    with TestClient(create_app(settings, allow_open_api=True)) as client:
+        body = client.get("/api/v1/finance").json()
+    assert body["account"]["equity"] == "10.00"
+    assert body["stale"] is True
+    assert body["as_of"] == datetime.fromtimestamp(clock["wall"], timezone.utc).isoformat()
+    assert read_cache.get(key) is None
 
 
 def _index_names(engine) -> list[str]:
