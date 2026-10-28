@@ -2,6 +2,10 @@
 
 Reads the configured steps and the stored peak. Does not arm a floor, move a
 floor, or sell. The lock itself still lives in day_floor.advance.
+
+Before the regular session opens, Alpaca equity − last_equity is still the
+previous session. present_broker_day turns that into the number the screen
+shows. The risk engine keeps the raw mark.
 """
 
 from __future__ import annotations
@@ -13,6 +17,43 @@ from zoneinfo import ZoneInfo
 
 from app.config.settings import TradingConfig
 
+FRESH_DAY_NOTE = "יום חדש — מתאפס בפתיחה"
+
+
+def display_moment() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def broker_mark_is_previous_session(moment: datetime, calendar) -> bool:
+    """True when equity − last_equity still belongs to an earlier New York session.
+
+    After today's open, and through the close, the mark is this session.
+    Before the open, and on a day with no session, it is the previous one.
+    """
+    from app.core.sessions import session_bounds
+
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    bounds = session_bounds(moment, calendar)
+    if bounds is None:
+        return True
+    start, _end = bounds
+    local = moment.astimezone(ZoneInfo(calendar.timezone))
+    return local < start
+
+
+def present_broker_day(pnl: Decimal | None, moment: datetime, calendar) -> dict:
+    """The day P&L the desk may show. A missing mark stays missing.
+
+    A previous session is shown as zero with a fresh-day note, so the big
+    number, the percent line, and the protection sentence share one figure.
+    """
+    if pnl is None:
+        return {"pnl": None, "stale": False, "note": None}
+    if broker_mark_is_previous_session(moment, calendar):
+        return {"pnl": Decimal("0"), "stale": True, "note": FRESH_DAY_NOTE}
+    return {"pnl": pnl, "stale": False, "note": None}
+
 
 def protection_progress(
     pnl: Decimal | None,
@@ -22,24 +63,30 @@ def protection_progress(
     *,
     armed: bool,
 ) -> dict:
-    """Next ladder step above the locked peak, and the distance from today's P&L.
+    """Next ladder step the displayed P&L has not reached, and the distance to it.
 
     With nothing locked, the active protection is the dollar kill. A missing
-    P&L returns status unknown and does not invent a zero.
+    P&L returns status unknown and does not invent a zero. A P&L that is
+    already at or past a step never produces "עוד 0$": the sentence moves to
+    the following step, or stops once the ladder is capped.
     """
     ladder = _steps(steps)
     kill_amount = abs(Decimal(kill))
     if pnl is None:
         return _unknown(kill_amount)
     locked_floor = _locked_floor(peak, ladder) if armed else None
-    next_arm, next_floor = _next_step(peak if armed else None, ladder)
+    reference = peak if locked_floor is not None and peak is not None else pnl
+    next_arm, next_floor = _next_step(reference, ladder)
+    if next_arm is not None and _reached(pnl, next_arm):
+        next_arm, next_floor = _next_step(pnl, ladder)
     distance = None if next_arm is None else next_arm - pnl
-    if distance is not None and distance < 0:
-        distance = Decimal("0")
+    if distance is not None and _reached(pnl, next_arm):
+        distance = None
+        next_arm, next_floor = None, None
     kind = "floor" if locked_floor is not None else "kill"
     view = {
         "status": "ok",
-        "line": _line(kind, locked_floor, next_arm, next_floor, distance),
+        "line": _line(locked_floor, next_arm, next_floor, distance),
         "kill": _money(kill_amount),
         "pnl": _money(pnl),
         "floor": None if locked_floor is None else _money(locked_floor),
@@ -48,7 +95,7 @@ def protection_progress(
         "next_floor": None if next_floor is None else _money(next_floor),
         "distance": None if distance is None else _money(distance),
         "protection_kind": kind,
-        "armed": bool(armed and locked_floor is not None),
+        "armed": bool(locked_floor is not None),
     }
     return view
 
@@ -82,14 +129,14 @@ def _unknown(kill: Decimal) -> dict:
     }
 
 
-def _line(kind: str, floor: Decimal | None, next_arm: Decimal | None, next_floor: Decimal | None, distance: Decimal | None) -> str:
+def _line(floor: Decimal | None, next_arm: Decimal | None, next_floor: Decimal | None, distance: Decimal | None) -> str:
     if next_arm is None or next_floor is None or distance is None:
         if floor is None:
             return "לא ידוע"
-        return f"ההגנה נעולה על {_words(floor)}"
-    if kind == "kill":
+        return f"מוגנים {_words(floor)}"
+    if floor is None:
         return f"עוד {_words(distance)} (ב-{_words(next_arm)}) נכנסת הגנה של {_words(next_floor)}"
-    return f"עוד {_words(distance)} (ב-{_words(next_arm)}) ההגנה עולה ל-{_words(next_floor)}"
+    return f"מוגנים {_words(floor)} · עוד {_words(distance)} (ב-{_words(next_arm)}) ההגנה עולה ל-{_words(next_floor)}"
 
 
 def _locked_floor(peak: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], ...]) -> Decimal | None:
@@ -102,12 +149,18 @@ def _locked_floor(peak: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], .
     return found
 
 
-def _next_step(peak: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], ...]) -> tuple[Decimal | None, Decimal | None]:
-    mark = peak if peak is not None else Decimal("-1")
+def _next_step(mark: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], ...]) -> tuple[Decimal | None, Decimal | None]:
+    cursor = Decimal("-1") if mark is None else mark
     for arm, floor in ladder:
-        if arm > mark:
+        if arm > cursor:
             return arm, floor
     return None, None
+
+
+def _reached(pnl: Decimal, arm: Decimal | None) -> bool:
+    if arm is None:
+        return False
+    return (arm - pnl).quantize(Decimal("0.01")) <= 0
 
 
 def _peak_for_floor(ladder: tuple[tuple[Decimal, Decimal], ...], floor: Decimal | None) -> Decimal | None:

@@ -233,7 +233,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   }, [status, live.snap]);
 
   useEffect(() => {
-    const pnl = num(live.snap?.day?.mark_pnl ?? live.snap?.day?.pnl);
+    const pnl = num(live.snap?.day?.display_pnl ?? live.snap?.day?.pnl ?? live.snap?.day?.mark_pnl);
     document.body.classList.toggle("red", pnl !== null && pnl < 0);
     document.body.style.setProperty("--mood", pnl === null ? "0.5" : String(Math.max(-1, Math.min(1, pnl / 2500))));
   }, [live.snap]);

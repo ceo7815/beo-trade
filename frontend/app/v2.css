@@ -153,6 +153,7 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 }
 .desk-hero-return.up { color: var(--up); }
 .desk-hero-return.down { color: var(--down); }
+.desk-hero-return.muted, .desk-hero-return.flat { color: var(--text-3); }
 .desk-hero-pnl, .finance-hero .num { font-weight: 300; letter-spacing: -0.045em; }
 
 .ticker {
@@ -258,18 +259,23 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 .gauge .track { position: relative; height: 8px; border-radius: 8px; background: linear-gradient(90deg, var(--down), #3a2024 46%, #1b1f24 50%, #143028 54%, var(--up)); }
 .gauge .knob {
   position: absolute;
-  top: 50%;
+  top: -3px;
   width: 14px;
   height: 14px;
-  border-radius: 50%;
+  min-width: 14px;
+  max-width: 14px;
+  min-height: 14px;
+  max-height: 14px;
+  margin-left: -7px;
+  border-radius: 999px;
   background: #fff;
-  transform: translate(-50%, -50%);
-  box-shadow: 0 0 16px rgba(255, 255, 255, 0.45);
+  box-shadow: none;
+  filter: none;
+  transform: none;
+  aspect-ratio: 1;
 }
-.gauge.near .track { animation: gpulse 2s ease-in-out infinite; }
-.gauge.near .knob, .gauge.hot .knob { background: var(--down); box-shadow: 0 0 16px rgba(242, 54, 69, 0.7); }
+.gauge.near .knob, .gauge.hot .knob { background: var(--down); box-shadow: none; }
 .gauge.hot .track { background: var(--down); }
-@keyframes gpulse { 50% { filter: brightness(1.35); } }
 
 .protect { display: grid; gap: 8px; width: 100%; min-width: 0; margin-top: 12px; }
 .engine .protect { padding: 0 2px 14px; }
@@ -282,26 +288,58 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
   line-height: 1.45;
   text-align: right;
 }
-.protect-track {
+.protect-rail {
   position: relative;
-  height: 10px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(242, 54, 69, 0.72), rgba(236, 238, 241, 0.16) 42%, rgba(217, 164, 65, 0.72));
+  height: 16px;
+  margin-inline: 8px;
 }
-.protect-mark {
+.protect-track {
   position: absolute;
-  top: 50%;
+  left: 0;
+  right: 0;
+  top: 4px;
+  height: 8px;
+  border-radius: 999px;
+  overflow: hidden;
+}
+.protect-dot {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  display: block;
   width: 12px;
   height: 12px;
-  border-radius: 50%;
-  transform: translate(-50%, -50%);
+  min-width: 12px;
+  max-width: 12px;
+  min-height: 12px;
+  max-height: 12px;
+  margin-top: -6px;
+  margin-left: -6px;
+  border-radius: 999px;
+  box-sizing: border-box;
+  box-shadow: none;
+  filter: none;
+  transform: none;
+  -webkit-filter: none;
+  aspect-ratio: 1;
 }
-.protect-mark.kill { background: var(--down); box-shadow: 0 0 10px rgba(242, 54, 69, 0.7); }
-.protect-mark.kill.active { width: 16px; height: 16px; }
-.protect-mark.floor { background: var(--gold); box-shadow: 0 0 10px rgba(217, 164, 65, 0.75); }
-.protect-mark.floor.active { width: 16px; height: 16px; }
-.protect-mark.now { width: 9px; height: 9px; background: #f4f1ea; box-shadow: 0 0 8px rgba(244, 241, 234, 0.45); }
-.protect-mark.next { background: transparent; border: 2px solid #c5ccd6; }
+.protect-dot.kill { background: var(--down); }
+.protect-dot.floor { z-index: 2; background: var(--gold); border: 2px solid #f4e6c4; }
+.protect-dot.now { z-index: 3; width: 10px; height: 10px; min-width: 10px; max-width: 10px; min-height: 10px; max-height: 10px; margin-top: -5px; margin-left: -5px; background: #f4f1ea; }
+.protect-dot.next { z-index: 2; background: transparent; border: 2px solid #c5ccd6; }
+.protect-distance {
+  display: grid;
+  justify-items: start;
+  gap: 2px;
+  margin: 0;
+  color: var(--text-3);
+  font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.35;
+}
+.protect-distance .hint { cursor: help; text-decoration: underline dotted; text-underline-offset: 3px; }
+.protect-distance small { color: var(--text-3); font-size: 10px; font-weight: 400; }
 .protect-scale {
   display: flex;
   justify-content: space-between;
@@ -313,6 +351,7 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 }
 .protect-scale .kill { color: var(--down); }
 .protect-scale .floor { color: var(--gold); }
+.protect-scale .zero { color: var(--text-3); }
 .floor-mark.locked { animation: floor-lock 0.9s ease; }
 .floor-mark.unknown {
   border-color: rgba(236, 238, 241, 0.45);

@@ -17,6 +17,7 @@ type Risk = {
   daily_loss_used: string | null;
   daily_loss_state?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
+  day_pnl_note?: string | null;
   protection?: Protection | null;
   max_positions: number;
   open_positions: number | null;
@@ -247,7 +248,8 @@ export default function RiskPage() {
   const floor = liveFloor ?? body?.day_floor ?? live.snap?.day?.day_floor ?? null;
   const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? body?.protection ?? live.snap?.day?.protection ?? null;
   const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : body?.daily_loss_state;
-  const unknown = dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown");
+  const dayNote = (transportMode() === "sse" ? live.snap?.day?.day_pnl_note : null) ?? body?.day_pnl_note ?? live.snap?.day?.day_pnl_note ?? null;
+  const unknown = !dayNote && (dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown"));
   const tone = unknown ? "warn" : body?.state === "עצור" ? "off" : body?.state === "אזהרה" || failed ? "warn" : body ? "on" : "warn";
   const badge = unknown ? "לא ידוע" : (body?.state || (failed ? "אין נתונים" : "טוען"));
 

@@ -30,6 +30,8 @@ export type LiveAccount = {
 export type LiveDay = {
   pnl?: string | null;
   mark_pnl?: string | null;
+  display_pnl?: string | null;
+  day_pnl_note?: string | null;
   pnl_source?: string | null;
   daily_loss_used?: string | null;
   daily_loss_limit?: string | null;

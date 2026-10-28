@@ -1,5 +1,9 @@
 "use client";
 
+import { money, signedMoney } from "@/lib/format";
+import { copy } from "@/lib/copy";
+import { finiteNumber, killRoom, markerModel, visibleLine } from "@/lib/protection";
+
 export type Protection = {
   status?: string | null;
   line?: string | null;
@@ -14,12 +18,13 @@ export type Protection = {
   armed?: boolean;
 };
 
-function dollars(value: string | null | undefined) {
-  const number = Number(value);
-  if (!Number.isFinite(number)) return "";
-  const absolute = Math.abs(number);
-  const body = Number.isInteger(absolute) ? absolute.toLocaleString("en-US") : absolute.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  return number < 0 ? `−${body}$` : `${body}$`;
+function dollars(value: number) {
+  const absolute = Math.abs(value);
+  const whole = Math.round(absolute) === absolute;
+  const body = whole
+    ? absolute.toLocaleString("en-US", { maximumFractionDigits: 0 })
+    : absolute.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  return value < 0 ? `−${body}$` : `${body}$`;
 }
 
 export function ProtectionBar({ protection }: { protection: Protection | null | undefined }) {
@@ -30,32 +35,41 @@ export function ProtectionBar({ protection }: { protection: Protection | null | 
       </div>
     );
   }
-  const kill = Number(protection.kill);
-  const pnl = Number(protection.pnl);
-  const floor = Number(protection.floor);
-  const next = Number(protection.next_threshold);
-  const marks = [Number.isFinite(kill) ? -Math.abs(kill) : null, 0, Number.isFinite(pnl) ? pnl : null, Number.isFinite(floor) ? floor : null, Number.isFinite(next) ? next : null]
-    .filter((value): value is number => value !== null);
-  const min = Math.min(...marks);
-  const max = Math.max(...marks);
-  const span = max - min || 1;
-  const at = (value: number) => `${((value - min) / span) * 100}%`;
-  const killAt = Number.isFinite(kill) ? -Math.abs(kill) : null;
-  const activeKill = protection.protection_kind === "kill";
+  const kill = finiteNumber(protection.kill);
+  const pnl = finiteNumber(protection.pnl);
+  const floor = finiteNumber(protection.floor);
+  const next = finiteNumber(protection.next_threshold);
+  const peak = finiteNumber(protection.peak);
+  const armed = Boolean(protection.armed) && floor !== null && floor > 0;
+  const line = visibleLine(protection.line, pnl, armed ? peak ?? pnl : null, armed);
+  const model = markerModel({ kill, pnl, floor, next, armed });
+  const room = killRoom(pnl, kill);
+  const zero = model.at(0);
+  const track = `linear-gradient(90deg, var(--down) 0%, #6e2a32 ${Math.max(0, zero - 6)}%, #1b1f24 ${zero}%, #3a3426 78%, var(--gold) 100%)`;
   return (
     <div className="protect">
-      <p className="protect-line">{protection.line}</p>
-      <div className="protect-track" dir="ltr" aria-hidden="true">
-        {killAt !== null ? <i className={`protect-mark kill${activeKill ? " active" : ""}`} style={{ insetInlineStart: at(killAt) }} /> : null}
-        {Number.isFinite(floor) ? <i className={`protect-mark floor${protection.protection_kind === "floor" ? " active" : ""}`} style={{ insetInlineStart: at(floor) }} /> : null}
-        {Number.isFinite(pnl) ? <i className="protect-mark now" style={{ insetInlineStart: at(pnl) }} /> : null}
-        {Number.isFinite(next) ? <i className="protect-mark next" style={{ insetInlineStart: at(next) }} /> : null}
+      <p className="protect-line">{line}</p>
+      <div className="protect-rail" dir="ltr" aria-hidden="true">
+        <div className="protect-track" style={{ background: track }} />
+        {model.killAt !== null ? <span className="protect-dot kill" style={{ left: `${model.at(model.killAt)}%` }} /> : null}
+        {model.floorAt !== null ? <span className="protect-dot floor" style={{ left: `${model.at(model.floorAt)}%` }} /> : null}
+        {model.nextAt !== null ? <span className="protect-dot next" style={{ left: `${model.at(model.nextAt)}%` }} /> : null}
+        {model.pnl !== null ? <span className="protect-dot now" style={{ left: `${model.at(model.pnl)}%` }} /> : null}
       </div>
       <div className="protect-scale" dir="ltr">
-        <span className="kill">{killAt === null ? "—" : dollars(String(killAt))}</span>
-        <span className="floor">{Number.isFinite(floor) ? dollars(protection.floor) : activeKill ? "בלם" : ""}</span>
-        <span className="next">{Number.isFinite(next) ? dollars(protection.next_threshold) : ""}</span>
+        <span className="kill">{model.killAt === null ? "" : dollars(model.killAt)}</span>
+        <span className={model.floorAt !== null ? "floor" : "zero"}>{model.floorAt !== null ? dollars(model.floorAt) : "$0"}</span>
+        <span className="next">{model.nextAt !== null ? dollars(model.nextAt) : ""}</span>
       </div>
+      {room !== null ? (
+        <p className="protect-distance">
+          <span className="hint" title={copy.kill.distanceHint}>
+            {copy.kill.distance}{" "}
+            <bdi dir="ltr" className={room < 0 ? "down" : ""}>{room < 0 ? signedMoney(room, 0) : money(room, 0)}</bdi>
+          </span>
+          <small>{copy.kill.distanceSub}</small>
+        </p>
+      ) : null}
     </div>
   );
 }
