@@ -99,6 +99,8 @@ services:
         limits:
           cpus: "1.0"
           memory: 768M
+    # Liveness only. worker_heartbeat.txt is rewritten every loop, including a failed Alpaca read.
+    # Cycle success is monitor_cycle.json last_success, which this check does not read.
     healthcheck:
       test: ["CMD", "python", "-c", "import time; from pathlib import Path; p=Path('/app/data/worker_heartbeat.txt'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
       interval: 20s

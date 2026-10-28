@@ -1,9 +1,9 @@
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from app.ai.budget import make_ledger
 from app.ai.telemetry import store_ai_request
-from app.analytics.trades import round_trips, summarize, window, within
+from app.analytics.trades import capital_opened_on, day_return_fields, round_trips, summarize, window, within
 from app.config.settings import Settings
 from app.models.db import configure_database, init_db, session_scope
 from app.models.store import load_usage
@@ -137,3 +137,21 @@ def test_dashboard_ai_cost_counts_the_calls_the_worker_logged(tmp_path):
         entries = load_usage(session, datetime(2026, 10, 1, tzinfo=timezone.utc), make_ledger(settings).cost_of)
     assert len(entries) == 2
     assert sum((entry.cost for entry in entries), Decimal("0")) == Decimal("0.006")
+
+
+def test_day_return_divides_pnl_by_the_premium_opened_that_session():
+    session = date(2026, 10, 8)
+    rows = [
+        {"opened_at": "2026-10-08T14:00:00+00:00", "entry_price": "2.40", "qty": "20"},
+        {"opened_at": "2026-10-08T18:30:00+00:00", "entry_price": "1.50", "qty": "4"},
+        {"opened_at": "2026-10-08T01:30:00+00:00", "entry_price": "9.00", "qty": "10"},
+    ]
+    invested = capital_opened_on(rows, session)
+    assert invested == Decimal("5400")
+    assert day_return_fields(Decimal("1840"), invested) == {"day_return_pct": "34.07", "day_invested_usd": "5400.00"}
+    assert day_return_fields(Decimal("1840"), Decimal("10000"))["day_return_pct"] == "18.40"
+    assert day_return_fields(Decimal("-920"), Decimal("10000")) == {"day_return_pct": "-9.20", "day_invested_usd": "10000.00"}
+    assert day_return_fields(None, Decimal("10000")) == {"day_return_pct": None, "day_invested_usd": None}
+    assert day_return_fields(Decimal("10"), None) == {"day_return_pct": None, "day_invested_usd": None}
+    assert capital_opened_on([], session) is None
+    assert capital_opened_on([{"opened_at": "2026-10-08T14:00:00+00:00", "entry_price": "2", "qty": None}], session) is None

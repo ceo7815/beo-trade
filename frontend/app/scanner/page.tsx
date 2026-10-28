@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
 import { PHASES, apiGet, poll, type SystemStatus } from "@/lib/api";
+import { money } from "@/lib/format";
+import { regimeLine } from "@/lib/regime";
 
 type Desk = {
   last_scan: {
@@ -20,6 +22,7 @@ export default function ScannerPage() {
   const [desk, setDesk] = useState<Desk | null>(null);
   const [status, setStatus] = useState<SystemStatus | null>(null);
   const [open, setOpen] = useState<Explain | null>(null);
+  const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
     let alive = true;
@@ -34,9 +37,11 @@ export default function ScannerPage() {
       });
     };
     const stop = poll(() => load(), 30000);
+    const clock = window.setInterval(() => setNow(Date.now()), 1000);
     return () => {
       alive = false;
       stop();
+      window.clearInterval(clock);
     };
   }, []);
 
@@ -88,6 +93,26 @@ export default function ScannerPage() {
       explain: { title: "שלב שוק", does: "השלב נקבע לפי שעון הבורסה. סריקה לא רצה כשהשוק סגור.", tools: ["שעון מסחר"], formula: "שלב = phase_at(עכשיו, לוח המסחר)" },
     },
     {
+      label: "משטר",
+      value: regimeLine(status?.regime_status, now),
+      explain: {
+        title: "משטר שוק",
+        does: "הסורק שומר את המשטר האחרון, והמסך קורא את העותק הזה. בלי ציטוט SPY, QQQ, IWM או VIX המשטר נשאר ממתין.",
+        tools: ["SPY", "QQQ", "IWM", "VIX"],
+        formula: "משטר = מגמה / תנודתיות / סיכון\nעודכן לפני = עכשיו − updated_at",
+      },
+    },
+    {
+      label: "הון Alpaca",
+      value: equityText(status?.paper_equity),
+      explain: {
+        title: "הון Alpaca",
+        does: "ההון שכבר נקרא מחשבון Alpaca Paper. המסך לא מציג את יתרת הפתיחה הפנימית.",
+        tools: ["Alpaca equity"],
+        formula: "הון = equity מהקריאה האחרונה לחשבון\nבלי קריאה: אין נתונים",
+      },
+    },
+    {
       label: "דופק",
       value: status?.worker_heartbeat_age_seconds == null ? "אין נתונים" : `${Math.round(status.worker_heartbeat_age_seconds)} שנ׳`,
       explain: { title: "דופק הסורק", does: "גיל קובץ הדופק. המנוע נחשב פעיל רק כשהגיל בתוך חלון הסריקה.", tools: ["worker_heartbeat"], formula: "פעיל אם גיל ≤ מרווח סריקה × 3" },
@@ -99,6 +124,12 @@ export default function ScannerPage() {
       <Board title={copy.screens.scanner} hint={copy.screens.engineHint} pip={scan ? "יש סריקה" : desk ? copy.common.waiting : copy.common.loading} cubes={cubes} open={open} setOpen={setOpen} />
     </Shell>
   );
+}
+
+function equityText(value: string | null | undefined) {
+  if (value == null || value === "") return "אין נתונים";
+  const number = Number(value);
+  return Number.isFinite(number) ? money(number) : "אין נתונים";
 }
 
 function Board({ title, hint, pip, cubes, open, setOpen }: {

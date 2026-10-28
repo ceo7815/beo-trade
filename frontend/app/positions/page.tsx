@@ -3,9 +3,9 @@
 import { useEffect, useState } from "react";
 import { Shell, useDesk } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
-import { loadCached, peekCached, poll, transportMode } from "@/lib/api";
+import { holdScreen, loadCached, peekCached, poll, transportMode } from "@/lib/api";
 import { copy } from "@/lib/copy";
-import { Num, Odometer, Sparkline, useTick } from "@/components/live-ui";
+import { Num, Odometer, Sparkline, StaleNote, useTick } from "@/components/live-ui";
 import { signedPct as formatPct } from "@/lib/format";
 import { useLive } from "@/lib/live";
 import { exitLabel } from "@/lib/exits";
@@ -55,6 +55,9 @@ type OpenTrade = {
 };
 
 type Report = {
+  available?: boolean;
+  stale?: boolean;
+  as_of?: string | null;
   open?: OpenTrade[];
   summary?: { realized_pnl?: string; closed_count?: number; wins?: number; losses?: number } | null;
 };
@@ -174,6 +177,10 @@ export default function PositionsPage() {
   const [now, setNow] = useState(() => Date.now());
   const [picked, setPicked] = useState<{ position: BrokerPosition; trade: OpenTrade | null } | null>(null);
   const [book, setBook] = useState<ClosedTrade[] | null>(() => peekCached<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all")?.closed ?? null);
+  const [bookAge, setBookAge] = useState<{ stale?: boolean; as_of?: string | null }>(() => {
+    const cached = peekCached<{ stale?: boolean; as_of?: string | null }>("/api/v1/report/trades?period=all");
+    return { stale: cached?.stale, as_of: cached?.as_of };
+  });
   const [choice, setChoice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -197,12 +204,18 @@ export default function PositionsPage() {
     }, 15000);
     const stopToday = poll(async () => {
       await loadCached<Report>("/api/v1/report/trades?period=today", (body) => {
-        if (alive) setReport(body);
+        if (alive) setReport((current) => holdScreen(current, body) ?? body);
       }, 30000).catch(() => undefined);
     }, 60000);
     const stopHistory = poll(async () => {
-      await loadCached<{ closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all", (body) => {
-        if (alive) setBook(body.closed ?? []);
+      await loadCached<{ available?: boolean; stale?: boolean; as_of?: string | null; closed?: ClosedTrade[] }>("/api/v1/report/trades?period=all", (body) => {
+        if (!alive) return;
+        if (body.available === false) {
+          setBookAge((current) => ({ stale: true, as_of: current.as_of ?? new Date().toISOString() }));
+          return;
+        }
+        if (body.closed) setBook(body.closed);
+        setBookAge({ stale: body.stale, as_of: body.as_of });
       }, 30000).catch(() => undefined);
     }, 60000);
     const tick = window.setInterval(() => setNow(Date.now()), 1000);
@@ -255,6 +268,7 @@ export default function PositionsPage() {
             <p>{copy.positions.subtitle}</p>
           </div>
           <div className="ops-pips">
+            <StaleNote stale={report?.stale || bookAge.stale} asOf={report?.stale ? report.as_of : bookAge.as_of} now={now} />
             <span className={`ops-pip ${failed ? "warn" : positions ? "on" : "warn"}`}>
               <i />
               {failed ? "אין חיבור לברוקר" : age === null ? "טוען" : `חי · עודכן לפני ${age} שנ׳`}
@@ -264,7 +278,8 @@ export default function PositionsPage() {
           </div>
         </header>
 
-        <div className="desk-day-row" role="tablist" aria-label="יום מסחר">
+        <div className="day-scroll">
+        <div className="desk-day-row lux-scroll" role="tablist" aria-label="יום מסחר">
           <button type="button" className={`desk-day${active === "live" ? " on" : ""}`} onClick={() => setChoice("live")}>
             <span>פתוח עכשיו</span>
             <b className="num">{positions === null ? "—" : items.length}</b>
@@ -277,6 +292,7 @@ export default function PositionsPage() {
               <small>{group.wins} מתוך {group.trades}</small>
             </button>
           ))}
+        </div>
         </div>
 
         {active !== "live" ? (

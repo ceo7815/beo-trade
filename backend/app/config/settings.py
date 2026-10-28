@@ -228,6 +228,8 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     alpaca_base_url: str = ""
+    # Shared account/positions/orders/clock snapshot. broker_snapshot_ttl() clamps this to 5–10s.
+    broker_snapshot_ttl_seconds: float = 5
     thetadata_api_key: str = ""
     thetadata_client_key: str = ""
     thetadata_base_url: str = ""
@@ -291,6 +293,18 @@ class Settings(BaseSettings):
     def calendar(self) -> SessionCalendar:
         path = Path(self.calendar_path) if self.calendar_path else None
         return load_calendar(path)
+
+    def broker_snapshot_ttl(self) -> float:
+        """How long a shared Alpaca snapshot may be served. Values outside 5–10 seconds are clamped."""
+        try:
+            value = float(self.broker_snapshot_ttl_seconds)
+        except (TypeError, ValueError):
+            return 5.0
+        if value < 5:
+            return 5.0
+        if value > 10:
+            return 10.0
+        return value
 
 
 _settings: Settings | None = None

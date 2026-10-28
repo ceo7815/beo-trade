@@ -8,7 +8,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -22,10 +22,13 @@ from app.models.store import (
     close_paper_trade,
     count_internal_candidates,
     create_paper_trade,
+    decode_buy_cursor,
+    encode_buy_cursor,
     get_buy,
     get_user,
     list_buys,
     list_trades,
+    page_buys,
     list_watchlist,
     load_usage,
     open_positions,
@@ -39,6 +42,7 @@ from app.providers.benzinga import BenzingaError
 from app.providers.registry import build_providers, merged_feed_statuses
 from app.recommendations.live_scan import MarketDataMissing, execute_scan
 from app.schemas.domain import REASON_HEBREW, DecisionKind
+from app.models.utc_time import iso_utc
 from app.ops.paths import HEARTBEAT
 from app.ops.readiness import build_health, build_ready
 from app.ops.safety import assert_boot_safe
@@ -87,10 +91,44 @@ def _money(value) -> str:
     return f"{Decimal(str(value)).quantize(Decimal('0.01'))}"
 
 
+def _alpaca_counters() -> dict:
+    from app.broker.snapshot import public_broker_status
+
+    try:
+        return public_broker_status()
+    except Exception:
+        return {
+            "calls_per_minute": 0,
+            "http_429": 0,
+            "http_5xx": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "cache_hit_ratio": None,
+            "snapshot_ttl_seconds": 5,
+            "snapshot_age_seconds": {},
+            "shared_cache": "file",
+        }
+
+
+def _list_card(row: RecommendationRow) -> dict:
+    return {
+        "recommendation_id": row.id,
+        "timestamp": iso_utc(row.created_at),
+        "underlying": row.underlying,
+        "option_symbol": row.option_symbol,
+        "call_put": row.call_put,
+        "strike": _money(row.strike),
+        "expiration": row.expiration,
+        "option_price": _money(row.option_price),
+        "quantity": row.quantity,
+        "why": [REASON_HEBREW.get(code, code) for code in (row.reason_codes or [])],
+    }
+
+
 def _card(row: RecommendationRow) -> dict:
     return {
         "recommendation_id": row.id,
-        "timestamp": row.created_at.isoformat(),
+        "timestamp": iso_utc(row.created_at),
         "underlying": row.underlying,
         "underlying_price": _money(row.underlying_price),
         "option_symbol": row.option_symbol,
@@ -227,6 +265,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 cost = session.scalar(select(func.coalesce(func.sum(AIUsage.cost), 0))) or 0
             lines.append(f"beo_active_buys {buys}")
             lines.append(f"beo_ai_cost_usd {cost}")
+        alpaca = _alpaca_counters()
+        lines.append(f"beo_alpaca_calls_per_minute {alpaca['calls_per_minute']}")
+        lines.append(f"beo_alpaca_http_429 {alpaca['http_429']}")
+        lines.append(f"beo_alpaca_http_5xx {alpaca['http_5xx']}")
+        ratio = alpaca.get("cache_hit_ratio")
+        lines.append(f"beo_alpaca_cache_hit_ratio {0 if ratio is None else ratio}")
         return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
 
     @app.get("/api/v1/release")
@@ -272,10 +316,10 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         calls = 0
         average = None
         mode = "unpriced"
-        equity = Decimal("0")
         cash = Decimal("0")
         buys = 0
         internal = 0
+        displayed_equity = None
         if database == "ok":
             with session_scope() as session:
                 user = get_user(session, current.dev_user_id if not current.auth_required else user_id_from_header(current, authorization))
@@ -296,7 +340,13 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 internal = count_internal_candidates(session)
                 if user is not None:
                     cash = Decimal(str(user.paper_cash))
-                    equity = paper_equity(session, user.id)
+                from app.broker.runtime import cached_display_equity
+
+                displayed_equity = cached_display_equity(session)
+        else:
+            from app.broker.runtime import cached_display_equity
+
+            displayed_equity = cached_display_equity(None)
         if mode == "unpriced":
             alerts.append("מחירי הטוקנים לא הוגדרו. קריאות AI חסומות כדי לא לחרוג מתקרת 200 הדולר.")
         elif mode == "stopped":
@@ -310,6 +360,15 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 alerts.append("הסורק לא דיווח לאחרונה.")
         else:
             alerts.append("הסורק עדיין לא עלה.")
+        from app.ops.readiness import monitor_success
+
+        cycle = monitor_success(current.trading().scan_interval_seconds * 3)
+        if cycle["ok"] is False or cycle["state"] == "FAILED":
+            alerts.append("התהליך חי, אבל מחזור היציאה האחרון לא הסתיים. הבלם לא נבדק.")
+        from app.options.account_read import public_status
+
+        if public_status().get("alert_open"):
+            alerts.append("אין נתוני חשבון מאלפקה. כניסות חדשות חסומות עד שהנתונים חוזרים.")
         health_state = "ok" if database == "ok" and not alerts else "degraded"
         from app.analytics.kill_line import display_kill_usd
         from app.control.halt import is_halted
@@ -329,12 +388,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "options_status": options_status,
             "macro_status": macro_status,
             "research_status": research_status,
-            "regime_status": __import__("app.market.regime", fromlist=["last_regime"]).last_regime(),
+            "regime_status": __import__("app.market.regime", fromlist=["read_shared_regime"]).read_shared_regime(),
             "internal_candidates": internal,
             "active_buys": buys,
-            "paper_equity": _money(equity),
+            "paper_equity": None if displayed_equity is None else _money(displayed_equity),
             "paper_cash": _money(cash),
-            "equity_basis": "entry_price",
+            "equity_basis": "alpaca" if displayed_equity is not None else "unavailable",
             "ai_month_usd": _money(month_cost),
             "ai_day_usd": _money(day_cost),
             "ai_hour_usd": _money(hour_cost),
@@ -349,9 +408,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "database": database,
             "alerts": alerts,
             "worker_heartbeat_age_seconds": heartbeat_age,
+            "monitor_last_success": cycle["last_success"],
+            "monitor_cycle_ok": cycle["ok"],
             "paper_only": True,
             "trading_halted": is_halted(),
-            "daily_kill_loss_usd": display_kill_usd(current.trading(), equity if equity > 0 else None),
+            "daily_kill_loss_usd": display_kill_usd(current.trading(), displayed_equity),
+            "alpaca": _alpaca_counters(),
         }
 
     @app.get("/api/v1/control/trading")
@@ -383,10 +445,24 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         return build_report(current)
 
     @app.get("/api/v1/recommendations")
-    def recommendations(authorization: str | None = Header(default=None)):
+    def recommendations(
+        authorization: str | None = Header(default=None),
+        limit: int = Query(default=40, ge=1, le=100),
+        cursor: str | None = Query(default=None),
+    ):
         user_id_from_header(current, authorization)
+        before = None
+        if cursor:
+            try:
+                before = decode_buy_cursor(cursor)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="סמן עמוד לא תקין") from exc
         with session_scope() as session:
-            return {"items": [_card(row) for row in list_buys(session)]}
+            rows = page_buys(session, limit + 1, before)
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        next_cursor = encode_buy_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+        return {"items": [_list_card(row) for row in page], "next_cursor": next_cursor, "limit": limit}
 
     @app.get("/api/v1/recommendations/{recommendation_id}")
     def recommendation_detail(recommendation_id: str, authorization: str | None = Header(default=None)):
@@ -441,7 +517,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
     def health(authorization: str | None = Header(default=None)):
         user_id_from_header(current, authorization)
         from app.integrations.probes import PROBES
-        from app.market.regime import last_regime
+        from app.market.regime import read_shared_regime
 
         report = {}
         for name, probe in PROBES.items():
@@ -452,14 +528,28 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             except Exception:
                 status, latency, detail = "error", None, "תקלה"
             report[name] = {"status": status, "latency_ms": latency, "detail": detail}
-        regime = last_regime()
-        report["regime"] = {"status": "blocked" if regime.get("status") != "CALCULATED" else "internal", "detail": "ממומש — ממתין לנתוני שוק" if regime.get("status") != "CALCULATED" else "חושב מנתוני הקשר", "latency_ms": None}
+        regime = read_shared_regime()
+        calculated = regime.get("status") == "CALCULATED" and regime.get("market_regime")
+        report["regime"] = {
+            "status": "internal" if calculated else "blocked",
+            "detail": str(regime.get("market_regime")) if calculated else "ממומש — ממתין לנתוני שוק",
+            "latency_ms": None,
+            "updated_at": regime.get("updated_at"),
+        }
         worker_age = None if not HEARTBEAT.exists() else max(0, int(datetime.now(timezone.utc).timestamp() - HEARTBEAT.stat().st_mtime))
         worker_fresh = worker_age is not None and worker_age <= current.trading().scan_interval_seconds * 3
+        from app.ops.readiness import monitor_success
+
+        cycle = monitor_success(current.trading().scan_interval_seconds * 3)
         report["scan_worker"] = {"status": "internal" if worker_fresh else "not_verified", "detail": "פעימה טרייה" if worker_fresh else "הלולאה בקוד. אין פעימה טרייה.", "latency_ms": worker_age, "last_success": None if not worker_fresh else "heartbeat"}
-        report["position_monitor"] = report["scan_worker"]
+        report["position_monitor"] = {
+            "status": "internal" if cycle["state"] == "HEALTHY" else "not_verified",
+            "detail": "המחזור האחרון הסתיים" if cycle["state"] == "HEALTHY" else "התהליך חי. המחזור האחרון לא הסתיים.",
+            "latency_ms": worker_age,
+            "last_success": cycle["last_success"],
+        }
         report["reconciliation"] = {"status": "not_verified", "detail": "לולאת ההתאמה רצה עם ה-worker. אין פער מאומת בלי קריאה חיה.", "latency_ms": None}
-        return {"paper_only": True, "items": report}
+        return {"paper_only": True, "items": report, "alpaca": _alpaca_counters()}
 
     @app.post("/api/v1/scan")
     def scan(authorization: str | None = Header(default=None)):
@@ -538,7 +628,6 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 "holding_window_min_minutes": trading.holding_window_min_minutes,
                 "holding_window_max_minutes": trading.holding_window_max_minutes,
                 "max_capital_per_trade": trading.max_capital_per_trade,
-                "paper_account_balance": _money(current.paper_account_balance),
             },
         }
 
@@ -667,7 +756,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             rows = session.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(20))
             return {
                 "items": [
-                    {"id": row.id, "kind": row.kind, "message": row.message, "created_at": row.created_at.isoformat()}
+                    {"id": row.id, "kind": row.kind, "message": row.message, "created_at": iso_utc(row.created_at)}
                     for row in rows
                     if row.kind == "BUY"
                 ]

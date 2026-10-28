@@ -3,13 +3,15 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Shell, useDesk } from "@/components/Shell";
-import { PHASES, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
+import { PHASES, holdScreen, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
+import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
 import { copy } from "@/lib/copy";
-import { money as usd, signedMoney as usdSigned, signedPct } from "@/lib/format";
-import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
+import { money as usd, parseStamp, sessionStamp, signedMoney as usdSigned, signedPct } from "@/lib/format";
+import { regimeLine } from "@/lib/regime";
+import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
 import { observeTrades, useLive } from "@/lib/live";
 
 type Desk = {
@@ -76,6 +78,9 @@ type DaySummary = {
 };
 
 type TodayReport = {
+  available?: boolean;
+  stale?: boolean;
+  as_of?: string | null;
   summary?: DaySummary | null;
   closed?: FlowTrade[];
   open?: FlowTrade[];
@@ -105,6 +110,8 @@ type Position = {
 };
 
 type ClosedLite = { closed_at?: string | null; pnl?: string | null; invested?: string | null };
+type FlowFilter = "all" | "trades" | "blocks";
+type AgedReport = { available?: boolean; stale?: boolean; as_of?: string | null; summary?: TradeTotals; closed?: ClosedLite[] };
 
 type TradeTotals = {
   total_pnl: string;
@@ -121,8 +128,12 @@ type Risk = {
   daily_loss_limit: string | null;
   daily_kill_loss_usd?: string | null;
   daily_loss_used: string | null;
+  daily_loss_state?: string | null;
   today_pnl?: string | null;
+  day_return_pct?: string | null;
+  day_invested_usd?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
+  protection?: Protection | null;
   max_positions: number;
   open_positions: number | null;
 };
@@ -154,11 +165,17 @@ function tone(value: number | null) {
   return value > 0 ? "up" : "down";
 }
 
+function DayReturn({ pct }: { pct: string | null | undefined }) {
+  const value = num(pct);
+  if (value === null) return <p className="desk-hero-return">—</p>;
+  return <p className={`desk-hero-return ${tone(value)}`}>{signedPct(value, 1)} מההשקעה היום</p>;
+}
+
 function clock(iso: string | null | undefined) {
   if (!iso) return "—";
-  const date = new Date(iso);
-  if (Number.isNaN(date.getTime())) return iso.slice(11, 19) || iso;
-  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Dubai" }).format(date);
+  const date = parseStamp(iso);
+  if (!date) return iso.slice(11, 19) || iso;
+  return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", second: "2-digit", timeZone: "Asia/Dubai", hourCycle: "h23" }).format(date);
 }
 
 export default function HomePage() {
@@ -181,8 +198,13 @@ function Board() {
   const [picked, setPicked] = useState<FlowTrade | null>(null);
   const [audit, setAudit] = useState<AuditRow[] | null>(() => peekCached<{ items?: AuditRow[] }>("/api/v1/audit")?.items ?? null);
   const [risk, setRisk] = useState<Risk | null>(() => peekCached<Risk>("/api/v1/risk"));
-  const [totals, setTotals] = useState<TradeTotals | null>(() => peekCached<{ summary?: TradeTotals }>("/api/v1/report/trades?period=all")?.summary ?? null);
-  const [book, setBook] = useState<ClosedLite[] | null>(() => peekCached<{ closed?: ClosedLite[] }>("/api/v1/report/trades?period=all")?.closed ?? null);
+  const [totals, setTotals] = useState<TradeTotals | null>(() => peekCached<AgedReport>("/api/v1/report/trades?period=all")?.summary ?? null);
+  const [book, setBook] = useState<ClosedLite[] | null>(() => peekCached<AgedReport>("/api/v1/report/trades?period=all")?.closed ?? null);
+  const [bookAge, setBookAge] = useState<{ stale?: boolean; as_of?: string | null }>(() => {
+    const cached = peekCached<AgedReport>("/api/v1/report/trades?period=all");
+    return { stale: cached?.stale, as_of: cached?.as_of };
+  });
+  const [flowFilter, setFlowFilter] = useState<FlowFilter>("trades");
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
@@ -204,16 +226,21 @@ function Board() {
         setPositions(body.items || []);
       }, 12000),
       feed<Risk>("/api/v1/risk", setRisk, 15000),
-      feed<TodayReport>("/api/v1/report/trades?period=today", setToday, 60000, 30000),
+      feed<TodayReport>("/api/v1/report/trades?period=today", (body) => setToday((current) => holdScreen(current, body) ?? body), 60000, 30000),
       feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 15000),
       feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 30000),
       feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => {
         if (transportMode() === "sse") return;
         setAccount(body.account || null);
       }, 15000),
-      feed<{ summary?: TradeTotals; closed?: ClosedLite[] }>("/api/v1/report/trades?period=all", (body) => {
+      feed<AgedReport>("/api/v1/report/trades?period=all", (body) => {
+        if (body.available === false) {
+          setBookAge((current) => ({ stale: true, as_of: current.as_of ?? new Date().toISOString() }));
+          return;
+        }
         setTotals(body.summary ?? null);
-        setBook(body.closed ?? []);
+        if (body.closed) setBook(body.closed);
+        setBookAge({ stale: body.stale, as_of: body.as_of });
       }, 60000, 30000),
     ];
     const clockTimer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -247,7 +274,12 @@ function Board() {
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
-  const lossState = live.snap?.day?.daily_loss_state;
+  const liveFloor = transportMode() === "sse" ? live.snap?.day?.day_floor : undefined;
+  const floor = liveFloor ?? risk?.day_floor ?? live.snap?.day?.day_floor ?? null;
+  const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? risk?.protection ?? live.snap?.day?.protection ?? null;
+  const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : risk?.daily_loss_state;
+  const lossUnknown = dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown");
+  const lossState = lossUnknown ? "unknown" : live.snap?.day?.daily_loss_state;
   const sync = syncOf(syncedAt, now);
   const days = recentDays(book);
   const lastDay = days?.[0] ?? null;
@@ -263,7 +295,10 @@ function Board() {
         <article className="ops-pane account-card">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.account}</h2>
-            <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
+            <span className="head-meta">
+              <StaleNote stale={today?.stale} asOf={today?.as_of} now={now} />
+              <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
+            </span>
           </header>
           <div className="acct-pair">
             <ResultStat label={copy.dashboard.closed} book={dayBook(today?.summary?.realized_pnl, today?.summary?.invested_closed)} empty={today === null ? copy.common.loading : copy.dashboard.emptyFlow} />
@@ -286,10 +321,14 @@ function Board() {
           </div>
           <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
           <div className="desk-hero-main">
-            <Odometer value={shownPnl} />
-            {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
+            <div className="desk-hero-figure">
+              <Odometer value={shownPnl} />
+              {showLast ? null : <DayReturn pct={transportMode() === "sse" ? live.snap?.day?.day_return_pct : risk?.day_return_pct} />}
+            </div>
+            {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
           <Gauge pnl={shownPnl} kill={kill} state={lossState} />
+          {protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
         </article>
       </div>
 
@@ -322,12 +361,27 @@ function Board() {
         <section className="ops-pane">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.flow}</h2>
-            <span>{todayLine(today)}</span>
+            <span className="head-meta">
+              <StaleNote stale={today?.stale} asOf={today?.as_of} now={now} />
+              <span>{todayLine(today)}</span>
+            </span>
           </header>
-          <div className="ops-scroll">
-            {flowOf(today, scan).length === 0 ? (
-              <div className="ops-feed"><span>{today === null ? copy.common.loading : copy.dashboard.emptyFlow}</span></div>
-            ) : flowOf(today, scan).map((event, index) => (
+          <div className="flow-switch" role="tablist" aria-label="סינון פעילות">
+            {([
+              ["all", "הכל"],
+              ["trades", "עסקאות"],
+              ["blocks", "חסימות"],
+            ] as const).map(([id, label]) => (
+              <button key={id} type="button" role="tab" aria-selected={flowFilter === id} className={flowFilter === id ? "on" : ""} onClick={() => setFlowFilter(id)}>
+                {label}
+              </button>
+            ))}
+          </div>
+          <div className="flow-scroll">
+          <div className="ops-scroll lux-scroll">
+            {shownFlow(today, scan, flowFilter).length === 0 ? (
+              <div className="ops-feed"><span>{flowEmpty(today, scan, flowFilter)}</span></div>
+            ) : shownFlow(today, scan, flowFilter).map((event, index) => (
               <div
                 className={`ops-flow ${event.kind}${event.trade ? " ops-pick" : ""}`}
                 key={`${event.at}-${event.kind}-${index}`}
@@ -345,13 +399,18 @@ function Board() {
               </div>
             ))}
           </div>
+          </div>
         </section>
         <section className="ops-pane desk-days">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.days}</h2>
-            <a href="/history">{copy.dashboard.allTrades}</a>
+            <span className="head-meta">
+              <StaleNote stale={bookAge.stale} asOf={bookAge.as_of} now={now} />
+              <a href="/history">{copy.dashboard.allTrades}</a>
+            </span>
           </header>
-          <div className="desk-day-row">
+          <div className="day-scroll">
+          <div className="desk-day-row lux-scroll">
             {days === null ? <p className="desk-empty">{copy.common.loading}</p> : days.length === 0 ? <p className="desk-empty">{copy.dashboard.emptyDays}</p> : days.map((group) => (
               <a key={group.day} className="desk-day" href="/history">
                 <span>{dayTitle(group.day)}</span>
@@ -360,6 +419,7 @@ function Board() {
                 <small>{copy.dashboard.winsOf(group.wins, group.trades)}</small>
               </a>
             ))}
+          </div>
           </div>
         </section>
       </div>
@@ -395,9 +455,10 @@ function Board() {
           <Feed label="FRED" row={macroOf(status)} />
           <Feed label="SEC" row={secOf(status)} />
           <Feed label="AI" row={aiOf(status)} />
+          <Feed label="משטר" row={regimeOf(status, now)} />
         </section>
         <section className="ops-pane">
-          <h2>סיכון · {risk?.state || "אין נתונים"}</h2>
+          <h2>סיכון · {lossUnknown ? "לא ידוע" : (risk?.state || "אין נתונים")}</h2>
           <div className="ops-feed"><span>הון לעסקה</span><b className="num">{money(risk?.per_trade_limit)}</b></div>
           <div className="ops-feed"><span>מגבלה יומית</span><b className="num">{money(risk?.daily_loss_limit)}</b></div>
           <div className="ops-feed"><span>בלם</span><b className="num">{kill === null ? "—" : money(kill)}</b></div>
@@ -411,7 +472,7 @@ function Board() {
           {(audit || []).slice(0, 2).map((item, index) => (
             <div className="ops-feed" key={`${item.created_at}-${index}`}>
               <span className="num">{item.state}</span>
-              <b className="num">{clock(item.created_at)}</b>
+              <b className="num">{sessionStamp(item.created_at, true)}</b>
             </div>
           ))}
         </section>
@@ -504,7 +565,6 @@ function recentDays(rows: ClosedLite[] | null) {
   }
   return [...groups.values()]
     .sort((a, b) => (a.day < b.day ? 1 : -1))
-    .slice(0, 8)
     .map((group) => ({ ...group, pct: group.invested > 0 ? (group.pnl / group.invested) * 100 : null }));
 }
 
@@ -663,6 +723,20 @@ function FlowCopy({ event }: { event: FlowEvent }) {
       ) : null}
     </span>
   );
+}
+
+function shownFlow(today: TodayReport | null, scan: Desk["last_scan"], filter: FlowFilter): FlowEvent[] {
+  const events = flowOf(today, scan);
+  if (filter === "blocks") return events.filter((event) => event.kind === "blocked");
+  if (filter === "trades") return events.filter((event) => event.kind !== "blocked");
+  return events;
+}
+
+function flowEmpty(today: TodayReport | null, scan: Desk["last_scan"], filter: FlowFilter) {
+  if (today === null) return copy.common.loading;
+  if (filter === "blocks") return "אין חסימות";
+  if (filter === "trades" && flowOf(today, scan).some((event) => event.kind === "blocked")) return "אין עסקאות היום";
+  return copy.dashboard.emptyFlow;
 }
 
 function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[] {
@@ -863,4 +937,11 @@ function aiOf(status: SystemStatus | null) {
   if (status.ai_mode === "stopped") return { text: "עצור", tone: "bad" };
   if (status.ai_mode === "unpriced" || status.ai_mode === "soft" || status.ai_mode === "critical") return { text: "מוגבל", tone: "warn" };
   return { text: status.ai_model || "פעיל", tone: "ok" };
+}
+
+function regimeOf(status: SystemStatus | null, now: number) {
+  const regime = status?.regime_status;
+  const text = regimeLine(regime, now);
+  const live = regime?.status === "CALCULATED" && Boolean(regime.market_regime);
+  return { text, tone: live ? "ok" : "wait" };
 }

@@ -363,11 +363,11 @@ def probe_internal(integration_id: str) -> tuple[str, int | None, str]:
             from app.market.regime import build_regime
 
             assert callable(build_regime)
-            from app.market.regime import last_regime
+            from app.market.regime import read_shared_regime
 
-            latest = last_regime()
-            if latest.get("status") == "CALCULATED":
-                return "internal", None, "חושב מנתוני הקשר"
+            latest = read_shared_regime()
+            if latest.get("status") == "CALCULATED" and latest.get("market_regime"):
+                return "internal", None, str(latest.get("market_regime"))
             return "internal", None, "ממומש — ממתין לנתוני שוק"
     except Exception as exc:
         return "error", None, scrub(str(exc))

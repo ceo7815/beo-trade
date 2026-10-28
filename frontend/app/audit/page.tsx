@@ -4,17 +4,25 @@ import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
 import { apiGet, poll } from "@/lib/api";
+import { sessionStamp } from "@/lib/format";
 
 type Row = { trade_id: string; state: string; source: string; reason: string; created_at: string };
+type AlertRow = { id: string; kind: string; message: string; created_at: string };
 type Explain = { title: string; does: string; formula: string };
+type Line = { key: string; label: string; value: string; when?: string; explain: Explain };
 
 export default function AuditPage() {
   const [items, setItems] = useState<Row[] | null>(null);
+  const [alerts, setAlerts] = useState<AlertRow[] | null>(null);
   const [open, setOpen] = useState<Explain | null>(null);
 
   useEffect(() => {
     let alive = true;
-    const load = () => apiGet<{ items: Row[] }>("/api/v1/audit").then((body) => alive && setItems(body.items)).catch(() => alive && setItems(null));
+    const load = () => {
+      const audit = apiGet<{ items: Row[] }>("/api/v1/audit").then((body) => alive && setItems(body.items)).catch(() => alive && setItems(null));
+      const notes = apiGet<{ items: AlertRow[] }>("/api/v1/alerts").then((body) => alive && setAlerts(body.items)).catch(() => alive && setAlerts(null));
+      return Promise.all([audit, notes]);
+    };
     const stop = poll(() => load(), 30000);
     return () => {
       alive = false;
@@ -32,17 +40,25 @@ export default function AuditPage() {
   }, [open]);
 
   const states = new Set((items || []).map((item) => item.state));
-  const cubes = [
-    { label: "רשומות", value: items ? String(items.length) : "אין נתונים", explain: { title: "רשומות ביקורת", does: items && items.length === 0 ? "אין עדיין רשומות ביקורת. אירוע נשמר רק אחרי מעבר מצב של פקודה." : "אירועי מצב של פקודות PAPER. אין כאן שרשרת מחשבה.", formula: "רשומה = מצב + מקור + סיבה + זמן\nמוצגות עד 40 אחרונות" } },
-    { label: "מצבים", value: items ? String(states.size) : "אין נתונים", explain: { title: "מצבים", does: "כמה מצבים שונים נשמרו ברשימה הנוכחית.", formula: "מצבים = unique(state)" } },
+  const cubes: Line[] = [
+    { key: "sum-rows", label: "רשומות", value: items ? String(items.length) : "אין נתונים", explain: { title: "רשומות ביקורת", does: items && items.length === 0 ? "אין עדיין רשומות ביקורת. אירוע נשמר רק אחרי מעבר מצב של פקודה." : "אירועי מצב של פקודות PAPER. אין כאן שרשרת מחשבה.", formula: "רשומה = מצב + מקור + סיבה + זמן\nמוצגות עד 40 אחרונות" } },
+    { key: "sum-states", label: "מצבים", value: items ? String(states.size) : "אין נתונים", explain: { title: "מצבים", does: "כמה מצבים שונים נשמרו ברשימה הנוכחית.", formula: "מצבים = unique(state)" } },
   ];
-  const events = (items || []).map((item, index) => ({
+  const notes: Line[] = (alerts || []).map((item) => ({
+    key: item.id,
+    label: item.kind || "התראה",
+    value: item.message || "אין נתונים",
+    when: sessionStamp(item.created_at, true),
+    explain: { title: item.kind || "התראה", does: item.message || "התראת BUY.", formula: `דובאי ${sessionStamp(item.created_at, true)}` },
+  }));
+  const events: Line[] = (items || []).map((item, index) => ({
+    key: `${item.trade_id}-${index}`,
     label: item.state || "אין נתונים",
     value: item.reason || item.source || "אין נתונים",
-    key: `${item.trade_id}-${index}`,
-    explain: { title: item.state || "אירוע", does: "מעבר מצב שנשמר אחרי בדיקה, שליחה או מילוי.", formula: `מקור ${item.source || "אין נתונים"}\nסיבה ${item.reason || "אין נתונים"}\nזמן ${item.created_at || "אין נתונים"}\nמזהה ${item.trade_id || "אין נתונים"}` },
+    when: sessionStamp(item.created_at, true),
+    explain: { title: item.state || "אירוע", does: "מעבר מצב שנשמר אחרי בדיקה, שליחה או מילוי.", formula: `מקור ${item.source || "אין נתונים"}\nסיבה ${item.reason || "אין נתונים"}\nדובאי ${sessionStamp(item.created_at, true)}\nמזהה ${item.trade_id || "אין נתונים"}` },
   }));
-  const all = [...cubes.map((item, index) => ({ ...item, key: `sum-${index}` })), ...events];
+  const all = [...cubes, ...notes, ...events];
 
   return (
     <Shell>
@@ -57,7 +73,7 @@ export default function AuditPage() {
         <div className="plain-list">
           {all.map((item) => (
             <button key={item.key} type="button" className="plain-row" onClick={() => setOpen(item.explain)}>
-              <b>{item.label}</b>
+              <b>{item.label}{item.when ? <small>{item.when}</small> : null}</b>
               <strong>{item.value}</strong>
             </button>
           ))}

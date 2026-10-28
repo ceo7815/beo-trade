@@ -4,6 +4,14 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { money, signedMoney } from "@/lib/format";
 import { copy } from "@/lib/copy";
 
+export function StaleNote({ stale, asOf, now }: { stale?: boolean; asOf?: string | null; now?: number }) {
+  if (!stale) return null;
+  const parsed = asOf ? new Date(asOf).getTime() : Number.NaN;
+  const seconds = Number.isFinite(parsed) ? Math.max(0, Math.round(((now ?? Date.now()) - parsed) / 1000)) : null;
+  const label = seconds === null ? "עודכן לפני זמן מה" : `עודכן לפני ${seconds} שניות`;
+  return <span className="stale-badge">{label}</span>;
+}
+
 export function Num({ children, className = "", title }: { children: ReactNode; className?: string; title?: string }) {
   return (
     <bdi dir="ltr" title={title} className={className ? `num ${className}` : "num"}>
@@ -146,6 +154,20 @@ export function Radar({ names, active }: { names: string[]; active: boolean }) {
 }
 
 export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
+  if (state === "unknown") {
+    return (
+      <div className="gauge" dir="ltr">
+        <div className="gauge-top">
+          <span>{copy.kill.brake}</span>
+          <span>לא ידוע</span>
+        </div>
+        <div className="track" />
+        <div className="gauge-scale">
+          <span>לא ידוע</span>
+        </div>
+      </div>
+    );
+  }
   const span = kill && kill > 0 ? kill : null;
   const ratio = pnl === null || span === null ? 0 : Math.max(-1, Math.min(1, pnl / span));
   const at = ((ratio + 1) / 2) * 100;
@@ -173,7 +195,7 @@ export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number |
 }
 
 export function KillBanner({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
-  if (pnl === null || kill === null || kill <= 0) return null;
+  if (state === "unknown" || pnl === null || kill === null || kill <= 0) return null;
   const loss = pnl < 0 ? -pnl : 0;
   const tripped = state === "hard_stop" || loss >= kill;
   const near = !tripped && loss >= kill * 0.7;

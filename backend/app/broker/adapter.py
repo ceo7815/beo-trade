@@ -20,7 +20,15 @@ class AlpacaAdapter:
         self.client = client
         self._positions: list[dict] = []
 
-    def get_account(self) -> dict:
+    def get_account(self, *, fresh: bool = False) -> dict:
+        if self.client.shared_cache:
+            from app.broker.snapshot import read_shared
+
+            account = read_shared("account", fresh=fresh)
+            return account if isinstance(account, dict) else {}
+        return self._read_account()
+
+    def _read_account(self) -> dict:
         account = normalize_account(self.client.account())
         try:
             account["configuration"] = normalize_configuration(self.client.configurations())
@@ -30,15 +38,30 @@ class AlpacaAdapter:
             account["configuration"] = {}
         return account
 
-    def get_positions(self) -> list[dict]:
+    def get_positions(self, *, fresh: bool = False) -> list[dict]:
+        """`fresh=True` is the exit and order path: refresh when the snapshot has reached the TTL."""
+        if self.client.shared_cache:
+            from app.broker.snapshot import read_shared
+
+            rows = read_shared("positions", fresh=fresh)
+            self._positions = list(rows) if isinstance(rows, list) else []
+            return list(self._positions)
         self._positions = [normalize_position(row) for row in self.client.positions()]
         return list(self._positions)
 
     def sync_positions(self) -> list[dict]:
-        return self.get_positions()
+        # Monitor exits (stop, trail, session close, kill, floor) start here.
+        return self.get_positions(fresh=True)
 
-    def get_orders(self, status: str = "all", symbol: str = "", asset_class: str = "", after: str = "", until: str = "") -> list[dict]:
-        rows = [normalize_order(row) for row in self.client.orders(status=status, symbol=symbol, after=after, until=until)]
+    def get_orders(self, status: str = "all", symbol: str = "", asset_class: str = "", after: str = "", until: str = "", *, fresh: bool = False) -> list[dict]:
+        cacheable = self.client.shared_cache and status == "open" and not symbol and not after and not until
+        if cacheable:
+            from app.broker.snapshot import read_shared
+
+            cached = read_shared("open_orders", fresh=fresh)
+            rows = list(cached) if isinstance(cached, list) else []
+        else:
+            rows = [normalize_order(row) for row in self.client.orders(status=status, symbol=symbol, after=after, until=until)]
         if asset_class:
             rows = [row for row in rows if row.get("asset_class") == asset_class]
         return rows
@@ -78,7 +101,12 @@ class AlpacaAdapter:
                 break
         return fills
 
-    def get_market_clock(self) -> dict:
+    def get_market_clock(self, *, fresh: bool = False) -> dict:
+        if self.client.shared_cache:
+            from app.broker.snapshot import read_shared
+
+            clock = read_shared("clock", fresh=fresh)
+            return clock if isinstance(clock, dict) else {}
         return normalize_clock(self.client.clock())
 
     def get_portfolio_history(self, period: str = "1M", timeframe: str = "1D") -> dict:
@@ -115,12 +143,17 @@ class AlpacaAdapter:
             raise PaperOnlyError("פקודת יציאה מותרת רק כ-sell_to_close.")
         symbol = str(body.get("symbol") or "")
         qty = _qty(body.get("qty"))
-        held = _held_qty(self._positions or self.get_positions(), symbol)
+        held = _held_qty(self._positions_for_exit(), symbol)
         if held <= 0:
             raise PaperOnlyError("אין פוזיציה פתוחה אצל הברוקר לסגירה.")
         if qty > held:
             raise PaperOnlyError("הכמות גדולה מהכמות הפתוחה אצל הברוקר.")
         return normalize_order(self.client.submit(body))
+
+    def _positions_for_exit(self) -> list[dict]:
+        if self.client.shared_cache:
+            return self.get_positions(fresh=True)
+        return self._positions or self.get_positions()
 
     def close(self) -> None:
         self.client.close()

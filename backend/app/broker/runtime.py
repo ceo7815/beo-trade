@@ -47,6 +47,43 @@ def broker_risk_snapshot(
     }
 
 
+def _equity_amount(payload) -> Decimal | None:
+    if not isinstance(payload, dict):
+        return None
+    nested = payload.get("account")
+    if isinstance(nested, dict):
+        payload = nested
+    raw = payload.get("equity")
+    if raw in {None, ""}:
+        return None
+    try:
+        return Decimal(str(raw))
+    except Exception:
+        return None
+
+
+def cached_display_equity(session=None) -> Decimal | None:
+    """Equity already read from Alpaca, for screens only.
+
+    The in-process account cache is checked first, then the last account row
+    the worker or the account route stored. This does not call Alpaca and it
+    is not an input to sizing.
+    """
+    from app.analytics.read_cache import read_cache
+
+    cached = _equity_amount(read_cache.get(("broker", "account")))
+    if cached is not None:
+        return cached
+    if session is None:
+        return None
+    from app.broker.store import latest_account
+
+    row = latest_account(session)
+    if row is None:
+        return None
+    return _equity_amount(row.payload)
+
+
 def paper_equity(settings) -> Decimal | None:
     """Account equity from the paper broker. None when the account cannot be read."""
     try:
@@ -81,6 +118,9 @@ def open_option_symbols(settings) -> set[str]:
 
 def open_paper_broker(settings) -> AlpacaAdapter:
     """The only place that constructs the Alpaca paper client for business calls."""
+    from app.broker.snapshot import remember_settings
+
+    remember_settings(settings)
     key, _ = resolve_secret(settings, "alpaca_api_key")
     secret, _ = resolve_secret(settings, "alpaca_api_secret")
     client = AlpacaPaperClient(key, secret, settings.trading_mode)

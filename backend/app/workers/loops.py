@@ -24,7 +24,10 @@ def _session_state(settings: Settings, adapter, moment: datetime) -> tuple[bool 
 
     try:
         clock = adapter.get_market_clock()
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.monitor_caught", exc, service="monitor", where="session_clock")
         return None, None
     flag = clock.get("is_open")
     if flag is not True and flag is not False:
@@ -88,6 +91,12 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
     if day_close_reason(settings, moment) == "DAILY_HARD_STOP":
         record_scan_blocked(moment, "DAILY_HARD_STOP")
         return {"ok": False, "blocked": "DAILY_HARD_STOP"}
+    from app.options.account_read import entry_block_reason
+
+    unavailable = entry_block_reason()
+    if unavailable:
+        record_scan_blocked(moment, unavailable)
+        return {"ok": False, "blocked": unavailable}
     publish_quiet("scan.requested", moment.isoformat())
     progress = _progress_writer(moment)
     progress("started", {})
@@ -123,6 +132,9 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             progress=progress,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="execute_scan")
         write_feed_status(providers)
         record_scan_blocked(moment, str(exc))
         return {"ok": False, "blocked": str(exc)}
@@ -212,7 +224,10 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                     from app.options.day_floor import mark_kill_cleared
 
                     floor = mark_kill_cleared(settings, moment)
-                except Exception:
+                except Exception as exc:
+                    from app.ops.failure import log_failure
+
+                    log_failure("worker.monitor_caught", exc, service="monitor", where="mark_kill_cleared")
                     floor = {**floor, "cleared": True}
             else:
                 _cancel_entry_orders(adapter)
@@ -270,6 +285,9 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                             moment,
                         )
                     except Exception as exc:
+                        from app.ops.failure import log_failure
+
+                        log_failure("worker.monitor_caught", exc, service="monitor", where="place_order")
                         record_trade_event(session, trade_id, "BLOCKED", "beo-trade", str(exc))
                 session.commit()
         if live and submit:
@@ -337,8 +355,40 @@ def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, 
     return signal, session_close
 
 
+def _load_tracked_day(settings: Settings, adapter, moment: datetime):
+    """Account plus day P&L. False means the read failed and the kill was not seen."""
+    try:
+        account = adapter.get_account()
+    except Exception:
+        return None, None, False
+    if not isinstance(account, dict):
+        return None, None, False
+    try:
+        activities = adapter.get_activities()
+    except Exception:
+        return None, None, False
+    if not isinstance(activities, list):
+        return None, None, False
+    try:
+        from app.analytics.finance import trading_day_pnl
+        from zoneinfo import ZoneInfo
+
+        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+        pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+    except Exception:
+        return None, None, False
+    if pnl is None:
+        return None, None, False
+    return account, pnl, True
+
+
 def _account_day_floor(settings: Settings, adapter, moment: datetime, session_open: bool | None) -> dict:
-    """Latch the day floor, and the daily kill, from the account mark. A quote-only test adapter does not write the latch."""
+    """Latch the day floor, and the daily kill, from the account mark. A quote-only test adapter does not write the latch.
+
+    A failed account read leaves the latch where it is and marks the day loss unknown.
+    The position loop still runs. Three failures block new buys; the next good read
+    evaluates the kill on that snapshot.
+    """
     from app.options.day_floor import observe_day_floor, public_from_store
 
     if not hasattr(adapter, "get_account"):
@@ -346,26 +396,40 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
     pnl = None
     account = None
     already_closed = False
+    read_ok = None
     if session_open is True:
         already_closed = bool(public_from_store(settings, moment).get("closed"))
-        try:
-            account = adapter.get_account()
-            activities = adapter.get_activities() if hasattr(adapter, "get_activities") else None
-        except Exception:
-            account = None
-            activities = None
-        if account is not None:
-            from app.analytics.finance import trading_day_pnl
-            from zoneinfo import ZoneInfo
+        if hasattr(adapter, "get_activities"):
+            account, pnl, read_ok = _load_tracked_day(settings, adapter, moment)
+        else:
+            try:
+                account = adapter.get_account()
+            except Exception:
+                account = None
+            if account is not None:
+                from app.analytics.finance import trading_day_pnl
+                from zoneinfo import ZoneInfo
 
-            session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
-            pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+                session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+                pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), None, session_date)
+    if read_ok is True:
+        from app.options.account_read import note_success
+
+        note_success(moment)
+    elif read_ok is False:
+        from app.options.account_read import note_failure
+
+        note_failure(moment)
+        account = None
+        pnl = None
     try:
         view = observe_day_floor(settings, pnl, moment, session_open is True)
     except Exception:
         view = {"armed": False, "closed": False, "arm": "0.00", "floor": "0.00", "reason": "", "cleared": False}
-    if session_open is True and account is not None and not already_closed:
+    if session_open is True and account is not None and pnl is not None and not already_closed:
         view = _latch_kill(settings, account, pnl, moment, view)
+    if read_ok is False:
+        view = {**view, "daily_loss_state": "unknown"}
     return view
 
 
@@ -602,7 +666,10 @@ def _broker_positions(settings: Settings) -> list[dict] | None:
         return None
     try:
         return list(adapter.get_positions())
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="broker_positions")
         return None
     finally:
         adapter.close()
@@ -635,7 +702,10 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
     try:
         account = adapter.get_account()
         activities = adapter.get_activities()
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="account_pnl")
         return None
     finally:
         adapter.close()
@@ -771,6 +841,12 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     def blocked_all(reason: str) -> None:
         outcomes.extend({"symbol": row.option_symbol, "result": "blocked", "reason": reason} for row in buys)
 
+    from app.options.account_read import entry_block_reason
+
+    unavailable = entry_block_reason()
+    if unavailable:
+        blocked_all(unavailable)
+        return
     from app.broker.execution import place_order
     from app.broker.runtime import open_paper_broker
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
@@ -791,6 +867,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), live) for item in bundles.values()]
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
     except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="revalidation")
         blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
@@ -812,7 +891,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         try:
             positions = list(adapter.get_positions())
             open_orders = list(adapter.get_orders("open"))
-        except Exception:
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="broker_positions")
             blocked_all("BROKER_POSITIONS_UNAVAILABLE")
             return
         open_premium = _open_premium(positions, open_orders, settings.trading().contract_multiplier)
@@ -840,7 +922,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         activities = None
         try:
             activities = adapter.get_activities()
-        except Exception:
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="activities")
             activities = None
         session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
@@ -981,6 +1066,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     if opening_taken is not None:
                         opening_taken += 1
                 except Exception as exc:
+                    from app.ops.failure import log_failure
+
+                    log_failure("worker.scan_caught", exc, service="worker", where="place_order")
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
                 session.commit()
     finally:

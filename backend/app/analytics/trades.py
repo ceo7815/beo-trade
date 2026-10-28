@@ -271,3 +271,52 @@ def summarize(closed: list[dict], still_open: list[dict], ai_cost: Decimal | Non
         "ai_cost": None if ai_cost is None else _money(ai_cost),
         "net_after_ai": None if ai_cost is None else _money(total - ai_cost),
     }
+
+
+def capital_opened_on(rows: list[dict], session_date: date, zone: str = "America/New_York", multiplier: int = 100) -> Decimal | None:
+    """Entry cost of contracts opened on the New York session date.
+
+    Cost is premium × multiplier × quantity, for names still open and names already closed.
+    A row opened that day with no price or quantity makes the whole figure unknown.
+    No such row means nothing was opened.
+    """
+    total = ZERO
+    seen = 0
+    for row in rows:
+        opened = _moment(row.get("opened_at"))
+        if opened is None or opened.astimezone(ZoneInfo(zone)).date() != session_date:
+            continue
+        entry = _decimal(row.get("entry_price"))
+        qty = _decimal(row.get("qty"))
+        if entry is None or qty is None:
+            return None
+        if qty <= 0:
+            continue
+        total += entry * qty * Decimal(multiplier)
+        seen += 1
+    if seen == 0:
+        return None
+    return total
+
+
+def day_return_fields(pnl: Decimal | None, invested: Decimal | None) -> dict:
+    """Day P&L, realized plus unrealized, divided by capital opened today.
+
+    No opening, or a missing P&L, leaves both fields empty so the desk can show a dash.
+    """
+    if pnl is None or invested is None or invested <= 0:
+        return {"day_return_pct": None, "day_invested_usd": None}
+    pct = (pnl / invested * Decimal("100")).quantize(CENT)
+    return {"day_return_pct": str(pct), "day_invested_usd": _money(invested)}
+
+
+def cached_day_capital(settings) -> Decimal | None:
+    """Read today's trade cache. Does not call Alpaca."""
+    from app.analytics.read_cache import read_cache
+
+    cached = read_cache.get(("trades", "today", "", ""))
+    if not isinstance(cached, dict) or cached.get("available") is False:
+        return None
+    rows = [*(cached.get("closed") or []), *(cached.get("open") or [])]
+    session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
+    return capital_opened_on(rows, session_date, settings.exchange_timezone, settings.trading().contract_multiplier)

@@ -18,6 +18,7 @@
 
 body {
   min-height: 100vh;
+  min-height: 100dvh;
   background:
     radial-gradient(720px 320px at 100% 0%, rgba(231, 201, 138, 0.08), transparent 58%),
     var(--bg);
@@ -29,6 +30,7 @@ body {
 .desk {
   display: flex;
   min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .mobile-bar,
@@ -37,6 +39,7 @@ body {
 .sheet-top,
 .sheet-actions,
 .tabbar,
+.tabbar-dock,
 .ops-cards { display: none; }
 
 html { -webkit-text-size-adjust: 100%; }
@@ -149,6 +152,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   display: flex;
   width: 228px;
   height: 100vh;
+  height: 100dvh;
   flex: none;
   flex-direction: column;
   gap: 16px;
@@ -832,6 +836,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 
 .desk:has(.ops) {
   height: 100vh;
+  height: 100dvh;
   overflow: auto;
 }
 
@@ -919,6 +924,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   flex-direction: column;
   gap: 8px;
   height: calc(100vh - 96px);
+  height: calc(100dvh - 96px);
   min-height: 520px;
 }
 
@@ -1823,7 +1829,7 @@ button.engine-cube { cursor: pointer; }
 @media (max-width: 1280px) {
   .int-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .ops-book { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-  .ops-fit { height: auto; min-height: calc(100vh - 96px); }
+  .ops-fit { height: auto; min-height: calc(100vh - 96px); min-height: calc(100dvh - 96px); }
   .ops-main { display: flex; }
   .ops-grid, .ops-split, .ops-below { grid-template-columns: 1fr; }
   .ops-main { display: flex; }
@@ -1883,17 +1889,32 @@ button.engine-cube { cursor: pointer; }
     color: #fff7f7;
   }
   .mobile-halt:disabled { opacity: 0.6; }
-  .tabbar {
+  .tabbar-dock {
+    display: block;
     position: fixed;
     right: 0;
-    bottom: 0;
+    bottom: var(--tab-lift, 0px);
     left: 0;
     z-index: 50;
+    padding: 0 12px calc(12px + env(safe-area-inset-bottom));
+    pointer-events: none;
+    background: transparent;
+    transform: none;
+    font-family: var(--font-rubik-hebrew), var(--font-rubik-ext), var(--font-rubik), Arial, sans-serif;
+  }
+  .tabbar {
+    position: relative;
+    right: auto;
+    bottom: auto;
+    left: auto;
+    z-index: 1;
     display: grid;
+    width: 100%;
     grid-template-columns: repeat(5, minmax(0, 1fr));
     border-top: 1px solid var(--line);
     background: rgba(11, 12, 14, 0.92);
-    padding: 6px 6px calc(6px + env(safe-area-inset-bottom));
+    padding: 6px;
+    pointer-events: auto;
     backdrop-filter: saturate(1.4) blur(16px);
     -webkit-backdrop-filter: saturate(1.4) blur(16px);
   }
@@ -1912,7 +1933,7 @@ button.engine-cube { cursor: pointer; }
   }
   .tab.on { color: var(--gold); background: rgba(231, 201, 138, 0.08); }
   .tab:active { transform: scale(0.96); }
-  .stage { padding-bottom: calc(72px + env(safe-area-inset-bottom)); background-image: none; }
+  .stage { padding-bottom: calc(110px + env(safe-area-inset-bottom)); background-image: none; }
   .desk:has(.ops) { height: auto; overflow: visible; }
   .mobile-bar .dot {
     display: inline-block;
@@ -2368,10 +2389,36 @@ button.engine-cube { cursor: pointer; }
   display: flex;
   gap: 10px;
   overflow-x: auto;
-  scrollbar-width: none;
+  overflow-y: hidden;
+  padding-bottom: 10px;
+  scroll-snap-type: x proximity;
+  touch-action: manipulation;
+  overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch;
 }
 
-.desk-day-row::-webkit-scrollbar { display: none; }
+.lux-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #d9a441 rgba(255, 255, 255, 0.06);
+}
+
+.lux-scroll::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+  display: block;
+}
+
+.lux-scroll::-webkit-scrollbar-track {
+  background: linear-gradient(180deg, rgba(197, 204, 214, 0.18), rgba(255, 255, 255, 0.05));
+  border-radius: 99px;
+}
+
+.lux-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, #c5ccd6, #d9a441);
+  border: 2px solid transparent;
+  border-radius: 99px;
+  background-clip: padding-box;
+}
 
 .desk-day {
   display: grid;
@@ -2381,6 +2428,7 @@ button.engine-cube { cursor: pointer; }
   border: 1px solid var(--line);
   border-radius: 16px;
   padding: 14px 14px 12px;
+  scroll-snap-align: start;
 }
 
 .desk-day.on { border-color: rgba(231, 201, 138, 0.75); }
@@ -2550,6 +2598,7 @@ button.desk-day { background: transparent; color: inherit; font: inherit; text-a
 }
 .choice.on { border-color: rgba(231, 201, 138, 0.75); color: var(--text); }
 .choice b { color: var(--text); font-size: 18px; }
+a.decision-row { text-decoration: none; color: inherit; }
 .decision-row {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
