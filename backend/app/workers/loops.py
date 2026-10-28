@@ -24,7 +24,10 @@ def _session_state(settings: Settings, adapter, moment: datetime) -> tuple[bool 
 
     try:
         clock = adapter.get_market_clock()
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.monitor_caught", exc, service="monitor", where="session_clock")
         return None, None
     flag = clock.get("is_open")
     if flag is not True and flag is not False:
@@ -129,6 +132,9 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             progress=progress,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="execute_scan")
         write_feed_status(providers)
         record_scan_blocked(moment, str(exc))
         return {"ok": False, "blocked": str(exc)}
@@ -218,7 +224,10 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                     from app.options.day_floor import mark_kill_cleared
 
                     floor = mark_kill_cleared(settings, moment)
-                except Exception:
+                except Exception as exc:
+                    from app.ops.failure import log_failure
+
+                    log_failure("worker.monitor_caught", exc, service="monitor", where="mark_kill_cleared")
                     floor = {**floor, "cleared": True}
             else:
                 _cancel_entry_orders(adapter)
@@ -276,6 +285,9 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                             moment,
                         )
                     except Exception as exc:
+                        from app.ops.failure import log_failure
+
+                        log_failure("worker.monitor_caught", exc, service="monitor", where="place_order")
                         record_trade_event(session, trade_id, "BLOCKED", "beo-trade", str(exc))
                 session.commit()
         if live and submit:
@@ -654,7 +666,10 @@ def _broker_positions(settings: Settings) -> list[dict] | None:
         return None
     try:
         return list(adapter.get_positions())
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="broker_positions")
         return None
     finally:
         adapter.close()
@@ -687,7 +702,10 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
     try:
         account = adapter.get_account()
         activities = adapter.get_activities()
-    except Exception:
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="account_pnl")
         return None
     finally:
         adapter.close()
@@ -849,6 +867,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), live) for item in bundles.values()]
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
     except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="revalidation")
         blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
@@ -870,7 +891,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         try:
             positions = list(adapter.get_positions())
             open_orders = list(adapter.get_orders("open"))
-        except Exception:
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="broker_positions")
             blocked_all("BROKER_POSITIONS_UNAVAILABLE")
             return
         open_premium = _open_premium(positions, open_orders, settings.trading().contract_multiplier)
@@ -898,7 +922,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         activities = None
         try:
             activities = adapter.get_activities()
-        except Exception:
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="activities")
             activities = None
         session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
@@ -1039,6 +1066,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     if opening_taken is not None:
                         opening_taken += 1
                 except Exception as exc:
+                    from app.ops.failure import log_failure
+
+                    log_failure("worker.scan_caught", exc, service="worker", where="place_order")
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
                 session.commit()
     finally:
