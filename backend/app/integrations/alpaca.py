@@ -164,6 +164,14 @@ class AlpacaPaperClient:
                 continue
             metrics.note_call()
             status = response.status_code
+            if status < 200 or status >= 300:
+                log.warning(
+                    "alpaca.http",
+                    upstream="alpaca",
+                    status_code=status,
+                    method=method,
+                    path=url.split("?", 1)[0],
+                )
             if status == 429:
                 metrics.note_429()
                 if retry and attempt < attempts - 1:

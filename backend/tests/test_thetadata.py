@@ -691,3 +691,56 @@ def test_rotating_symbols_keep_prior_bars_within_a_cap(monkeypatch):
     for symbol in ("AAA", "AAA", "BBB", "CCC", "AAA"):
         feed._prior_rows(("1m", symbol, day), "/v3/stock/history/ohlc", {"symbol": symbol}, required=False)
     assert calls == ["AAA", "BBB", "CCC", "AAA"]
+
+
+_PRO_DENIED = "Requesting an option endpoint requiring a professional subscription, but you only have a STANDARD subscription"
+
+
+def test_permission_denied_is_cached_and_the_quote_chain_still_builds():
+    from structlog.testing import capture_logs
+
+    counts = {"greeks": 0, "quote": 0}
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if path == "/v3/option/snapshot/greeks/all":
+            counts["greeks"] += 1
+            return httpx.Response(403, json={"header": {"error_type": "PERMISSION_DENIED", "error_msg": _PRO_DENIED}})
+        if path == "/v3/option/snapshot/quote":
+            counts["quote"] += 1
+            return httpx.Response(
+                200,
+                json=[{"symbol": "NVDA", "expiration": "2026-10-03", "strike": 100, "right": "CALL", "timestamp": FRESH, "bid": 1.0, "ask": 1.1}],
+            )
+        return httpx.Response(200, json=[])
+
+    feed = _feed(handle)
+    feed.bind_option_symbols(("NVDA",))
+    with capture_logs() as logs:
+        first = ThetaOptionsProvider(feed).load_options(AS_OF)
+        second = ThetaOptionsProvider(feed).load_options(AS_OF)
+    assert len(first) == 1
+    assert first[0].delta is None
+    assert len(second) == 1
+    assert counts["greeks"] == 1
+    assert counts["quote"] == 2
+    denied = [row for row in logs if row["event"] == "thetadata.permission_denied"]
+    assert len(denied) == 1
+    assert denied[0]["path"] == "/v3/option/snapshot/greeks/all"
+    assert denied[0]["upstream"] == "thetadata"
+    assert denied[0]["status_code"] == 403
+    assert "api_key" not in str(denied[0])
+
+
+def test_plain_403_is_not_treated_as_a_session_permission_denial():
+    calls = {"n": 0}
+
+    def handle(_request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(403, text="nope")
+
+    feed = _feed(handle)
+    assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
+    assert calls["n"] == 2
+    assert feed._get("/v3/option/snapshot/quote", {"symbol": "NVDA"}, required=False) == []
+    assert calls["n"] == 4

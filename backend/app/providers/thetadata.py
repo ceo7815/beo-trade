@@ -5,9 +5,11 @@ import time
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 import httpx
+import structlog
 
 from app.config.settings import Settings
 from app.core.sessions import SCAN_PHASES, phase_at
@@ -16,12 +18,26 @@ from app.providers.base import ProviderUnavailable
 from app.quant.relative_volume import LAST_BAR_OPEN, SESSION_OPEN, time_of_day_relative_volume
 from app.schemas.domain import Bar, OptionRight, OptionSnapshot, UnderlyingSnapshot
 
+log = structlog.get_logger()
+
 DEFAULT_BASE = "http://127.0.0.1:25503"
 EXCHANGE = ZoneInfo("America/New_York")
 LATE_QUOTE_SECONDS = 90
 REQUEST_TIMEOUT_SECONDS = 10
 # A terminal that stops answering would otherwise hold one scan for every optional request's timeout.
 MAX_TRANSPORT_FAILURES = 3
+# Option paths this desk requests. Theta Terminal, not this process, decides which of them
+# need a professional subscription. A STANDARD login answers PERMISSION_DENIED
+# ("Requesting an option endpoint requiring a professional subscription, but you only have a STANDARD subscription")
+# for a path above that tier. Greeks (`/v3/option/snapshot/greeks/all`) are the professional surface.
+# Quote, OHLC, open interest, and the expiration list are requested too; history quotes are only
+# the learning backfill. A denial is remembered for that path until the next New York session
+# and later calls return [] without another request. That is the same empty result a 403 already
+# produced, so the scan's decision does not change:
+# greeks denied → the contract is still built from the quote, and IV/greeks are solved from the mid;
+# open interest denied → open_interest stays 0, as it does for an empty body;
+# quote denied → there is no chain, as there is today when the quote call is empty.
+_PERMISSION_DENIED: dict[str, date] = {}
 
 
 class ThetaDataError(ProviderUnavailable):
@@ -57,6 +73,7 @@ def reset_theta_state() -> None:
     _state = _State()
     _bundle = None
     _prior.clear()
+    _PERMISSION_DENIED.clear()
 
 
 def feed_status() -> dict:
@@ -222,6 +239,41 @@ def _index_contracts(rows: list[dict]) -> dict[tuple[str, str, str], dict]:
     return found
 
 
+def _permission_denied(response: httpx.Response) -> bool:
+    """Theta Terminal's STANDARD-tier refusal for a professional option path."""
+    try:
+        text = response.text[:800]
+    except Exception:
+        text = ""
+    lowered = text.lower()
+    if "permission_denied" in lowered or "professional subscription" in lowered:
+        return True
+    try:
+        payload = response.json()
+    except Exception:
+        return False
+    header = payload.get("header") if isinstance(payload, dict) else None
+    if not isinstance(header, dict):
+        return False
+    kind = str(header.get("error_type") or "").upper()
+    message = str(header.get("error_msg") or header.get("message") or "")
+    return kind == "PERMISSION_DENIED" or "professional subscription" in message.lower()
+
+
+def _remember_permission_denial(path: str, status_code: int) -> None:
+    day = datetime.now(EXCHANGE).date()
+    if _PERMISSION_DENIED.get(path) == day:
+        return
+    _PERMISSION_DENIED[path] = day
+    log.warning(
+        "thetadata.permission_denied",
+        upstream="thetadata",
+        path=path,
+        status_code=status_code,
+        error="PERMISSION_DENIED",
+    )
+
+
 class ThetaFeed:
     def __init__(self, settings: Settings, transport: httpx.BaseTransport | None = None) -> None:
         self.settings = settings
@@ -299,6 +351,8 @@ class ThetaFeed:
         return rows
 
     def _get(self, path: str, params: dict, required: bool = True, _attempt: int = 0) -> list[dict]:
+        if _PERMISSION_DENIED.get(path) == datetime.now(EXCHANGE).date():
+            return []
         started = time.monotonic()
         stats = self.request_stats.setdefault(path, {"count": 0, "seconds": 0.0, "slowest": 0.0})
         try:
@@ -316,6 +370,18 @@ class ThetaFeed:
             raise ThetaDataError("ThetaData לא זמין") from exc
         self._count(stats, started)
         code = response.status_code
+        if _permission_denied(response):
+            _remember_permission_denial(path, code)
+            return []
+        if code != 200:
+            log.warning(
+                "thetadata.http",
+                upstream="thetadata",
+                status_code=code,
+                method="GET",
+                path=path,
+                host=urlsplit(self.base).hostname,
+            )
         symbols = [part.strip() for part in str(params.get("symbol") or "").split(",") if part.strip()]
         if code in {403, 429} and _attempt < 1:
             return self._get(path, params, required=required, _attempt=_attempt + 1)

@@ -52,8 +52,10 @@ def _monitor_forever(settings, calendar, interval: int) -> None:
         phase = phase_at(now, calendar)
         try:
             monitor_once(settings)
-        except Exception:
-            log.warning("worker.monitor_failed", service="monitor")
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.monitor_failed", exc, service="monitor")
         beat(MONITOR_HEARTBEAT, phase)
         beat(HEARTBEAT, "HALTED" if is_halted() else phase)
         time.sleep(interval)
@@ -107,7 +109,9 @@ def run_forever() -> None:
             try:
                 scan_once(settings, now)
             except Exception as exc:
-                log.warning("worker.scan_failed", service="worker", error=type(exc).__name__)
+                from app.ops.failure import log_failure
+
+                log_failure("worker.scan_failed", exc, service="worker")
                 record_scan_blocked(now, f"שגיאה פנימית בסריקה: {type(exc).__name__}: {str(exc)[:200]}")
             last_scan = clock
         if _stop:
