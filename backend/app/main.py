@@ -8,7 +8,7 @@ from decimal import Decimal
 from zoneinfo import ZoneInfo
 
 import structlog
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
@@ -22,10 +22,13 @@ from app.models.store import (
     close_paper_trade,
     count_internal_candidates,
     create_paper_trade,
+    decode_buy_cursor,
+    encode_buy_cursor,
     get_buy,
     get_user,
     list_buys,
     list_trades,
+    page_buys,
     list_watchlist,
     load_usage,
     open_positions,
@@ -39,6 +42,7 @@ from app.providers.benzinga import BenzingaError
 from app.providers.registry import build_providers, merged_feed_statuses
 from app.recommendations.live_scan import MarketDataMissing, execute_scan
 from app.schemas.domain import REASON_HEBREW, DecisionKind
+from app.models.utc_time import iso_utc
 from app.ops.paths import HEARTBEAT
 from app.ops.readiness import build_health, build_ready
 from app.ops.safety import assert_boot_safe
@@ -106,10 +110,25 @@ def _alpaca_counters() -> dict:
         }
 
 
+def _list_card(row: RecommendationRow) -> dict:
+    return {
+        "recommendation_id": row.id,
+        "timestamp": iso_utc(row.created_at),
+        "underlying": row.underlying,
+        "option_symbol": row.option_symbol,
+        "call_put": row.call_put,
+        "strike": _money(row.strike),
+        "expiration": row.expiration,
+        "option_price": _money(row.option_price),
+        "quantity": row.quantity,
+        "why": [REASON_HEBREW.get(code, code) for code in (row.reason_codes or [])],
+    }
+
+
 def _card(row: RecommendationRow) -> dict:
     return {
         "recommendation_id": row.id,
-        "timestamp": row.created_at.isoformat(),
+        "timestamp": iso_utc(row.created_at),
         "underlying": row.underlying,
         "underlying_price": _money(row.underlying_price),
         "option_symbol": row.option_symbol,
@@ -426,10 +445,24 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         return build_report(current)
 
     @app.get("/api/v1/recommendations")
-    def recommendations(authorization: str | None = Header(default=None)):
+    def recommendations(
+        authorization: str | None = Header(default=None),
+        limit: int = Query(default=40, ge=1, le=100),
+        cursor: str | None = Query(default=None),
+    ):
         user_id_from_header(current, authorization)
+        before = None
+        if cursor:
+            try:
+                before = decode_buy_cursor(cursor)
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail="סמן עמוד לא תקין") from exc
         with session_scope() as session:
-            return {"items": [_card(row) for row in list_buys(session)]}
+            rows = page_buys(session, limit + 1, before)
+        has_more = len(rows) > limit
+        page = rows[:limit]
+        next_cursor = encode_buy_cursor(page[-1].created_at, page[-1].id) if has_more and page else None
+        return {"items": [_list_card(row) for row in page], "next_cursor": next_cursor, "limit": limit}
 
     @app.get("/api/v1/recommendations/{recommendation_id}")
     def recommendation_detail(recommendation_id: str, authorization: str | None = Header(default=None)):
@@ -723,7 +756,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             rows = session.scalars(select(Alert).order_by(Alert.created_at.desc()).limit(20))
             return {
                 "items": [
-                    {"id": row.id, "kind": row.kind, "message": row.message, "created_at": row.created_at.isoformat()}
+                    {"id": row.id, "kind": row.kind, "message": row.message, "created_at": iso_utc(row.created_at)}
                     for row in rows
                     if row.kind == "BUY"
                 ]
