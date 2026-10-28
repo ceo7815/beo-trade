@@ -10,9 +10,9 @@ from pathlib import Path
 
 from fastapi import FastAPI, Header, Query
 
-from app.analytics.finance import daily_rows, drawdown_from_equity, dte_bucket, filter_trades, monthly_rows, period_cards, split_by, summarize_trades, trading_day_pnl
-from app.analytics.trades import round_trips, summarize, window, within
-from app.broker.normalize import execution_pnl, parse_option_symbol
+from app.analytics.closed_trades import canonical_book, finance_row, finance_totals, public_closed, ratio_return, reconcile_closed, stored_fill_payloads, warn_mismatch
+from app.analytics.finance import daily_rows, drawdown_from_equity, filter_trades, monthly_rows, period_cards, split_by, trading_day_pnl
+from app.analytics.trades import summarize, window, within
 from app.broker.runtime import open_paper_broker
 from app.config.settings import Settings
 from app.models.db import database_ready, session_scope
@@ -72,20 +72,6 @@ def _parsed_time(value: str) -> datetime | None:
     if moment.tzinfo is None:
         return moment.replace(tzinfo=timezone.utc)
     return moment
-
-
-def _dte(contract: dict | None, closed_at: datetime | None) -> int | None:
-    if not contract or closed_at is None:
-        return None
-    expiration = contract.get("expiration")
-    if not expiration:
-        return None
-    try:
-        from datetime import date
-
-        return (date.fromisoformat(str(expiration)) - closed_at.astimezone(timezone.utc).date()).days
-    except ValueError:
-        return None
 
 
 def _parallel_reads(calls: dict) -> dict:
@@ -248,6 +234,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         history = None
         year = None
         activities = None
+        fetched: dict = {}
         try:
             adapter = open_paper_broker(settings)
         except Exception:
@@ -260,6 +247,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                     "history": lambda: adapter.get_portfolio_history(period, timeframe),
                     "year": lambda: adapter.get_portfolio_history("1A", "1D"),
                     "activities": adapter.get_activities,
+                    "fills": lambda: _load_fills(adapter, ""),
                 }
             )
             adapter.close()
@@ -281,9 +269,18 @@ def register(app: FastAPI, settings: Settings) -> None:
             exposure = str(total.quantize(Decimal("0.01"))) if seen or positions == [] else None
             if positions == []:
                 exposure = "0.00"
-        trades = _stored_closed()
+        book = canonical_book(
+            fetched.get("fills") or [],
+            stored_fill_payloads(),
+            positions or [],
+            settings.trading().contract_multiplier,
+        )
+        closed = book["closed"]
+        if database_ready():
+            with session_scope() as session:
+                _annotate(session, closed)
         filtered = filter_trades(
-            trades,
+            [finance_row(row) for row in closed],
             start=_parsed_time(start),
             end=_parsed_time(end),
             side=side,
@@ -293,6 +290,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             exit_reason=exit_reason,
             hour=hour,
         )
+        grouped = [ratio_return(row) for row in filtered]
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
         points = [] if history is None else history.get("points") or []
@@ -321,16 +319,40 @@ def register(app: FastAPI, settings: Settings) -> None:
             else str((Decimal(exposure) / Decimal(str(account["equity"]))).quantize(Decimal("0.0001"))),
             "hours": {"note": "אין מספיק נתונים"},
             "exits": {"note": "אין מספיק נתונים"},
-            "trades": summarize_trades(filtered),
-            "closed_trades": filtered,
-            "by_side": split_by(filtered, "right"),
-            "by_dte": split_by([{**row, "bucket": row.get("bucket")} for row in filtered if row.get("bucket")], "bucket"),
-            "by_symbol": split_by(filtered, "underlying"),
+            "closed_trades_source": book["source"],
+            "trades": finance_totals(filtered),
+            "closed_trades": [public_closed(row) for row in filtered],
+            "by_side": split_by(grouped, "right"),
+            "by_dte": split_by([row for row in grouped if row.get("bucket")], "bucket"),
+            "by_symbol": split_by(grouped, "underlying"),
             "sector": {"available": False, "note": "נתוני סקטור אינם זמינים"},
             "best_worst": {"note": "אין מספיק מידע לניתוח"} if len(filtered) < 3 else _best_worst(filtered),
         }
         read_cache.set(cache_key, payload, FINANCE_TTL_SECONDS)
         return payload
+
+    @app.get("/api/v1/finance/reconciliation")
+    def finance_reconciliation(authorization: str | None = Header(default=None), start: str = "", end: str = ""):
+        """Read-only. Canonical closed-trade P&L versus Alpaca FILL activities for the range."""
+        from app.main import user_id_from_header
+
+        user_id_from_header(settings, authorization)
+        multiplier = settings.trading().contract_multiplier
+        try:
+            adapter = open_paper_broker(settings)
+        except Exception as exc:
+            return {"environment": "PAPER", "available": False, "mismatch": None, "detail": type(exc).__name__}
+        try:
+            live = _pull_fills(adapter, "")
+            positions = adapter.get_positions()
+        except Exception as exc:
+            return {"environment": "PAPER", "available": False, "mismatch": None, "detail": type(exc).__name__}
+        finally:
+            adapter.close()
+        book = canonical_book(live, stored_fill_payloads(), positions or [], multiplier)
+        result = reconcile_closed(book["closed"], live, start=start, end=end, zone=settings.exchange_timezone, multiplier=multiplier)
+        warn_mismatch(result)
+        return {"environment": "PAPER", "available": True, "source": book["source"], **result}
 
     @app.get("/api/v1/risk")
     def risk_view(authorization: str | None = Header(default=None)):
@@ -477,7 +499,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             return {"environment": "PAPER", "available": False, "detail": type(exc).__name__}
         finally:
             adapter.close()
-        report = round_trips(fills, positions, multiplier=settings.trading().contract_multiplier)
+        report = canonical_book(fills, stored_fill_payloads(), positions, settings.trading().contract_multiplier)
         closed = [row for row in report["closed"] if within(row.get("closed_at"), frame)]
         still_open = report["open"] if frame["includes_today"] else []
         ai_cost = None
@@ -494,7 +516,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         return {
             "environment": "PAPER",
             "available": True,
-            "source": "alpaca-paper FILL",
+            "source": report["source"],
             "window": frame,
             "summary": summarize(closed, still_open, ai_cost),
             "closed": closed,
@@ -678,21 +700,6 @@ def _sum_optional(values) -> int | None:
     if not present:
         return None
     return int(sum(present))
-
-
-def _round_trip_fee(buy: dict, sell: dict) -> str | None:
-    def one(row: dict) -> Decimal | None:
-        if "fee" not in row and "commission" not in row:
-            return None
-        raw = row.get("fee", row.get("commission"))
-        if raw in {None, ""}:
-            return None
-        return Decimal(str(raw))
-
-    paid = [one(buy), one(sell)]
-    if any(item is None for item in paid):
-        return None
-    return str(sum(paid, Decimal("0")))
 
 
 def _annotate(session, trades: list[dict]) -> None:
@@ -917,98 +924,6 @@ def _entry_recommendations(session, trades: list[dict]) -> list[dict | None]:
             }
         )
     return described
-
-
-def _stored_closed() -> list[dict]:
-    if not database_ready():
-        return []
-    from sqlalchemy import select
-
-    from app.models.tables import BrokerFillRecord, BrokerTradeEvent
-
-    with session_scope() as session:
-        rows = list(session.scalars(select(BrokerFillRecord).order_by(BrokerFillRecord.observed_at.asc())))
-        exits = {
-            row.trade_id: row.reason
-            for row in session.scalars(select(BrokerTradeEvent).where(BrokerTradeEvent.state == "EXIT_TRIGGERED"))
-            if row.trade_id
-        }
-    grouped: dict[str, list] = {}
-    for row in rows:
-        payload = row.payload if isinstance(row.payload, dict) else {}
-        grouped.setdefault(row.trade_id or str(payload.get("symbol") or ""), []).append(payload)
-    closed = []
-    for key, items in grouped.items():
-        buys = [item for item in items if str(item.get("side") or "").lower() == "buy" and item.get("price") not in {None, ""}]
-        sells = [item for item in items if str(item.get("side") or "").lower() == "sell" and item.get("price") not in {None, ""}]
-        if not buys or not sells:
-            continue
-        result = execution_pnl(str(buys[0]["price"]), str(sells[-1]["price"]), str(buys[0].get("qty") or "0"), _round_trip_fee(buys[0], sells[-1]))
-        if result is None:
-            continue
-        contract = parse_option_symbol(str(buys[0].get("symbol") or ""))
-        closed_at = _parsed_time(str(sells[-1].get("timestamp") or ""))
-        dte = _dte(contract, closed_at)
-        closed.append(
-            {
-                "trade_id": key,
-                "symbol": buys[0].get("symbol") or "",
-                "underlying": None if contract is None else contract["underlying"],
-                "right": None if contract is None else contract["right"],
-                "pnl": result.get("gross_pnl"),
-                "gross_pnl": result.get("gross_pnl"),
-                "net_pnl": result.get("net_pnl"),
-                "fees": result.get("fees"),
-                "fees_note": result.get("fees_note"),
-                "return_pct": result.get("return_pct"),
-                "closed_at": closed_at,
-                "dte": dte,
-                "bucket": dte_bucket(dte),
-                "exit_reason": exits.get(key) or "",
-                "entry_price": str(buys[0]["price"]),
-                "exit_price": str(sells[-1]["price"]),
-                "qty": str(buys[0].get("qty") or ""),
-                "opened_at": None if _parsed_time(str(buys[0].get("timestamp") or "")) is None else _parsed_time(str(buys[0].get("timestamp") or "")).isoformat(),
-                "hour": None if closed_at is None else closed_at.astimezone(ZoneInfo("Asia/Dubai")).strftime("%H"),
-            }
-        )
-    return closed
-
-
-def _closed_from_fills(fills: list[dict]) -> list[dict]:
-    grouped: dict[str, list] = {}
-    for row in fills:
-        grouped.setdefault(str(row.get("order_id") or row.get("symbol") or ""), []).append(row)
-    closed = []
-    for key, rows in grouped.items():
-        buys = [row for row in rows if str(row.get("side") or "").lower() == "buy" and row.get("price") not in {None, ""}]
-        sells = [row for row in rows if str(row.get("side") or "").lower() == "sell" and row.get("price") not in {None, ""}]
-        if not buys or not sells:
-            continue
-        result = execution_pnl(str(buys[0]["price"]), str(sells[-1]["price"]), str(buys[0].get("qty") or "0"), _round_trip_fee(buys[0], sells[-1]))
-        if result is None:
-            continue
-        contract = parse_option_symbol(str(buys[0].get("symbol") or ""))
-        closed_at = _parsed_time(str(sells[-1].get("timestamp") or ""))
-        dte = _dte(contract, closed_at)
-        closed.append(
-            {
-                "trade_id": key,
-                "symbol": buys[0].get("symbol") or "",
-                "underlying": None if contract is None else contract["underlying"],
-                "right": None if contract is None else contract["right"],
-                "pnl": result.get("gross_pnl"),
-                "gross_pnl": result.get("gross_pnl"),
-                "net_pnl": result.get("net_pnl"),
-                "fees": result.get("fees"),
-                "fees_note": result.get("fees_note"),
-                "return_pct": result.get("return_pct"),
-                "closed_at": closed_at,
-                "dte": dte,
-                "bucket": dte_bucket(dte),
-            }
-        )
-    return closed
 
 
 def _best_worst(trades: list[dict]) -> dict:
