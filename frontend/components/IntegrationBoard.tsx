@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useDesk } from "@/components/Shell";
 import { apiGet } from "@/lib/api";
 import { money } from "@/lib/pnl";
+import { regimeLine } from "@/lib/regime";
 
 export type IntegrationItem = {
   id: string;
@@ -70,7 +71,7 @@ const CAPABILITY: Record<string, string> = {
   quant: "מחשב יווניות, IV ונפח בקוד.",
   candidate: "מסנן פלח מהיקום הדינמי. על המסך עולה רק מה שעבר.",
   risk: "בודק גודל פוזיציה, מרווח ונזילות לפני אישור.",
-  regime: "ממומש — ממתין לנתוני שוק",
+  regime: "משטר השוק מהסריקה האחרונה.",
   audit: "שומר מה היה ידוע, מה הוחלט ומה קרה אחר כך.",
   backtest: "משחזר עסקאות היסטוריות בלי נתוני עתיד.",
 };
@@ -99,7 +100,7 @@ export function IntegrationCard({ item }: { item: IntegrationItem }) {
         <span className={`health ${tone(item.status)}`}><i />{item.status_label}</span>
       </div>
       <dl className="mt-3">
-        <div className="ready"><span>יכולת</span><b>{CAPABILITY[item.id] || item.role}</b></div>
+        <div className="ready"><span>יכולת</span><b>{item.id === "regime" ? regimeLine(status?.regime_status) : (CAPABILITY[item.id] || item.role)}</b></div>
         <div className="ready"><span>חיבור</span><b>{item.status_label}</b></div>
         <div className="ready"><span>חיוב</span><b className="num">{billing}</b></div>
         <div className="ready"><span>סנכרון</span><b className="num">{item.last_check ? item.last_check.slice(11, 19) : "אין נתונים"}</b></div>

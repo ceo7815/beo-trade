@@ -297,10 +297,10 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         calls = 0
         average = None
         mode = "unpriced"
-        equity = Decimal("0")
         cash = Decimal("0")
         buys = 0
         internal = 0
+        displayed_equity = None
         if database == "ok":
             with session_scope() as session:
                 user = get_user(session, current.dev_user_id if not current.auth_required else user_id_from_header(current, authorization))
@@ -321,7 +321,13 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 internal = count_internal_candidates(session)
                 if user is not None:
                     cash = Decimal(str(user.paper_cash))
-                    equity = paper_equity(session, user.id)
+                from app.broker.runtime import cached_display_equity
+
+                displayed_equity = cached_display_equity(session)
+        else:
+            from app.broker.runtime import cached_display_equity
+
+            displayed_equity = cached_display_equity(None)
         if mode == "unpriced":
             alerts.append("מחירי הטוקנים לא הוגדרו. קריאות AI חסומות כדי לא לחרוג מתקרת 200 הדולר.")
         elif mode == "stopped":
@@ -363,12 +369,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "options_status": options_status,
             "macro_status": macro_status,
             "research_status": research_status,
-            "regime_status": __import__("app.market.regime", fromlist=["last_regime"]).last_regime(),
+            "regime_status": __import__("app.market.regime", fromlist=["read_shared_regime"]).read_shared_regime(),
             "internal_candidates": internal,
             "active_buys": buys,
-            "paper_equity": _money(equity),
+            "paper_equity": None if displayed_equity is None else _money(displayed_equity),
             "paper_cash": _money(cash),
-            "equity_basis": "entry_price",
+            "equity_basis": "alpaca" if displayed_equity is not None else "unavailable",
             "ai_month_usd": _money(month_cost),
             "ai_day_usd": _money(day_cost),
             "ai_hour_usd": _money(hour_cost),
@@ -387,7 +393,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "monitor_cycle_ok": cycle["ok"],
             "paper_only": True,
             "trading_halted": is_halted(),
-            "daily_kill_loss_usd": display_kill_usd(current.trading(), equity if equity > 0 else None),
+            "daily_kill_loss_usd": display_kill_usd(current.trading(), displayed_equity),
             "alpaca": _alpaca_counters(),
         }
 
@@ -478,7 +484,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
     def health(authorization: str | None = Header(default=None)):
         user_id_from_header(current, authorization)
         from app.integrations.probes import PROBES
-        from app.market.regime import last_regime
+        from app.market.regime import read_shared_regime
 
         report = {}
         for name, probe in PROBES.items():
@@ -489,8 +495,14 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             except Exception:
                 status, latency, detail = "error", None, "תקלה"
             report[name] = {"status": status, "latency_ms": latency, "detail": detail}
-        regime = last_regime()
-        report["regime"] = {"status": "blocked" if regime.get("status") != "CALCULATED" else "internal", "detail": "ממומש — ממתין לנתוני שוק" if regime.get("status") != "CALCULATED" else "חושב מנתוני הקשר", "latency_ms": None}
+        regime = read_shared_regime()
+        calculated = regime.get("status") == "CALCULATED" and regime.get("market_regime")
+        report["regime"] = {
+            "status": "internal" if calculated else "blocked",
+            "detail": str(regime.get("market_regime")) if calculated else "ממומש — ממתין לנתוני שוק",
+            "latency_ms": None,
+            "updated_at": regime.get("updated_at"),
+        }
         worker_age = None if not HEARTBEAT.exists() else max(0, int(datetime.now(timezone.utc).timestamp() - HEARTBEAT.stat().st_mtime))
         worker_fresh = worker_age is not None and worker_age <= current.trading().scan_interval_seconds * 3
         from app.ops.readiness import monitor_success
@@ -583,7 +595,6 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 "holding_window_min_minutes": trading.holding_window_min_minutes,
                 "holding_window_max_minutes": trading.holding_window_max_minutes,
                 "max_capital_per_trade": trading.max_capital_per_trade,
-                "paper_account_balance": _money(current.paper_account_balance),
             },
         }
 
