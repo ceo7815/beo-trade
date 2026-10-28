@@ -232,8 +232,12 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         reasons.append("אין בדיקה מחדש")
     reasons.extend(fresh_quote_reasons(settings, symbol, intent, moment, quotes, context if isinstance(context, dict) else None))
     if intent == "buy_to_open":
+        from app.options.account_read import entry_block_reason
         from app.options.day_floor import day_close_reason
 
+        unavailable = entry_block_reason()
+        if unavailable:
+            reasons.append(unavailable)
         closed_for = day_close_reason(settings, moment)
         if not closed_for and clock.get("is_open") is True:
             closed_for = _live_day_kill(settings, adapter, account, moment)

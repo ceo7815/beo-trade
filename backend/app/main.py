@@ -310,6 +310,10 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 alerts.append("הסורק לא דיווח לאחרונה.")
         else:
             alerts.append("הסורק עדיין לא עלה.")
+        from app.options.account_read import public_status
+
+        if public_status().get("alert_open"):
+            alerts.append("אין נתוני חשבון מאלפקה. כניסות חדשות חסומות עד שהנתונים חוזרים.")
         health_state = "ok" if database == "ok" and not alerts else "degraded"
         from app.analytics.kill_line import display_kill_usd
         from app.control.halt import is_halted

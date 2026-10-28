@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { FloorMark } from "@/components/FloorMark";
+import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
+import { useLive } from "@/lib/live";
 import { exitLabel } from "@/lib/exits";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
-import { apiGet, poll } from "@/lib/api";
+import { apiGet, poll, transportMode } from "@/lib/api";
 
 type Risk = {
   state: string;
@@ -13,7 +15,9 @@ type Risk = {
   exposure_limit: string | null;
   daily_loss_limit: string | null;
   daily_loss_used: string | null;
+  daily_loss_state?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
+  protection?: Protection | null;
   max_positions: number;
   open_positions: number | null;
   max_spread: string;
@@ -105,6 +109,7 @@ function pair(used: string, limit: string) {
 }
 
 export default function RiskPage() {
+  const live = useLive();
   const [body, setBody] = useState<Risk | null>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [trace, setTrace] = useState<Trace | null>(null);
@@ -241,7 +246,13 @@ export default function RiskPage() {
       },
     },
   ];
-  const tone = body?.state === "עצור" ? "off" : body?.state === "אזהרה" || failed ? "warn" : body ? "on" : "warn";
+  const liveFloor = transportMode() === "sse" ? live.snap?.day?.day_floor : undefined;
+  const floor = liveFloor ?? body?.day_floor ?? live.snap?.day?.day_floor ?? null;
+  const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? body?.protection ?? live.snap?.day?.protection ?? null;
+  const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : body?.daily_loss_state;
+  const unknown = dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown");
+  const tone = unknown ? "warn" : body?.state === "עצור" ? "off" : body?.state === "אזהרה" || failed ? "warn" : body ? "on" : "warn";
+  const badge = unknown ? "לא ידוע" : (body?.state || (failed ? "אין נתונים" : "טוען"));
 
   return (
     <Shell>
@@ -253,7 +264,7 @@ export default function RiskPage() {
           </div>
           <span className={`ops-pip ${tone}`}>
             <i />
-            {body?.state || (failed ? "אין נתונים" : "טוען")}
+            {badge}
           </span>
         </header>
 
@@ -263,8 +274,9 @@ export default function RiskPage() {
               <b>הפסד היום</b>
               <strong className={`num ${near(body?.daily_loss_used, body?.daily_loss_limit) ? "bad" : ""}`}>{pair(money(body?.daily_loss_used), money(body?.daily_loss_limit))}</strong>
             </button>
-            {body?.day_floor?.armed ? <FloorMark closed={Boolean(body.day_floor.closed)} amount={body.day_floor.floor} /> : null}
+            {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : unknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
+          {protection || unknown ? <ProtectionBar protection={unknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[4].explain)}>
             <b>פוזיציות</b>
             <strong className={`num ${near(body?.open_positions == null ? null : String(body.open_positions), body?.max_positions == null ? null : String(body.max_positions)) ? "bad" : ""}`}>{positions}</strong>

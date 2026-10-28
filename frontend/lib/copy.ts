@@ -51,6 +51,7 @@ export const blockReasons: Record<string, string> = {
   DAILY_LOSS_LIMIT_REACHED: "בלם כניסות",
   DAILY_HARD_STOP: "עצירת הפסד יומית",
   DAY_FLOOR: "רצפת היום",
+  ACCOUNT_DATA_UNAVAILABLE: "אין נתוני חשבון",
   REGIME_WAITING: "השוק עדיין לא ברור",
   REGIME_UNKNOWN: "מצב השוק לא ידוע",
   REGIME_STRESSED: "השוק לחוץ",

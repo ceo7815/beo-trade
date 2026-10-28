@@ -7,6 +7,7 @@ import { PHASES, loadCached, peekCached, poll, transportMode, type SystemStatus 
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
+import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
 import { copy } from "@/lib/copy";
 import { money as usd, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { Gauge, Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, useReduced, useTick } from "@/components/live-ui";
@@ -121,8 +122,10 @@ type Risk = {
   daily_loss_limit: string | null;
   daily_kill_loss_usd?: string | null;
   daily_loss_used: string | null;
+  daily_loss_state?: string | null;
   today_pnl?: string | null;
   day_floor?: { armed: boolean; closed: boolean; arm: string; floor: string } | null;
+  protection?: Protection | null;
   max_positions: number;
   open_positions: number | null;
 };
@@ -247,7 +250,12 @@ function Board() {
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
-  const lossState = live.snap?.day?.daily_loss_state;
+  const liveFloor = transportMode() === "sse" ? live.snap?.day?.day_floor : undefined;
+  const floor = liveFloor ?? risk?.day_floor ?? live.snap?.day?.day_floor ?? null;
+  const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? risk?.protection ?? live.snap?.day?.protection ?? null;
+  const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : risk?.daily_loss_state;
+  const lossUnknown = dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown");
+  const lossState = lossUnknown ? "unknown" : live.snap?.day?.daily_loss_state;
   const sync = syncOf(syncedAt, now);
   const days = recentDays(book);
   const lastDay = days?.[0] ?? null;
@@ -287,9 +295,10 @@ function Board() {
           <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
           <div className="desk-hero-main">
             <Odometer value={shownPnl} />
-            {risk?.day_floor?.armed ? <FloorMark closed={Boolean(risk.day_floor.closed)} amount={risk.day_floor.floor} /> : null}
+            {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
           <Gauge pnl={shownPnl} kill={kill} state={lossState} />
+          {protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
         </article>
       </div>
 
@@ -397,7 +406,7 @@ function Board() {
           <Feed label="AI" row={aiOf(status)} />
         </section>
         <section className="ops-pane">
-          <h2>סיכון · {risk?.state || "אין נתונים"}</h2>
+          <h2>סיכון · {lossUnknown ? "לא ידוע" : (risk?.state || "אין נתונים")}</h2>
           <div className="ops-feed"><span>הון לעסקה</span><b className="num">{money(risk?.per_trade_limit)}</b></div>
           <div className="ops-feed"><span>מגבלה יומית</span><b className="num">{money(risk?.daily_loss_limit)}</b></div>
           <div className="ops-feed"><span>בלם</span><b className="num">{kill === null ? "—" : money(kill)}</b></div>

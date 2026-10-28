@@ -392,19 +392,27 @@ def register(app: FastAPI, settings: Settings) -> None:
             with session_scope() as session:
                 realized = realized_session_pnl(session, datetime.now(timezone.utc))
         counted = entry_pnl(measured, realized)
+        from app.options.account_read import public_status
+        from app.options.protection_view import build_protection
+
+        account_read = public_status()
+        no_account = account is None or measured is None
         loss_used = None
-        counted_text = None if counted is None else str(counted.quantize(Decimal("0.01")))
-        if counted_text is not None and Decimal(counted_text) < 0:
-            loss_used = str(abs(Decimal(counted_text)))
-        elif counted_text is not None:
-            loss_used = "0.00"
+        if not no_account:
+            counted_text = None if counted is None else str(counted.quantize(Decimal("0.01")))
+            if counted_text is not None and Decimal(counted_text) < 0:
+                loss_used = str(abs(Decimal(counted_text)))
+            elif counted_text is not None:
+                loss_used = "0.00"
+        else:
+            daily = None
         count = None if positions is None else len(positions)
         stopped = False
         warning = False
         from app.options.risk_limits import day_flatten_reason
 
-        level = "ok" if equity is None or counted is None else daily_loss_state(equity, counted, trading)
-        if day_flatten_reason(equity, measured, trading) == "DAILY_HARD_STOP":
+        level = "unknown" if no_account else daily_loss_state(equity, counted, trading)
+        if not no_account and day_flatten_reason(equity, measured, trading) == "DAILY_HARD_STOP":
             level = "hard_stop"
         if level in {"entry_stop", "hard_stop"}:
             stopped = True
@@ -414,10 +422,8 @@ def register(app: FastAPI, settings: Settings) -> None:
             warning = True
         from app.analytics.kill_line import display_kill_usd
 
-        if equity is None:
-            state = "אין נתוני חשבון"
-        elif counted is None:
-            state = "אין בסיס הפסד יומי"
+        if no_account:
+            state = "לא ידוע"
         elif stopped:
             state = "עצור"
         elif warning:
@@ -428,12 +434,13 @@ def register(app: FastAPI, settings: Settings) -> None:
 
         moment = datetime.now(timezone.utc)
         try:
-            day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None else public_from_store(settings, moment)
+            day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None and measured is not None else public_from_store(settings, moment)
         except Exception:
             day_floor = {"armed": False, "closed": False, "arm": None, "floor": None}
         if isinstance(day_floor, dict) and day_floor.get("closed") and not day_floor.get("cleared") and day_floor.get("reason") == "DAILY_HARD_STOP":
             level = "hard_stop"
             state = "עצור"
+        protection = build_protection(settings, measured if not no_account else None, day_floor, unknown=no_account or level == "unknown")
         return {
             "environment": "PAPER",
             "state": state,
@@ -444,12 +451,15 @@ def register(app: FastAPI, settings: Settings) -> None:
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,
+            "account_read_failures": account_read.get("consecutive_failures"),
+            "account_read_last_success": account_read.get("last_success_at"),
             "max_positions": trading.max_concurrent_positions,
             "open_positions": count,
             "max_spread": str(trading.max_bid_ask_spread),
             "max_slippage": str(trading.slippage_percent),
             "sector_note": "נתוני סקטור אינם זמינים",
             "day_floor": day_floor,
+            "protection": protection,
         }
 
     @app.get("/api/v1/report/trades")

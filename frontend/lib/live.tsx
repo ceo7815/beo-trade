@@ -36,7 +36,20 @@ export type LiveDay = {
   daily_kill_loss_usd?: string | null;
   daily_loss_state?: string | null;
   open_positions?: number | null;
-  day_floor?: { armed?: boolean; closed?: boolean; arm?: string | null; floor?: string | null } | null;
+  day_floor?: { armed?: boolean; closed?: boolean; arm?: string | null; floor?: string | null; reason?: string | null } | null;
+  protection?: {
+    status?: string | null;
+    line?: string | null;
+    kill?: string | null;
+    pnl?: string | null;
+    floor?: string | null;
+    peak?: string | null;
+    next_threshold?: string | null;
+    next_floor?: string | null;
+    distance?: string | null;
+    protection_kind?: string | null;
+    armed?: boolean;
+  } | null;
 };
 
 export type LiveQuote = { symbol: string; price?: string | number | null; change_percent?: string | number | null };
