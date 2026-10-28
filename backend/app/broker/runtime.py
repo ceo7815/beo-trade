@@ -81,6 +81,9 @@ def open_option_symbols(settings) -> set[str]:
 
 def open_paper_broker(settings) -> AlpacaAdapter:
     """The only place that constructs the Alpaca paper client for business calls."""
+    from app.broker.snapshot import remember_settings
+
+    remember_settings(settings)
     key, _ = resolve_secret(settings, "alpaca_api_key")
     secret, _ = resolve_secret(settings, "alpaca_api_secret")
     client = AlpacaPaperClient(key, secret, settings.trading_mode)

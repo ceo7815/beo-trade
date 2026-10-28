@@ -98,17 +98,26 @@ def test_admin_key_streams_a_diff_when_the_frame_changes(tmp_path, monkeypatch):
 
 
 def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp_path, monkeypatch):
+    from app.broker import snapshot as broker_snapshot
+
     monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
 
     def forbid_write(*args, **kwargs):
         raise AssertionError("stream must not write the day floor")
 
+    def forbid_broker(*args, **kwargs):
+        raise AssertionError("stream must not call Alpaca")
+
     monkeypatch.setattr("app.options.day_floor.observe_day_floor", forbid_write)
-    monkeypatch.setattr(live, "_fetch_positions", lambda settings: {"items": [{"symbol": "X", "underlying": "AMD", "current_price": "1.10", "unrealized_pl": "12"}]})
-    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "70000", "cash": "1000", "last_equity": "69000", "buying_power": "1000"})
+    monkeypatch.setattr("app.broker.runtime.open_paper_broker", forbid_broker)
+    broker_snapshot.isolate(tmp_path)
+    broker_snapshot.prime(
+        {
+            "positions": [{"symbol": "X", "underlying": "AMD", "current_price": "1.10", "unrealized_pl": "12"}],
+            "account": {"equity": "70000", "cash": "1000", "last_equity": "69000", "buying_power": "1000"},
+        }
+    )
     read_cache.clear()
-    live._mem["positions"] = (0.0, None)
-    live._mem["account"] = (0.0, None)
     read_cache.set(
         ("risk",),
         {
@@ -135,8 +144,12 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
     assert snap["day"]["pnl_source"] == "risk"
     assert snap["day"]["daily_kill_loss_usd"] == "3500.00"
     # 70,000 × 5% is also 3,500. A different equity must still read the dollar line.
-    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "100000", "cash": "1000", "last_equity": "90000", "buying_power": "1000"})
-    live._mem["account"] = (0.0, None)
+    broker_snapshot.prime(
+        {
+            "positions": [{"symbol": "X", "underlying": "AMD", "current_price": "1.10", "unrealized_pl": "12"}],
+            "account": {"equity": "100000", "cash": "1000", "last_equity": "90000", "buying_power": "1000"},
+        }
+    )
     larger = live.build_snapshot(settings)
     assert larger["day"]["mark_pnl"] == "10000.00"
     assert larger["day"]["daily_kill_loss_usd"] == "3500.00"
@@ -146,13 +159,18 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
 
 
 def test_snapshot_reports_hard_stop_at_the_dollar_kill(tmp_path, monkeypatch):
+    from app.broker import snapshot as broker_snapshot
+
     monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
     monkeypatch.setattr("app.options.day_floor.observe_day_floor", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")))
-    monkeypatch.setattr(live, "_fetch_positions", lambda settings: {"items": []})
-    monkeypatch.setattr(live, "_fetch_account", lambda settings: {"equity": "100000", "cash": "1", "last_equity": "103500", "buying_power": "1"})
+    broker_snapshot.isolate(tmp_path)
+    broker_snapshot.prime(
+        {
+            "positions": [],
+            "account": {"equity": "100000", "cash": "1", "last_equity": "103500", "buying_power": "1"},
+        }
+    )
     read_cache.clear()
-    live._mem["positions"] = (0.0, None)
-    live._mem["account"] = (0.0, None)
     read_cache.set(("risk",), {"today_pnl": "-3500.00", "daily_loss_state": "ok", "available": True}, 30)
     settings = Settings(
         app_env="local",
@@ -166,7 +184,6 @@ def test_snapshot_reports_hard_stop_at_the_dollar_kill(tmp_path, monkeypatch):
     assert snap["day"]["daily_kill_loss_usd"] == "3500.00"
     assert snap["day"]["daily_loss_state"] == "hard_stop"
     read_cache.set(("risk",), {"today_pnl": "-3499.00", "daily_loss_state": "ok", "available": True}, 30)
-    live._mem["account"] = (0.0, None)
     short = live.build_snapshot(settings)
     assert short["day"]["daily_loss_state"] == "ok"
 

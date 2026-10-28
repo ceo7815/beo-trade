@@ -87,6 +87,25 @@ def _money(value) -> str:
     return f"{Decimal(str(value)).quantize(Decimal('0.01'))}"
 
 
+def _alpaca_counters() -> dict:
+    from app.broker.snapshot import public_broker_status
+
+    try:
+        return public_broker_status()
+    except Exception:
+        return {
+            "calls_per_minute": 0,
+            "http_429": 0,
+            "http_5xx": 0,
+            "cache_hits": 0,
+            "cache_misses": 0,
+            "cache_hit_ratio": None,
+            "snapshot_ttl_seconds": 5,
+            "snapshot_age_seconds": {},
+            "shared_cache": "file",
+        }
+
+
 def _card(row: RecommendationRow) -> dict:
     return {
         "recommendation_id": row.id,
@@ -227,6 +246,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 cost = session.scalar(select(func.coalesce(func.sum(AIUsage.cost), 0))) or 0
             lines.append(f"beo_active_buys {buys}")
             lines.append(f"beo_ai_cost_usd {cost}")
+        alpaca = _alpaca_counters()
+        lines.append(f"beo_alpaca_calls_per_minute {alpaca['calls_per_minute']}")
+        lines.append(f"beo_alpaca_http_429 {alpaca['http_429']}")
+        lines.append(f"beo_alpaca_http_5xx {alpaca['http_5xx']}")
+        ratio = alpaca.get("cache_hit_ratio")
+        lines.append(f"beo_alpaca_cache_hit_ratio {0 if ratio is None else ratio}")
         return PlainTextResponse("\n".join(lines) + "\n", media_type="text/plain")
 
     @app.get("/api/v1/release")
@@ -352,6 +377,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "paper_only": True,
             "trading_halted": is_halted(),
             "daily_kill_loss_usd": display_kill_usd(current.trading(), equity if equity > 0 else None),
+            "alpaca": _alpaca_counters(),
         }
 
     @app.get("/api/v1/control/trading")
@@ -459,7 +485,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         report["scan_worker"] = {"status": "internal" if worker_fresh else "not_verified", "detail": "פעימה טרייה" if worker_fresh else "הלולאה בקוד. אין פעימה טרייה.", "latency_ms": worker_age, "last_success": None if not worker_fresh else "heartbeat"}
         report["position_monitor"] = report["scan_worker"]
         report["reconciliation"] = {"status": "not_verified", "detail": "לולאת ההתאמה רצה עם ה-worker. אין פער מאומת בלי קריאה חיה.", "latency_ms": None}
-        return {"paper_only": True, "items": report}
+        return {"paper_only": True, "items": report, "alpaca": _alpaca_counters()}
 
     @app.post("/api/v1/scan")
     def scan(authorization: str | None = Header(default=None)):

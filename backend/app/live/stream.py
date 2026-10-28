@@ -1,15 +1,17 @@
 """Server-sent snapshots of positions, day P&L, and system status.
 
-The trading loop is not on this path. Reads reuse the PR #4 memory cache.
-A cache miss may refresh Alpaca with GET only: no database write, no halt
-file write, and no lock held across the network call.
+The trading loop is not on this path. This generator never calls Alpaca.
+Account, positions, and the clock come from the shared broker snapshot
+(``app.broker.snapshot``). While at least one screen is connected, one
+background cycle refreshes that snapshot and makes at most one clock call.
+Frames here only peek, so a missed refresh leaves the last snapshot on
+screen instead of an empty book. No database write and no halt-file write.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
-import threading
 import time
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -23,9 +25,6 @@ INTERVAL = 1.5
 HEARTBEAT_SECONDS = 15
 # Tests stop the generator. Production stays at 0 (no cap).
 MAX_EVENTS = 0
-
-_lock = threading.Lock()
-_mem: dict[str, tuple[float, dict | None]] = {"positions": (0.0, None), "account": (0.0, None)}
 
 
 def _plain(value):
@@ -72,54 +71,21 @@ def _slim_account(account: dict) -> dict:
     return {key: _plain(account.get(key)) for key in keys}
 
 
-def _fetch_positions(settings: Settings) -> dict:
-    from app.broker.runtime import open_paper_broker
+def _cached_positions() -> dict:
+    from app.broker.snapshot import peek
 
-    adapter = open_paper_broker(settings)
-    try:
-        items = adapter.get_positions() or []
-    finally:
-        adapter.close()
+    rows = peek("positions")
+    items = rows if isinstance(rows, list) else []
     return {"items": [_slim_position(item) for item in items if isinstance(item, dict)]}
 
 
-def _fetch_account(settings: Settings) -> dict:
-    from app.broker.runtime import open_paper_broker
+def _cached_account() -> dict | None:
+    from app.broker.snapshot import peek
 
-    adapter = open_paper_broker(settings)
-    try:
-        account = adapter.get_account() or {}
-    finally:
-        adapter.close()
-    return _slim_account(account if isinstance(account, dict) else {})
-
-
-def _remember(name: str, payload: dict, cache_key: tuple) -> dict:
-    from app.analytics.read_cache import BROKER_TTL_SECONDS, read_cache
-
-    with _lock:
-        _mem[name] = (time.monotonic(), payload)
-    if read_cache.get(cache_key) is None:
-        read_cache.set(cache_key, payload, BROKER_TTL_SECONDS)
-    return payload
-
-
-def _load(name: str, ttl: float, cache_key: tuple, fetch) -> dict | None:
-    now = time.monotonic()
-    with _lock:
-        at, local = _mem[name]
-        if local is not None and now - at < ttl:
-            return local
-    from app.analytics.read_cache import read_cache
-
-    cached = read_cache.get(cache_key)
-    try:
-        payload = fetch()
-    except Exception:
-        return cached if isinstance(cached, dict) else local
-    if not isinstance(payload, dict):
-        return cached if isinstance(cached, dict) else local
-    return _remember(name, payload, cache_key)
+    account = peek("account")
+    if not isinstance(account, dict) or "equity" not in account:
+        return None
+    return _slim_account(account)
 
 
 def _quotes(positions: dict | None) -> list[dict]:
@@ -270,31 +236,14 @@ def _status(settings: Settings) -> dict:
 
 
 def build_snapshot(settings: Settings) -> dict:
-    """One JSON-safe frame. Safe to call from a worker thread."""
+    """One JSON-safe frame. Reads the broker snapshot only — no Alpaca call."""
     from app.analytics.read_cache import read_cache
 
-    positions = _load("positions", INTERVAL, ("broker", "positions"), lambda: _fetch_positions(settings)) or {"items": []}
-    account = _load("account", INTERVAL, ("broker", "account"), lambda: _fetch_account(settings))
+    position_frame = _cached_positions()
+    account_frame = _cached_account()
     risk = read_cache.get(("risk",))
     if not isinstance(risk, dict):
         risk = None
-    if isinstance(positions, dict) and "items" not in positions:
-        positions = {"items": positions.get("items") or []}
-    # The broker route stores {"items": [...]} . A raw list never lands here.
-    if isinstance(positions, dict) and isinstance(positions.get("account"), dict):
-        positions = {"items": []}
-    cached_positions = positions if isinstance(positions, dict) else {"items": []}
-    if "items" not in cached_positions and isinstance(cached_positions.get("items"), list) is False:
-        cached_positions = {"items": cached_positions.get("items") or []}
-    # Route cache shape is {environment, source, items}. Pass items through slim if needed.
-    items = cached_positions.get("items") if isinstance(cached_positions, dict) else []
-    if not isinstance(items, list):
-        items = []
-    slim_items = [_slim_position(item) if isinstance(item, dict) else {} for item in items]
-    position_frame = {"items": slim_items}
-    account_frame = account if isinstance(account, dict) and "equity" in account else None
-    if isinstance(account, dict) and isinstance(account.get("account"), dict):
-        account_frame = _slim_account(account["account"])
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "positions": position_frame,
@@ -328,33 +277,38 @@ def register(app: FastAPI, settings: Settings) -> None:
         user_id_from_header(settings, authorization)
 
         async def generate():
+            from app.broker.snapshot import note_screen
             from app.live import stream as live
 
+            note_screen(settings, 1)
             previous = None
             last_beat = 0.0
             sent = 0
-            while True:
-                if await request.is_disconnected():
-                    break
-                snap = await asyncio.to_thread(live.build_snapshot, settings)
-                now = time.monotonic()
-                if previous is None:
-                    yield live._frame("snapshot", snap)
-                    previous = snap
-                    last_beat = now
-                else:
-                    changed = live._changed(previous, snap)
-                    if changed:
-                        yield live._frame("diff", changed)
+            try:
+                while True:
+                    if await request.is_disconnected():
+                        break
+                    snap = await asyncio.to_thread(live.build_snapshot, settings)
+                    now = time.monotonic()
+                    if previous is None:
+                        yield live._frame("snapshot", snap)
                         previous = snap
                         last_beat = now
-                    elif now - last_beat >= live.HEARTBEAT_SECONDS:
-                        yield live._frame("heartbeat", {"ts": snap.get("ts")})
-                        last_beat = now
-                sent += 1
-                if live.MAX_EVENTS and sent >= live.MAX_EVENTS:
-                    break
-                await asyncio.sleep(live.INTERVAL)
+                    else:
+                        changed = live._changed(previous, snap)
+                        if changed:
+                            yield live._frame("diff", changed)
+                            previous = snap
+                            last_beat = now
+                        elif now - last_beat >= live.HEARTBEAT_SECONDS:
+                            yield live._frame("heartbeat", {"ts": snap.get("ts")})
+                            last_beat = now
+                    sent += 1
+                    if live.MAX_EVENTS and sent >= live.MAX_EVENTS:
+                        break
+                    await asyncio.sleep(live.INTERVAL)
+            finally:
+                note_screen(settings, -1)
 
         return StreamingResponse(
             generate(),
