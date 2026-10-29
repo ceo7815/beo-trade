@@ -573,6 +573,41 @@ def _held_underlyings(positions: list[dict]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(held))
 
 
+def _revalidation_quotes(settings: Settings, live: datetime, buys) -> list:
+    """Fresh enriched quotes for BUY rows only. Does not reload full option chains."""
+    from app.quant.scenarios import enrich_option
+
+    providers = build_providers(settings)
+    if providers.market is None:
+        raise ProviderUnavailable("אין ספק שוק")
+    underlyings_held = tuple(dict.fromkeys(row.underlying for row in buys))
+    feed = getattr(providers.market, "feed", None)
+    if feed is not None and hasattr(feed, "bind_symbols"):
+        feed.bind_symbols(underlyings_held)
+    underlyings = {row.symbol: row for row in providers.market.load_underlyings(live)}
+    contracts = [(row.underlying, row.expiration, Decimal(str(row.strike)), row.call_put) for row in buys]
+    if feed is not None and hasattr(feed, "load_contract_options"):
+        loaded = feed.load_contract_options(live, contracts)
+    else:
+        keys = {row.option_symbol.replace(" ", "") for row in buys}
+        loaded = [
+            item["option"]
+            for key, item in _loaded_bundles(settings, live, underlyings_held).items()
+            if key in keys
+        ]
+    by_key = {item.option_symbol.replace(" ", ""): item for item in loaded}
+    trading = settings.trading()
+    quotes = []
+    for row in buys:
+        key = row.option_symbol.replace(" ", "")
+        option = by_key.get(key)
+        underlying = underlyings.get(row.underlying)
+        if option is None or underlying is None:
+            raise ProviderUnavailable(f"אין ציטוט מחדש ל-{key}")
+        quotes.append(enrich_option(option, underlying, trading, live))
+    return quotes
+
+
 def _loaded_bundles(settings: Settings, now: datetime, underlyings_held: tuple[str, ...] = ()) -> dict:
     try:
         providers = build_providers(settings)
@@ -837,9 +872,21 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     if not buys:
         return
     outcomes = [] if outcomes is None else outcomes
+    import structlog
+
+    log = structlog.get_logger()
+    log.info("worker.submit_started", service="worker", buy_count=len(buys))
 
     def blocked_all(reason: str) -> None:
-        outcomes.extend({"symbol": row.option_symbol, "result": "blocked", "reason": reason} for row in buys)
+        from app.broker.store import record_trade_event
+        from app.models.db import session_scope
+
+        log.info("worker.submit_blocked_all", service="worker", reason=reason, buy_count=len(buys))
+        for row in buys:
+            outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+            with session_scope() as session:
+                record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", reason, row.recommendation_id)
+                session.commit()
 
     from app.options.account_read import entry_block_reason
 
@@ -856,15 +903,12 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     from app.models.store import save_recommendation
     from app.options.risk_limits import daily_loss_reason, exposure_reason, sector_exposure_reason
 
-    from app.quant.scenarios import enrich_option
-
     try:
         providers = build_providers(settings)
         symbols = tuple(dict.fromkeys(row.underlying for row in buys))
-        # Revalidate the same way the scan priced the contract: IV and greeks are solved from the live mid when the feed omits them.
+        # Revalidate only the BUY contracts, not the full scan chain.
         live = datetime.now(timezone.utc)
-        bundles = _loaded_bundles(settings, live, symbols)
-        quotes = [enrich_option(item["option"], item["underlying"], settings.trading(), live) for item in bundles.values()]
+        quotes = _revalidation_quotes(settings, live, buys)
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
     except Exception as exc:
         from app.ops.failure import log_failure
