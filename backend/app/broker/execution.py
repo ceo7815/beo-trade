@@ -288,13 +288,15 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
     from app.options.day_floor import latch_hard_stop
     from app.options.risk_limits import day_flatten_reason
 
-    if not hasattr(adapter, "get_activities"):
-        return None
-    try:
-        activities = adapter.get_activities()
-    except Exception:
+    if not hasattr(adapter, "get_activities") and not hasattr(adapter, "get_session_activities"):
         return None
     session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+    try:
+        from app.analytics.finance import read_session_funding
+
+        activities = read_session_funding(adapter, session_date)
+    except Exception:
+        return None
     pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
     equity = _decimal(account.get("equity"))
     if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":

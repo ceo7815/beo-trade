@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from app.config.settings import SessionCalendar
@@ -14,6 +14,18 @@ POST_MARKET = "POST_MARKET"
 DAILY_REPORT = "DAILY_REPORT"
 
 SCAN_PHASES = frozenset({OPEN, INTRADAY_SCAN, PRE_CLOSE})
+NEW_YORK = ZoneInfo("America/New_York")
+
+
+def new_york_day_start(moment: datetime) -> datetime:
+    """Midnight in New York for the calendar day of `moment`, as UTC.
+
+    A naive value is UTC. The trading day used by entry gates starts here.
+    """
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    local = moment.astimezone(NEW_YORK)
+    return local.replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
 
 
 def exchange_zone(calendar: SessionCalendar) -> ZoneInfo:

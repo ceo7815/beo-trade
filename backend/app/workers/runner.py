@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import signal
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -20,6 +21,34 @@ from app.workers.loops import monitor_once, reconcile_once, record_scan_blocked,
 log = structlog.get_logger()
 _stop = False
 _lock_handle = None
+
+
+def _line_buffered() -> None:
+    """Stdout is line-buffered so a kill between steps still leaves the last log line."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(line_buffering=True)
+        except (OSError, ValueError):
+            continue
+    try:
+        sys.stdout.flush()
+        sys.stderr.flush()
+    except Exception:
+        pass
+
+
+def _log_cgroup() -> None:
+    """memory.max, memory.current, memory.peak, and oom_kill. Missing files log nulls."""
+    try:
+        from app.ops.memory import cgroup_fields
+
+        log.info("worker.cgroup", service="worker", **cgroup_fields())
+    except Exception as exc:
+        log.info("worker.cgroup", service="worker", readable=False, error=type(exc).__name__)
+    _line_buffered()
 
 
 def beat(path, phase: str) -> None:
@@ -112,6 +141,7 @@ def _monitor_forever(settings, calendar, interval: int) -> None:
 
 def run_forever() -> None:
     global _lock_handle
+    _line_buffered()
     structlog.configure(
         processors=[
             structlog.processors.TimeStamper(fmt="iso"),
@@ -131,6 +161,7 @@ def run_forever() -> None:
     last_scan = 0.0
     last_reconcile = 0.0
     log.info("worker.started", service="worker", trading_mode="PAPER", paper_only=True)
+    _log_cgroup()
     monitor = threading.Thread(target=_monitor_forever, args=(settings, calendar, trading.monitor_interval_seconds), name="monitor", daemon=True)
     monitor.start()
     while True:

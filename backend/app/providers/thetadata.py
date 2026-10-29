@@ -59,6 +59,14 @@ class _State:
 
 _state = _State()
 _bundle: tuple[datetime, dict] | None = None
+
+
+def release_quote_bundle() -> None:
+    """Drop the scan's cached underlying bundle before submit allocates again."""
+    global _bundle
+    _bundle = None
+
+
 # Prior-session bars do not change during a session. Keyed by (kind, symbol, session day).
 _prior: dict[tuple[str, str, date], list[dict]] = {}
 # A 400 or 5xx is logged once per path and symbol list. A single-symbol failure is remembered so history is not requested again this session.
@@ -386,6 +394,49 @@ class ThetaFeed:
 
     def context_quotes(self) -> dict:
         return dict(_state.context)
+
+    def load_spots(self, symbols: tuple[str, ...], as_of: datetime) -> list[UnderlyingSnapshot]:
+        """Live stock price for named symbols. No history and no context names.
+
+        Submit revalidation only needs a spot so a missing greek can be solved
+        from the mid. A month of minute bars is the scan's job.
+        """
+        names = tuple(dict.fromkeys(str(symbol).strip().upper() for symbol in symbols if symbol and str(symbol).strip()))
+        if not names:
+            return []
+        listed = ",".join(names)
+        trades = _by_symbol(self._get("/v3/stock/snapshot/trade", {"symbol": listed}, required=False))
+        ohlc = _by_symbol(self._get("/v3/stock/snapshot/ohlc", {"symbol": listed}, required=False))
+        session_ok = phase_at(as_of, self.settings.calendar()) in SCAN_PHASES
+        found: list[UnderlyingSnapshot] = []
+        for symbol in names:
+            trade = trades.get(symbol)
+            bar = ohlc.get(symbol)
+            observed = _at_scan(
+                _stamp((trade or {}).get("timestamp")) or _stamp((bar or {}).get("timestamp")),
+                as_of,
+            )
+            price = _dec((trade or {}).get("price")) or _dec((bar or {}).get("close"))
+            if observed is None or price is None or price <= 0:
+                continue
+            found.append(
+                UnderlyingSnapshot(
+                    symbol=symbol,
+                    price=price,
+                    open=_dec((bar or {}).get("open")) or price,
+                    high=_dec((bar or {}).get("high")) or price,
+                    low=_dec((bar or {}).get("low")) or price,
+                    close=_dec((bar or {}).get("close")) or price,
+                    volume=_int((bar or {}).get("volume")) or 0,
+                    relative_volume=Decimal("0"),
+                    change_percent=Decimal("0"),
+                    change_dollars=Decimal("0"),
+                    prior_close=price,
+                    observed_at=observed,
+                    session_ok=session_ok,
+                )
+            )
+        return found
 
     def load(self, as_of: datetime) -> dict:
         global _bundle

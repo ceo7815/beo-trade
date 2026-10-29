@@ -138,10 +138,11 @@ class AlpacaPaperClient:
             raise AlpacaNotConfigured("נדרש API Key")
         # Injected transports are tests and one-off probes. They stay off the shared snapshot.
         self.shared_cache = (transport is None) if shared_cache is None else shared_cache
+        # Every read on the submit path uses this client. 8s, then the retry cap, then an exception.
         self._client = httpx.Client(
             base_url=self.base,
             headers=auth_headers(key, secret),
-            timeout=8.0,
+            timeout=httpx.Timeout(8.0),
             transport=transport,
         )
 

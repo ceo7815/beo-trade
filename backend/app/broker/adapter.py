@@ -76,6 +76,36 @@ class AlpacaAdapter:
     def get_activities(self, activity_types: str = "", after: str = "", until: str = "") -> list[dict]:
         return [normalize_activity(row) for row in self.client.activities(activity_types, after, until)]
 
+    def get_session_activities(self, session_date, *, max_pages: int = 4) -> list[dict]:
+        """Funding activities around one New York session. Does not walk the whole account.
+
+        Alpaca returns at most 100 rows per page. A full page asks for the next id,
+        and the page cap stops a token that never ends.
+        """
+        from app.analytics.finance import session_funding_query
+
+        types, after, until = session_funding_query(session_date)
+        found: list[dict] = []
+        token = ""
+        seen: set[str] = set()
+        pages = max(1, int(max_pages))
+        for index in range(pages):
+            page = self.client.activities(types, after=after, until=until, page_token=token)
+            if not isinstance(page, list) or not page:
+                break
+            chunk = page[:100]
+            found.extend(normalize_activity(row) for row in chunk)
+            if len(page) < 100:
+                break
+            token = str(chunk[-1].get("id") or "")
+            if not token or token in seen:
+                break
+            # A full last page means the window did not fit. Callers treat that as a failed read.
+            if index == pages - 1:
+                raise RuntimeError("Alpaca activity page cap reached")
+            seen.add(token)
+        return found
+
     def get_fills(self) -> list[dict]:
         fills = []
         for row in self.client.activities("FILL"):

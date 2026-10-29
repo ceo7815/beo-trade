@@ -85,8 +85,10 @@ def test_revalidation_quotes_do_not_reload_full_option_chain(monkeypatch):
     reset_theta_state()
     chain = _chain(FRESH)
     loads = {"full": 0}
+    paths: list[str] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
         path = request.url.path
         if path.endswith("/quote") and request.url.params.get("expiration") != "*":
             return httpx.Response(200, json=[chain["quote"]])
@@ -141,6 +143,8 @@ def test_revalidation_quotes_do_not_reload_full_option_chain(monkeypatch):
     quotes = loops._revalidation_quotes(_settings(), AS_OF, [buy])
     assert loads["full"] == 0
     assert len(quotes) == 1
+    assert not any("/history/" in path for path in paths)
+    assert "/v3/stock/snapshot/trade" in paths
 
 
 def test_stored_losses_ignore_fills_before_the_ny_session(tmp_path):
