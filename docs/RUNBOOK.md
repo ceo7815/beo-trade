@@ -59,3 +59,5 @@ curl -s -o /dev/null -w "%{http_code}\n" https://beo-trade.1wp.site/backend/api/
 `APP_ENV` נשאר `local`. מסד הריצה הוא SQLite על ה-volume `beo_data`, לא Supabase. `TRADING_MODE` נשאר `PAPER`. Redis עולה עם המערכת ומקבל `redis://redis:6379/0`. בלי מפתחות ספק אין נתוני שוק ואין BUY. בלי מחירי טוקנים אין קריאות AI.
 
 ספי הסריקה יושבים ב-`backend/app/config/trading.toml`. שעות הבורסה והחגים יושבים ב-`backend/app/config/market_calendar.json`.
+
+קצב כניסות (`entry_pace_enabled`, ברירת מחדל דולק, גרסה `v10.29-pacing`): לכל היותר 2 כניסות חדשות בחלון של 5 דקות, בלי ערבוב CALL ו-PUT באותו חלון, ואחרי סגירה בהפסד הצד ההפוך חסום ל-30 דקות. כיבוי: `entry_pace_enabled = false` ב-`trading.toml` ואז Restart. לא נוגע בסטופ, בטרייל, במתג, ברצפת היום, או בגודל.

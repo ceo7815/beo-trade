@@ -75,6 +75,18 @@ same_direction_window_minutes = 30
 # opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
 opening_entry_cap = 2
 opening_entry_until_minutes = 600
+# New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
+# mix inside that window, and after a losing close the opposite side waits 30 minutes.
+# The same side stays eligible. Pending buys count; a canceled buy does not.
+# Oct 7-28 in sample (16 sessions), with the opposite block measured after the first
+# loss only: about +$20,197 versus +$938, profit factor 1.38. The live rule starts a
+# fresh 30 minutes after every losing close. Set entry_pace_enabled to false to turn
+# all three off. Stops, the trail, the kill switch, the day floor, and size are unchanged.
+entry_pace_enabled = true
+entry_pace_window_minutes = 5
+entry_pace_max_entries = 2
+entry_pace_opposite_block_minutes = 30
+entry_rules_version = "v10.29-pacing"
 # Account day P&L, including open marks. 4,000 arms a floor of 2,000 and that floor holds through 6,999.
 # From 7,000 each extra 1,000 of peak lifts the floor by 1,000, through 15,000 which locks 11,000.
 # The floor never falls. Touching it sells everything and blocks new buys.

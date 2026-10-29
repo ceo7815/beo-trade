@@ -56,6 +56,9 @@ export const blockReasons: Record<string, string> = {
   REGIME_UNKNOWN: "מצב השוק לא ידוע",
   REGIME_STRESSED: "השוק לחוץ",
   REGIME_DIRECTION: "הכיוון לא מתאים",
+  ENTRY_RATE_CAP: "תקרת קצב כניסות בחלון",
+  SIDE_MIX_BLOCK: "אין ערבוב CALL ו-PUT בחלון",
+  POST_LOSS_OPPOSITE_BLOCK: "צד הפוך חסום אחרי הפסד",
 };
 
 export const copy = {
@@ -305,4 +308,10 @@ export const copy = {
 export function blockLabel(reason: string | null | undefined) {
   if (!reason) return copy.common.noData;
   return blockReasons[reason] || reason;
+}
+
+export function blockText(reason: string | null | undefined) {
+  if (!reason) return copy.common.noData;
+  const label = blockLabel(reason);
+  return label === reason ? reason : `${label} (${reason})`;
 }

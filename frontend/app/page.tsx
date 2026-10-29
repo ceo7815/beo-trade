@@ -8,7 +8,7 @@ import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
 import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
-import { copy } from "@/lib/copy";
+import { blockText, copy } from "@/lib/copy";
 import { money as usd, parseStamp, sessionStamp, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { regimeLine } from "@/lib/regime";
 import { Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
@@ -783,7 +783,7 @@ function flowOf(today: TodayReport | null, scan: Desk["last_scan"]): FlowEvent[]
         kind: "blocked",
         trade: null,
         title: item.symbol.replace(/\s+/g, " "),
-        lines: clauses(item.reason),
+        lines: clauses(item.reason).map((part) => blockText(part)),
       });
     }
   }
