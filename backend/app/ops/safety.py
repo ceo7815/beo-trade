@@ -35,6 +35,7 @@ OFFICIAL_POLICY = {
     "stop_loss_percent": 0.40,
     "opening_entry_cap": 2,
     "opening_entry_until_minutes": 600,
+    "entry_rules_version": "v10.29-pacing",
     "day_floor_arm": 4000,
     "day_floor_lock": 2000,
     "day_floor_steps": (

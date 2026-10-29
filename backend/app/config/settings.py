@@ -84,6 +84,13 @@ class TradingConfig:
     same_direction_window_minutes: int = 30
     opening_entry_cap: int = 2
     opening_entry_until_minutes: int = 600
+    # New buys only. A third submit inside the window is skipped, an opposite side
+    # inside that window is skipped, and a losing close blocks the other side for a while.
+    entry_pace_enabled: bool = True
+    entry_pace_window_minutes: int = 5
+    entry_pace_max_entries: int = 2
+    entry_pace_opposite_block_minutes: int = 30
+    entry_rules_version: str = "v10.29-pacing"
     # Account day P&L, including open marks. The first step arms 2,000 at 4,000.
     # From 7,000 the floor rises 1,000 per extra 1,000 of peak, through 15,000 / 11,000.
     day_floor_arm: int = 4000

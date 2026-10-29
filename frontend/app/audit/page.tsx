@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { copy } from "@/lib/copy";
+import { blockText, copy } from "@/lib/copy";
 import { apiGet, poll } from "@/lib/api";
 import { sessionStamp } from "@/lib/format";
 
@@ -54,9 +54,9 @@ export default function AuditPage() {
   const events: Line[] = (items || []).map((item, index) => ({
     key: `${item.trade_id}-${index}`,
     label: item.state || "אין נתונים",
-    value: item.reason || item.source || "אין נתונים",
+    value: item.reason ? blockText(item.reason) : item.source || "אין נתונים",
     when: sessionStamp(item.created_at, true),
-    explain: { title: item.state || "אירוע", does: "מעבר מצב שנשמר אחרי בדיקה, שליחה או מילוי.", formula: `מקור ${item.source || "אין נתונים"}\nסיבה ${item.reason || "אין נתונים"}\nדובאי ${sessionStamp(item.created_at, true)}\nמזהה ${item.trade_id || "אין נתונים"}` },
+    explain: { title: item.state || "אירוע", does: "מעבר מצב שנשמר אחרי בדיקה, שליחה או מילוי.", formula: `מקור ${item.source || "אין נתונים"}\nסיבה ${item.reason ? blockText(item.reason) : "אין נתונים"}\nדובאי ${sessionStamp(item.created_at, true)}\nמזהה ${item.trade_id || "אין נתונים"}` },
   }));
   const all = [...cubes, ...notes, ...events];
 

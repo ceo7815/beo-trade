@@ -944,6 +944,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         trading = settings.trading()
         same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
         opening_taken = opening_entries_taken(moment, trading.opening_entry_until_minutes)
+        from app.positions.entry_pace import entry_pace_reason, load_pace_book
+
+        pace_book = load_pace_book(moment, trading) if trading.entry_pace_enabled else None
         for row in buys:
             side = row.call_put.value
             if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
@@ -962,6 +965,16 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "DIRECTION_CONCENTRATION"})
                 continue
+            if trading.entry_pace_enabled:
+                pace_reason = entry_pace_reason(side, moment, pace_book, trading)
+                if pace_reason:
+                    with session_scope() as session:
+                        from app.broker.store import record_trade_event
+
+                        record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", pace_reason, row.recommendation_id)
+                        session.commit()
+                    outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": pace_reason})
+                    continue
             bucket = sector_key(row.underlying)
             sector_premium = Decimal(str(sectors.get(bucket, 0)))
             fresh = fresh_news(news, row.underlying, moment, settings.trading().news_max_age_seconds)
@@ -1044,7 +1057,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     )
                 )
                 try:
-                    place_order(
+                    placed = place_order(
                         settings,
                         session,
                         adapter,
@@ -1065,6 +1078,8 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     same_side[side] = same_side.get(side, 0) + 1
                     if opening_taken is not None:
                         opening_taken += 1
+                    if pace_book is not None and not (isinstance(placed, dict) and placed.get("duplicate")):
+                        pace_book.note_entry(side, moment)
                 except Exception as exc:
                     from app.ops.failure import log_failure
 
