@@ -30,7 +30,7 @@ FILL_LOOKBACK_DAYS = 21
 def write_last_scan(payload: dict) -> None:
     LAST_SCAN.parent.mkdir(parents=True, exist_ok=True)
     temporary = LAST_SCAN.with_suffix(".tmp")
-    temporary.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
     temporary.replace(LAST_SCAN)
 
 

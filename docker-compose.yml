@@ -98,7 +98,7 @@ services:
       resources:
         limits:
           cpus: "1.0"
-          memory: 768M
+          memory: 1536M
     # Liveness only. worker_heartbeat.txt is rewritten every loop, including a failed Alpaca read.
     # Cycle success is monitor_cycle.json last_success, which this check does not read.
     healthcheck:

@@ -170,6 +170,8 @@ def _latest_order_state(session, order_ids: list[str]) -> dict[str, str]:
 
 
 def _stored_losses(session, moment: datetime, minutes: int) -> list[LossStamp]:
+    from datetime import time
+
     from sqlalchemy import select
 
     from app.analytics.trades import round_trips
@@ -177,8 +179,13 @@ def _stored_losses(session, moment: datetime, minutes: int) -> list[LossStamp]:
 
     if minutes <= 0:
         return []
+    day_start = datetime.combine(_ny_date(moment), time.min, tzinfo=_NY).astimezone(timezone.utc)
     payloads: list[dict] = []
-    fills = session.scalars(select(BrokerFillRecord).order_by(BrokerFillRecord.observed_at.asc(), BrokerFillRecord.id.asc()))
+    fills = session.scalars(
+        select(BrokerFillRecord)
+        .where(BrokerFillRecord.observed_at >= day_start)
+        .order_by(BrokerFillRecord.observed_at.asc(), BrokerFillRecord.id.asc())
+    )
     for row in fills:
         payload = dict(row.payload) if isinstance(row.payload, dict) else {}
         if row.symbol and not payload.get("symbol"):
@@ -187,7 +194,7 @@ def _stored_losses(session, moment: datetime, minutes: int) -> list[LossStamp]:
             payload["execution_id"] = row.execution_id
         payloads.append(payload)
     closed = list(round_trips(payloads).get("closed") or [])
-    for trade in session.scalars(select(PaperTrade).where(PaperTrade.exit_at.is_not(None))):
+    for trade in session.scalars(select(PaperTrade).where(PaperTrade.exit_at.is_not(None), PaperTrade.exit_at >= day_start)):
         closed.append(
             {
                 "symbol": trade.option_symbol,

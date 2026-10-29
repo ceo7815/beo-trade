@@ -601,11 +601,22 @@ class ThetaFeed:
                     skipped.append((key, params))
                     continue
                 earlier = self._prior_rows(key, "/v3/stock/history/ohlc", params, required=False)
-                current = self._get(
-                    "/v3/stock/history/ohlc",
-                    {"symbol": symbol, "start_date": today, "end_date": today, "interval": "1m", "start_time": "09:30:00", "end_time": end_clock},
-                    required=False,
-                )
+                start_clock = "09:30:00"
+                if end_clock > start_clock:
+                    current = self._get(
+                        "/v3/stock/history/ohlc",
+                        {
+                            "symbol": symbol,
+                            "start_date": today,
+                            "end_date": today,
+                            "interval": "1m",
+                            "start_time": start_clock,
+                            "end_time": end_clock,
+                        },
+                        required=False,
+                    )
+                else:
+                    current = []
                 intraday[symbol] = [*_on_days(earlier, session_day, before=True), *_on_days(current, session_day, before=False)]
             self.request_stats["intraday_skipped"] = {"count": len(skipped)}
             if skipped:
@@ -672,6 +683,38 @@ class ThetaFeed:
         elif not options:
             _state.last_error = _state.last_error or "אין שרשרת אופציות"
         return options
+
+    def load_contract_options(self, as_of: datetime, contracts: list[tuple]) -> list[OptionSnapshot]:
+        """Live snapshots for named contracts only. Submit revalidation uses this instead of full chains."""
+        found: list[OptionSnapshot] = []
+        for underlying, expiration, strike, right in contracts:
+            symbol = str(underlying or "").strip().upper()
+            if not symbol or expiration is None or strike is None or right is None:
+                continue
+            params = {
+                "symbol": symbol,
+                "expiration": expiration.isoformat(),
+                "strike": format(strike, "f"),
+                "right": str(getattr(right, "value", right)).lower(),
+            }
+            quote_rows = self._get("/v3/option/snapshot/quote", params, required=False)
+            if not quote_rows:
+                continue
+            quote = quote_rows[0]
+            ohlc_rows = self._get("/v3/option/snapshot/ohlc", params, required=False)
+            interest_rows = self._get("/v3/option/snapshot/open_interest", params, required=False)
+            greek_rows = self._get("/v3/option/snapshot/greeks/all", params, required=False)
+            item = _option(
+                symbol,
+                quote,
+                ohlc_rows[0] if ohlc_rows else None,
+                interest_rows[0] if interest_rows else None,
+                greek_rows[0] if greek_rows else None,
+                as_of,
+            )
+            if item is not None:
+                found.append(item)
+        return found
 
     def _near_expirations(self, symbol: str, max_dte: int, as_of: datetime) -> list[str]:
         cached = self._listed_expirations.get(symbol)
