@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
-from zoneinfo import ZoneInfo
 
 from app.broker.normalize import parse_option_symbol
 from app.config.settings import TradingConfig
@@ -86,9 +85,18 @@ def realized_session_pnl(session, moment: datetime) -> Decimal:
 
     from app.models.tables import PaperTrade
 
-    started = moment.astimezone(ZoneInfo("America/New_York")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
+    from app.core.sessions import new_york_day_start
+
+    started = new_york_day_start(moment)
+    # One extra day in SQL only. The loop below still keeps New York midnight.
+    # A string-vs-offset mismatch must not drop today's closes.
     total = Decimal("0")
-    for trade in session.scalars(select(PaperTrade).where(PaperTrade.exit_at.is_not(None))):
+    for trade in session.scalars(
+        select(PaperTrade).where(
+            PaperTrade.exit_at.is_not(None),
+            PaperTrade.exit_at >= started - timedelta(days=1),
+        )
+    ):
         closed = trade.exit_at
         if closed is None or trade.pnl_dollars is None:
             continue
@@ -105,8 +113,15 @@ def underlyings_stopped_today(session, moment: datetime) -> set[str]:
 
     from app.models.tables import BrokerTradeEvent, PositionState
 
-    started = moment.astimezone(ZoneInfo("America/New_York")).replace(hour=0, minute=0, second=0, microsecond=0).astimezone(timezone.utc)
-    rows = session.scalars(select(BrokerTradeEvent).where(BrokerTradeEvent.state == "EXIT_TRIGGERED"))
+    from app.core.sessions import new_york_day_start
+
+    started = new_york_day_start(moment)
+    rows = session.scalars(
+        select(BrokerTradeEvent).where(
+            BrokerTradeEvent.state == "EXIT_TRIGGERED",
+            BrokerTradeEvent.created_at >= started - timedelta(days=1),
+        )
+    )
     events: list[tuple[str, str]] = []
     underlying_of: dict[str, str] = {}
     for event in rows:

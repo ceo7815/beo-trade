@@ -120,15 +120,28 @@ def _stored_entries(session, moment: datetime, window_minutes: int) -> list[Entr
 
     if window_minutes <= 0:
         return []
+    from app.core.sessions import new_york_day_start
+
+    # Yesterday is included so a timestamp stored without an offset is not dropped.
+    # The window check below is what decides which buys count.
+    day_start = new_york_day_start(moment) - timedelta(days=1)
     rows = list(
         session.scalars(
             select(BrokerOrderRecord)
-            .where(BrokerOrderRecord.position_intent == "buy_to_open")
+            .where(
+                BrokerOrderRecord.position_intent == "buy_to_open",
+                BrokerOrderRecord.created_at >= day_start,
+            )
             .order_by(BrokerOrderRecord.created_at.desc())
             .limit(500)
         )
     )
-    latest = _latest_order_state(session, [str(row.broker_order_id or "") for row in rows])
+    in_window = [row for row in rows if row.created_at is not None and _in_window(_aware(row.created_at), moment, window_minutes)]
+    latest = _latest_order_state(
+        session,
+        [str(row.broker_order_id or "") for row in in_window],
+        new_york_day_start(moment) - timedelta(days=1),
+    )
     found: list[EntryStamp] = []
     for row in rows:
         if row.created_at is None:
@@ -148,7 +161,12 @@ def _stored_entries(session, moment: datetime, window_minutes: int) -> list[Entr
     return found
 
 
-def _latest_order_state(session, order_ids: list[str]) -> dict[str, str]:
+def _latest_order_state(session, order_ids: list[str], since: datetime) -> dict[str, str]:
+    """Latest state for these orders. The payload column is not loaded.
+
+    Snapshots are one row per reconcile. Selecting the JSON payload for every
+    historical order was enough to exhaust the worker during submit.
+    """
     from sqlalchemy import select
 
     from app.models.tables import BrokerOrderSnapshot
@@ -157,15 +175,21 @@ def _latest_order_state(session, order_ids: list[str]) -> dict[str, str]:
     if not ids:
         return {}
     found: dict[str, str] = {}
-    rows = session.scalars(
-        select(BrokerOrderSnapshot)
-        .where(BrokerOrderSnapshot.broker_order_id.in_(ids))
+    rows = session.execute(
+        select(
+            BrokerOrderSnapshot.broker_order_id,
+            BrokerOrderSnapshot.internal_state,
+        )
+        .where(
+            BrokerOrderSnapshot.broker_order_id.in_(ids),
+            BrokerOrderSnapshot.observed_at >= since,
+        )
         .order_by(BrokerOrderSnapshot.observed_at.desc())
     )
-    for row in rows:
-        key = str(row.broker_order_id or "")
+    for broker_order_id, internal_state in rows:
+        key = str(broker_order_id or "")
         if key and key not in found:
-            found[key] = str(row.internal_state or "")
+            found[key] = str(internal_state or "")
     return found
 
 

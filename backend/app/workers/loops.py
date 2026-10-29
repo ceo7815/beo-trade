@@ -364,16 +364,18 @@ def _load_tracked_day(settings: Settings, adapter, moment: datetime):
     if not isinstance(account, dict):
         return None, None, False
     try:
-        activities = adapter.get_activities()
+        from app.analytics.finance import read_session_funding
+        from zoneinfo import ZoneInfo
+
+        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+        activities = read_session_funding(adapter, session_date)
     except Exception:
         return None, None, False
     if not isinstance(activities, list):
         return None, None, False
     try:
         from app.analytics.finance import trading_day_pnl
-        from zoneinfo import ZoneInfo
 
-        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
         pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
     except Exception:
         return None, None, False
@@ -582,9 +584,14 @@ def _revalidation_quotes(settings: Settings, live: datetime, buys) -> list:
         raise ProviderUnavailable("אין ספק שוק")
     underlyings_held = tuple(dict.fromkeys(row.underlying for row in buys))
     feed = getattr(providers.market, "feed", None)
-    if feed is not None and hasattr(feed, "bind_symbols"):
-        feed.bind_symbols(underlyings_held)
-    underlyings = {row.symbol: row for row in providers.market.load_underlyings(live)}
+    # Spot only. load_underlyings rebuilds a month of minute bars and the context names.
+    spots = getattr(feed, "load_spots", None)
+    if callable(spots):
+        underlyings = {row.symbol: row for row in spots(underlyings_held, live)}
+    else:
+        if feed is not None and hasattr(feed, "bind_symbols"):
+            feed.bind_symbols(underlyings_held)
+        underlyings = {row.symbol: row for row in providers.market.load_underlyings(live)}
     contracts = [(row.underlying, row.expiration, Decimal(str(row.strike)), row.call_put) for row in buys]
     if feed is not None and hasattr(feed, "load_contract_options"):
         loaded = feed.load_contract_options(live, contracts)
@@ -734,9 +741,12 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
         adapter = open_paper_broker(settings)
     except (AlpacaNotConfigured, PaperOnlyError):
         return None
+    from app.analytics.finance import read_session_funding
+
+    session_date = datetime.now(timezone.utc).astimezone(exchange_zone(settings.calendar())).date()
     try:
         account = adapter.get_account()
-        activities = adapter.get_activities()
+        activities = read_session_funding(adapter, session_date)
     except Exception as exc:
         from app.ops.failure import log_failure
 
@@ -744,7 +754,6 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
         return None
     finally:
         adapter.close()
-    session_date = datetime.now(timezone.utc).astimezone(exchange_zone(settings.calendar())).date()
     return trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
 
 
@@ -832,10 +841,19 @@ def opening_entries_taken(moment: datetime, until_minutes: int) -> int | None:
 
     if not database_ready():
         return None
+    from app.core.sessions import new_york_day_start
+
     local_day = _new_york(moment).date()
+    # One extra day in SQL. The New York date check below is unchanged.
+    day_start = new_york_day_start(moment) - timedelta(days=1)
     taken = 0
     with session_scope() as session:
-        rows = session.scalars(select(BrokerOrderRecord).where(BrokerOrderRecord.position_intent == "buy_to_open"))
+        rows = session.scalars(
+            select(BrokerOrderRecord).where(
+                BrokerOrderRecord.position_intent == "buy_to_open",
+                BrokerOrderRecord.created_at >= day_start,
+            )
+        )
         for row in rows:
             if row.created_at is None or str(row.status or "").lower() in DEAD_ORDER_STATES:
                 continue
@@ -867,6 +885,51 @@ def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     return book
 
 
+def _flush_logs() -> None:
+    import sys
+
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.flush()
+        except Exception:
+            pass
+
+
+def _memory_fields() -> dict:
+    try:
+        from app.ops.memory import step_memory
+
+        return step_memory()
+    except Exception:
+        return {}
+
+
+def _submit_step(log, step: str, **fields) -> None:
+    """One line per submit stage. rss_mb and cgroup memory.current are on every line."""
+    safe = {key: value for key, value in fields.items() if value is None or isinstance(value, (str, int, float, bool))}
+    try:
+        log.info("worker.submit_step", service="worker", step=step, **_memory_fields(), **safe)
+    except Exception:
+        log.info("worker.submit_step", service="worker", step=step, **safe)
+    _flush_logs()
+
+
+_TIMEOUT_NAMES = frozenset({
+    "TimeoutException",
+    "ConnectTimeout",
+    "ReadTimeout",
+    "WriteTimeout",
+    "PoolTimeout",
+})
+
+
+def _is_timeout(exc: BaseException) -> bool:
+    """Alpaca, Theta, and Benzinga timeouts. Matched by class name so this module stays free of an HTTP client."""
+    if isinstance(exc, TimeoutError):
+        return True
+    return any(cls.__name__ in _TIMEOUT_NAMES for cls in type(exc).__mro__)
+
+
 def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetime, outcomes: list[dict] | None = None) -> None:
     buys = [row for row in recommendations if getattr(row.decision, "value", row.decision) == "BUY"]
     if not buys:
@@ -875,13 +938,21 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     import structlog
 
     log = structlog.get_logger()
-    log.info("worker.submit_started", service="worker", buy_count=len(buys))
+    log.info("worker.submit_started", service="worker", buy_count=len(buys), **_memory_fields())
+    _flush_logs()
+    try:
+        from app.providers.thetadata import release_quote_bundle
+
+        release_quote_bundle()
+    except Exception:
+        pass
 
     def blocked_all(reason: str) -> None:
         from app.broker.store import record_trade_event
         from app.models.db import session_scope
 
-        log.info("worker.submit_blocked_all", service="worker", reason=reason, buy_count=len(buys))
+        log.info("worker.submit_blocked_all", service="worker", reason=reason, buy_count=len(buys), **_memory_fields())
+        _flush_logs()
         for row in buys:
             outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
             with session_scope() as session:
@@ -891,6 +962,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     from app.options.account_read import entry_block_reason
 
     unavailable = entry_block_reason()
+    _submit_step(log, "entry_block_reason", blocked=unavailable or "")
     if unavailable:
         blocked_all(unavailable)
         return
@@ -905,20 +977,29 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
 
     try:
         providers = build_providers(settings)
+        _submit_step(log, "build_providers", market=getattr(providers.market, "name", ""), news=getattr(providers.news, "name", ""))
         symbols = tuple(dict.fromkeys(row.underlying for row in buys))
         # Revalidate only the BUY contracts, not the full scan chain.
         live = datetime.now(timezone.utc)
         quotes = _revalidation_quotes(settings, live, buys)
+        _submit_step(log, "_revalidation_quotes", quotes=len(quotes))
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
+        _submit_step(log, "news", articles=len(news))
     except Exception as exc:
         from app.ops.failure import log_failure
 
         log_failure("worker.scan_caught", exc, service="worker", where="revalidation")
-        blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
+        if _is_timeout(exc):
+            blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+        else:
+            blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
+    _submit_step(log, "_cash", equity_ready=equity is not None)
     pnl = _entry_pnl(settings)
+    _submit_step(log, "_entry_pnl", pnl_ready=pnl is not None)
     sectors = _measured_sectors(settings)
+    _submit_step(log, "_measured_sectors", sectors_ready=sectors is not None, sectors=0 if sectors is None else len(sectors))
     if equity is None or pnl is None or sectors is None:
         blocked_all("ACCOUNT_DATA_MISSING")
         return
@@ -928,10 +1009,23 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
     except (AlpacaNotConfigured, PaperOnlyError):
         blocked_all("BROKER_UNAVAILABLE")
         return
+    except Exception as exc:
+        if _is_timeout(exc):
+            blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+            return
+        raise
     try:
-        clock = adapter.get_market_clock()
+        _submit_step(log, "open_paper_broker")
+        try:
+            clock = adapter.get_market_clock()
+        except Exception as exc:
+            if _is_timeout(exc):
+                blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+                return
+            raise
         session_open = clock.get("is_open") is True
         window_open = entry_window_open(settings, clock, datetime.now(timezone.utc))
+        _submit_step(log, "clock", is_open=session_open, entry_window_open=window_open)
         try:
             positions = list(adapter.get_positions())
             open_orders = list(adapter.get_orders("open"))
@@ -939,8 +1033,12 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             from app.ops.failure import log_failure
 
             log_failure("worker.scan_caught", exc, service="worker", where="broker_positions")
-            blocked_all("BROKER_POSITIONS_UNAVAILABLE")
+            if _is_timeout(exc):
+                blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+            else:
+                blocked_all("BROKER_POSITIONS_UNAVAILABLE")
             return
+        _submit_step(log, "positions_orders", positions=len(positions), open_orders=len(open_orders))
         open_premium = _open_premium(positions, open_orders, settings.trading().contract_multiplier)
         if open_premium is None:
             blocked_all("OPEN_PREMIUM_UNKNOWN")
@@ -956,24 +1054,47 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             for stored in session.scalars(select(PositionState).where(PositionState.status == "open")):
                 state_risk[stored.symbol.replace(" ", "")] = Decimal(str(stored.planned_risk))
             failed_underlyings = underlyings_stopped_today(session, moment)
-        account = adapter.get_account()
+        _submit_step(log, "position_state", open_states=len(state_risk), stopped_underlyings=len(failed_underlyings))
+        try:
+            account = adapter.get_account()
+        except Exception as exc:
+            if _is_timeout(exc):
+                blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+                return
+            raise
+        _submit_step(log, "get_account", equity_ready=account.get("equity") not in {None, ""})
         if account.get("equity") not in {None, ""}:
             equity = Decimal(str(account["equity"]))
         from app.analytics.finance import trading_day_pnl
         from app.options.day_floor import observe_day_floor
         from zoneinfo import ZoneInfo
 
+        from app.analytics.finance import read_session_funding, session_funding_query
+
+        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+        _types, activity_after, activity_until = session_funding_query(session_date)
         activities = None
         try:
-            activities = adapter.get_activities()
+            activities = read_session_funding(adapter, session_date)
         except Exception as exc:
             from app.ops.failure import log_failure
 
             log_failure("worker.scan_caught", exc, service="worker", where="activities")
+            if _is_timeout(exc):
+                blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
+                return
             activities = None
-        session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+        _submit_step(
+            log,
+            "get_activities",
+            activity_count=0 if activities is None else len(activities),
+            activity_after=activity_after,
+            activity_until=activity_until,
+        )
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        _submit_step(log, "trading_day_pnl", pnl_ready=measured is not None)
         floor = observe_day_floor(settings, measured, moment, session_open)
+        _submit_step(log, "day_floor", closed=bool(floor.get("closed")), reason=str(floor.get("reason") or ""))
         if session_open and not floor.get("closed"):
             floor = _latch_kill(settings, account, measured, moment, floor)
         if floor.get("closed"):
@@ -991,6 +1112,14 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         from app.positions.entry_pace import entry_pace_reason, load_pace_book
 
         pace_book = load_pace_book(moment, trading) if trading.entry_pace_enabled else None
+        _submit_step(
+            log,
+            "load_pace_book",
+            enabled=bool(trading.entry_pace_enabled),
+            readable=pace_book is not None and bool(getattr(pace_book, "readable", False)),
+            entries=0 if pace_book is None else len(pace_book.entries),
+            losses=0 if pace_book is None else len(pace_book.losses),
+        )
         for row in buys:
             side = row.call_put.value
             if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
@@ -1000,6 +1129,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "OPENING_CAP", row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CAP"})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CAP")
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
@@ -1008,6 +1138,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "DIRECTION_CONCENTRATION", row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "DIRECTION_CONCENTRATION"})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="DIRECTION_CONCENTRATION")
                 continue
             if trading.entry_pace_enabled:
                 pace_reason = entry_pace_reason(side, moment, pace_book, trading)
@@ -1018,6 +1149,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", pace_reason, row.recommendation_id)
                         session.commit()
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": pace_reason})
+                    _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=pace_reason)
                     continue
             bucket = sector_key(row.underlying)
             sector_premium = Decimal(str(sectors.get(bucket, 0)))
@@ -1063,7 +1195,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     )
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=reason)
                 continue
+            _submit_step(log, "row_gate", symbol=row.option_symbol, result="ready", quantity=int(decision.quantity))
             row.quantity = decision.quantity
             added = Decimal(str(row.ask)) * Decimal(row.quantity) * Decimal(settings.trading().contract_multiplier)
             open_orders.append(
@@ -1100,6 +1234,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         created_at=moment,
                     )
                 )
+                _submit_step(log, "place_order", symbol=row.option_symbol, quantity=int(row.quantity))
                 try:
                     placed = place_order(
                         settings,
@@ -1119,6 +1254,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         quotes,
                     )
                     outcomes.append({"symbol": row.option_symbol, "result": "submitted", "reason": ""})
+                    _submit_step(log, "place_order_done", symbol=row.option_symbol, result="submitted")
                     same_side[side] = same_side.get(side, 0) + 1
                     if opening_taken is not None:
                         opening_taken += 1
@@ -1128,7 +1264,9 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     from app.ops.failure import log_failure
 
                     log_failure("worker.scan_caught", exc, service="worker", where="place_order")
-                    outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": str(exc)[:300]})
+                    reason = f"SUBMIT_TIMEOUT: {type(exc).__name__}" if _is_timeout(exc) else str(exc)[:300]
+                    outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+                    _submit_step(log, "place_order_done", symbol=row.option_symbol, result="blocked", reason=reason[:120])
                 session.commit()
     finally:
         adapter.close()

@@ -82,6 +82,8 @@ services:
       - .env
     environment:
       <<: *paper-env
+      # Image already sets this. Repeat it so a compose env override cannot buffer the submit log.
+      PYTHONUNBUFFERED: "1"
       THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
     volumes:
       - beo_data:/app/data
@@ -94,6 +96,10 @@ services:
     stop_grace_period: 30s
     restart: unless-stopped
     logging: *default-logging
+    # deploy.resources is ignored by some `docker compose up` hosts (including older XCloud).
+    # mem_limit is the key that plain Compose applies. memswap_limit matches it so swap cannot grow past 1536M.
+    mem_limit: 1536m
+    memswap_limit: 1536m
     deploy:
       resources:
         limits:

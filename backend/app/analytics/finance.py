@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from decimal import Decimal
 from statistics import median
 from zoneinfo import ZoneInfo
@@ -47,6 +47,29 @@ def _activity_day(stamp: object) -> date | None:
         except ValueError:
             return None
     return None
+
+
+def session_funding_query(session_date: date) -> tuple[str, str, str]:
+    """Alpaca activity window that contains the New York session and no other history.
+
+    `after` and `until` are calendar dates. One day on each side covers both
+    inclusive and exclusive readings of those parameters. trading_day_pnl
+    still keeps only rows whose own date is the session.
+    """
+    types = ",".join(sorted(FUNDING_ACTIVITY_TYPES))
+    after = (session_date - timedelta(days=1)).isoformat()
+    until = (session_date + timedelta(days=1)).isoformat()
+    return types, after, until
+
+
+def read_session_funding(adapter, session_date: date) -> list[dict]:
+    """Funding rows for one session. A test double without the bounded reader keeps get_activities()."""
+    reader = getattr(adapter, "get_session_activities", None)
+    if callable(reader):
+        rows = reader(session_date)
+    else:
+        rows = adapter.get_activities()
+    return list(rows) if isinstance(rows, list) else []
 
 
 def trading_day_pnl(equity: object, last_equity: object, activities: list[dict] | None, session_date: date) -> Decimal | None:

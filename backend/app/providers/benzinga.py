@@ -18,6 +18,8 @@ NEWS_URL = "https://api.benzinga.com/api/v2/news"
 # alone cannot satisfy the two-source rule.
 BENZINGA_CREDIBILITY = Decimal("0.75")
 PAGE_SIZE = 50
+# A hung publisher must raise, not sit inside submit until the process is killed.
+REQUEST_TIMEOUT_SECONDS = 20.0
 
 
 class BenzingaError(RuntimeError):
@@ -222,7 +224,7 @@ class BenzingaNewsProvider:
             params["updatedSince"] = cursor
         fetched_at = _iso(datetime.now(timezone.utc))
         try:
-            with httpx.Client(transport=self.transport, timeout=20) as client:
+            with httpx.Client(transport=self.transport, timeout=httpx.Timeout(REQUEST_TIMEOUT_SECONDS)) as client:
                 response = client.get(
                     NEWS_URL,
                     params=params,
