@@ -259,7 +259,7 @@ def _latch_released_audit() -> dict:
 
         if not database_ready() or SessionLocal is None:
             return {"available": False, "exists": False}
-        entity_id = f"latch-rel:{FALSE_HARD_STOP_RELEASE_DATE}"[:36]
+        entity_id = f"latch-rel2:{FALSE_HARD_STOP_RELEASE_DATE}"[:36]
         with SessionLocal() as session:
             row = session.scalar(
                 select(AuditLog).where(

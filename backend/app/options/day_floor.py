@@ -105,7 +105,9 @@ FALSE_HARD_STOP_RELEASE_REASON = (
 def _release_marker_path():
     from app.ops.paths import DATA_DIR
 
-    return DATA_DIR / f"day_floor_false_hs_released_{FALSE_HARD_STOP_RELEASE_DATE}"
+    # v2: the first release (14:29Z) was re-latched within a minute by the pre-#27 raw-mark path
+    # (-4152.52, before bug lots were excluded in the worker). Allow exactly one more release, same conditions.
+    return DATA_DIR / f"day_floor_false_hs_released_{FALSE_HARD_STOP_RELEASE_DATE}_v2"
 
 
 def maybe_release_false_hard_stop(
@@ -221,7 +223,7 @@ def _audit_latch_released(session_date: str, adjusted_pnl: Decimal) -> None:
 
         if not database_ready() or SessionLocal is None:
             return
-        entity_id = f"latch-rel:{session_date}"[:36]
+        entity_id = f"latch-rel2:{session_date}"[:36]
         with SessionLocal() as session:
             prior = session.scalar(
                 select(AuditLog).where(
