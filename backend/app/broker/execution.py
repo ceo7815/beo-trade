@@ -337,7 +337,14 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
         activities = read_session_funding(adapter, session_date)
     except Exception:
         return None
+    from app.trades.exclusion import adjust_day_pnl
+
+    try:
+        held = adapter.get_positions()
+    except Exception:
+        held = []
     pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+    pnl = adjust_day_pnl(pnl, held if isinstance(held, list) else [])
     equity = _decimal(account.get("equity"))
     if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":
         return None

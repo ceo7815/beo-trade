@@ -68,7 +68,13 @@ def init_db(settings: Settings) -> None:
                     paper_starting_cash=opening,
                 )
             )
-            session.commit()
+        try:
+            from app.trades.exclusion import ensure_seeded
+
+            ensure_seeded(session)
+        except Exception:
+            pass
+        session.commit()
 
 
 def session_scope() -> Session:

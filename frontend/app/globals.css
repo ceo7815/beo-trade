@@ -328,6 +328,13 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   color: var(--mint);
 }
 
+.badge.bug {
+  background: rgba(255, 154, 154, 0.16);
+  color: #ffb4b4;
+  margin-inline-start: 6px;
+  vertical-align: middle;
+}
+
 .nav-link:hover,
 .nav-link.active {
   background: rgba(231, 201, 138, 0.1);

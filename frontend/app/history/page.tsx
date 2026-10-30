@@ -10,6 +10,7 @@ import { apiGet, holdScreen, poll } from "@/lib/api";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
+
 type Plan = {
   thesis?: string | null;
   invalidation?: string | null;
@@ -53,6 +54,9 @@ type Trade = {
   exit_detail?: string | null;
   plan?: Plan | null;
   story?: Story | null;
+  bug_trade?: boolean;
+  excluded?: boolean;
+  bug_label?: string;
 };
 
 type Summary = {
@@ -169,7 +173,7 @@ function dayStats(trades: Trade[]) {
   let wins = 0;
   let losses = 0;
   for (const trade of trades) {
-    const result = num(trade.pnl) ?? 0;
+    const result = trade.bug_trade || trade.excluded ? 0 : (num(trade.pnl) ?? 0);
     pnl += result;
     invested += num(trade.invested) ?? 0;
     if (result > 0) wins += 1;
@@ -202,7 +206,7 @@ function byDay(trades: Trade[]) {
       groups.push(group);
     }
     group.trades.push(trade);
-    group.pnl += num(trade.pnl) ?? 0;
+    group.pnl += trade.bug_trade || trade.excluded ? 0 : (num(trade.pnl) ?? 0);
   }
   return groups;
 }
@@ -352,7 +356,7 @@ export default function HistoryPage() {
                 <button key={`${trade.symbol}-${trade.opened_at}`} type="button" className="desk-pos" onClick={() => setOpen(trade)}>
                   <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
                   <span>{px(trade.entry_price)} → {px(trade.current_price)} · פתוחה</span>
-                  <strong className={`num ${tone(trade.unrealized_pnl)}`}>{signed(trade.unrealized_pnl)}<small>{pct(trade.return_pct)}</small></strong>
+                  <strong className={`num ${tone(trade.bug_trade || trade.excluded ? "0" : trade.unrealized_pnl)}`}>{trade.bug_trade || trade.excluded ? <><span className="badge bug">{trade.bug_label || "עסקת באג"}</span> {signed("0")}</> : <>{signed(trade.unrealized_pnl)}<small>{pct(trade.return_pct)}</small></>}</strong>
                 </button>
               ))}
             </div>
@@ -378,7 +382,7 @@ export default function HistoryPage() {
                   <button key={`${trade.symbol}-${trade.closed_at}`} type="button" className="desk-pos" onClick={() => setOpen(trade)}>
                     <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
                     <span>{px(trade.entry_price)} → {px(trade.exit_price)} · {reason(trade)}</span>
-                    <strong className={`num ${tone(trade.pnl)}`}>{signed(trade.pnl)}<small>{pct(trade.return_pct)}</small></strong>
+                    <strong className={`num ${tone(trade.bug_trade || trade.excluded ? "0" : trade.pnl)}`}>{trade.bug_trade || trade.excluded ? <><span className="badge bug">{trade.bug_label || "עסקת באג"}</span> {signed("0")}</> : <>{signed(trade.pnl)}<small>{pct(trade.return_pct)}</small></>}</strong>
                   </button>
                 ))}
               </div>

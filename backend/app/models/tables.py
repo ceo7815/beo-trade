@@ -558,6 +558,22 @@ class BrokerTradeEvent(Base):
     created_at: Mapped[datetime] = mapped_column(UtcDateTime(), default=_now)
 
 
+class TradeExclusion(Base):
+    """A trade lot left out of risk/P&L/stats after a system bug. Still exits at the broker."""
+
+    __tablename__ = "trade_exclusions"
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    symbol: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    quantity: Mapped[int] = mapped_column(nullable=False)
+    entry_price: Mapped[float] = mapped_column(Numeric(18, 6), nullable=False)
+    entry_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    entry_before: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    reason: Mapped[str] = mapped_column(Text, default="")
+    active: Mapped[bool] = mapped_column(nullable=False, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, onupdate=_now)
+
+
 class AIFingerprintLock(Base):
     __tablename__ = "ai_fingerprint_locks"
     fingerprint: Mapped[str] = mapped_column(String(64), primary_key=True)

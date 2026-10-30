@@ -118,7 +118,9 @@ def register(app: FastAPI, settings: Settings) -> None:
             finally:
                 adapter.close()
             _snapshot(lambda session: remember_positions(session, items))
-            return {"environment": "PAPER", "source": "alpaca-paper", "items": items}
+            from app.trades.exclusion import annotate_positions
+
+            return {"environment": "PAPER", "source": "alpaca-paper", "items": annotate_positions(items)}
 
         return _cached_broker(("positions",), load)
 

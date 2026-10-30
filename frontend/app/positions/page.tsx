@@ -24,6 +24,9 @@ type BrokerPosition = {
   cost_basis?: string;
   unrealized_pl?: string;
   unrealized_plpc?: string;
+  bug_trade?: boolean;
+  excluded?: boolean;
+  bug_label?: string;
 };
 
 type Levels = {
@@ -71,6 +74,9 @@ type ClosedTrade = {
   entry_price?: string | null;
   exit_price?: string | null;
   pnl?: string | null;
+  bug_trade?: boolean;
+  excluded?: boolean;
+  bug_label?: string;
   return_pct?: string | null;
   opened_at?: string | null;
   closed_at?: string | null;
@@ -245,7 +251,9 @@ export default function PositionsPage() {
   const items = fromLive ? ((live.snap?.positions?.items as BrokerPosition[]) || []) : (positions ?? []);
   const ready = Boolean(fromLive) || positions !== null;
   const cost = items.reduce((sum, item) => sum + Math.abs(num(item.cost_basis) ?? 0), 0);
-  const open = items.every((item) => num(item.unrealized_pl) !== null) ? items.reduce((sum, item) => sum + (num(item.unrealized_pl) ?? 0), 0) : null;
+  const open = items.every((item) => item.bug_trade || item.excluded || num(item.unrealized_pl) !== null)
+    ? items.reduce((sum, item) => sum + (item.bug_trade || item.excluded ? 0 : (num(item.unrealized_pl) ?? 0)), 0)
+    : null;
   const exposure = items.reduce((sum, item) => sum + Math.abs(num(item.market_value) ?? 0), 0);
   const limit = num(risk?.exposure_limit);
   const atStops = items.map((item) => num(tradeOf(item.symbol)?.levels?.pnl_at_active_exit)).filter((value): value is number => value !== null);
@@ -320,9 +328,9 @@ export default function PositionsPage() {
                     trade: { symbol: trade.symbol, opened_at: trade.opened_at, story: trade.story ?? null, closed_at: trade.closed_at },
                   })}
                 >
-                  <b>{trade.underlying || "—"} <small>{trade.right}</small></b>
+                  <b>{trade.underlying || "—"} <small>{trade.right}</small>{trade.bug_trade || trade.excluded ? <span className="badge bug">{trade.bug_label || "עסקת באג"}</span> : null}</b>
                   <span>{px(trade.entry_price)} → {px(trade.exit_price)} · {exitLabel(trade.exit_reason)}</span>
-                  <strong className={`num ${tone(num(trade.pnl))}`}>{signedMoney(num(trade.pnl))}<small>{signedPct(num(trade.return_pct))}</small></strong>
+                  <strong className={`num ${tone(trade.bug_trade || trade.excluded ? 0 : num(trade.pnl))}`}>{signedMoney(trade.bug_trade || trade.excluded ? 0 : num(trade.pnl))}<small>{signedPct(trade.bug_trade || trade.excluded ? 0 : num(trade.return_pct))}</small></strong>
                 </button>
               ))}
             </div>
@@ -398,8 +406,9 @@ function Stat({ label, value, roll, sub, className = "" }: { label: string; valu
 
 function Card({ position, trade, now, sessionClose, points, onOpen }: { position: BrokerPosition; trade: OpenTrade | null; now: number; sessionClose: number | null; points: number[]; onOpen: () => void }) {
   const levels = trade?.levels?.available ? trade.levels : null;
-  const pnl = num(position.unrealized_pl);
-  const pct = num(position.unrealized_plpc);
+  const bug = Boolean(position.bug_trade || position.excluded);
+  const pnl = bug ? 0 : num(position.unrealized_pl);
+  const pct = bug ? 0 : num(position.unrealized_plpc);
   const current = num(position.current_price);
   const active = num(levels?.active_exit);
   const stage = levels?.stage ?? "AT_RISK";
@@ -413,7 +422,7 @@ function Card({ position, trade, now, sessionClose, points, onOpen }: { position
     <article className={`live-card ${stage.toLowerCase()} ${flash === "up" ? "fu" : flash === "down" ? "fd" : ""} ${stage === "TRAILING" ? "row-event" : ""}`}>
       <header>
         <div>
-          <h2 className="num">{position.underlying} {position.right} {position.strike}</h2>
+          <h2 className="num">{position.underlying} {position.right} {position.strike}{bug ? <span className="badge bug">{position.bug_label || "עסקת באג"}</span> : null}</h2>
           <p>
             {position.qty} חוזים · {expiryLabel(levels?.dte)}
             {opened ? ` · נפתחה ${clock(opened)} (לפני ${span(now - opened)})` : ""}
