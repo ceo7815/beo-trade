@@ -403,6 +403,11 @@ def run_scan(
                 ledger.buy_count += 1
                 active_symbols.add(recommendation.option_symbol)
         results.append(recommendation)
+    suppress_reasons: dict[str, int] = {}
+    for recommendation in results:
+        if recommendation.decision is not DecisionKind.BUY:
+            key = recommendation.suppress_reason or "UNSPECIFIED"
+            suppress_reasons[key] = suppress_reasons.get(key, 0) + 1
     if counts is not None:
         counts.update(
             {
@@ -416,6 +421,7 @@ def run_scan(
                 "ai_failures": ai_failures,
                 "buys": buys,
                 "decisions": len(results),
+                "suppress_reasons": suppress_reasons,
             }
         )
     return results

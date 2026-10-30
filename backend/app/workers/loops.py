@@ -797,24 +797,32 @@ def _broker_positions(settings: Settings) -> list[dict] | None:
 
 
 def _entry_pnl(settings: Settings) -> Decimal | None:
-    """Block new buys on the worse of the account mark and closed P&L since midnight in New York."""
+    """Worse of the adjusted account mark and adjusted closed P&L since New York midnight.
+
+    Both figures omit excluded bug lots, then the lower one blocks a new buy.
+    An unreadable account, activity list, or position list returns None so the
+    gate blocks. It does not treat that day as flat.
+    """
     from app.models.db import database_ready, session_scope
     from app.options.risk_limits import entry_pnl
-    from app.positions.admission import realized_session_pnl
+    from app.trades.exclusion import adjusted_realized_session_pnl
 
     mark = _measured_pnl(settings)
+    if mark is None:
+        return None
     realized = None
     if database_ready():
         with session_scope() as session:
-            realized = realized_session_pnl(session, datetime.now(timezone.utc))
+            realized = adjusted_realized_session_pnl(session, datetime.now(timezone.utc))
     return entry_pnl(mark, realized)
 
 
 def _measured_pnl(settings: Settings) -> Decimal | None:
-    from app.analytics.finance import trading_day_pnl
+    """Bug-adjusted account day mark. None when account, activities, or positions cannot be read."""
     from app.broker.runtime import open_paper_broker
     from app.core.sessions import exchange_zone
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
+    from app.trades.exclusion import compute_adjusted_day_pnl
 
     try:
         adapter = open_paper_broker(settings)
@@ -826,6 +834,16 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
     try:
         account = adapter.get_account()
         activities = read_session_funding(adapter, session_date)
+        positions = adapter.get_positions()
+        if not isinstance(account, dict) or not isinstance(activities, list) or not isinstance(positions, list):
+            return None
+        return compute_adjusted_day_pnl(
+            account.get("equity"),
+            account.get("last_equity"),
+            positions,
+            session_date,
+            activities=activities,
+        )
     except Exception as exc:
         from app.ops.failure import log_failure
 
@@ -833,7 +851,6 @@ def _measured_pnl(settings: Settings) -> Decimal | None:
         return None
     finally:
         adapter.close()
-    return trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
 
 
 def entry_window_open(settings: Settings, clock: dict, moment: datetime) -> bool:

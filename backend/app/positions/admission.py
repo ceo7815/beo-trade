@@ -79,8 +79,12 @@ def names_blocked_after_exit(events: list[tuple[str, str]], underlying_of: dict[
     return blocked
 
 
-def realized_session_pnl(session, moment: datetime) -> Decimal:
-    """Closed paper P&L since New York midnight. Open marks are not included."""
+def realized_session_pnl(session, moment: datetime, exclusions: list | None = None) -> Decimal:
+    """Closed paper P&L since New York midnight. Open marks are not included.
+
+    `exclusions` drops matching bug lots from the sum only. The rows stay stored.
+    Omit it and every close counts, as before.
+    """
     from sqlalchemy import select
 
     from app.models.tables import PaperTrade
@@ -88,6 +92,7 @@ def realized_session_pnl(session, moment: datetime) -> Decimal:
     from app.core.sessions import new_york_day_start
 
     started = new_york_day_start(moment)
+    rules = list(exclusions) if exclusions else None
     # One extra day in SQL only. The loop below still keeps New York midnight.
     # A string-vs-offset mismatch must not drop today's closes.
     total = Decimal("0")
@@ -104,8 +109,26 @@ def realized_session_pnl(session, moment: datetime) -> Decimal:
             closed = closed.replace(tzinfo=timezone.utc)
         if closed < started:
             continue
+        if rules is not None and _is_excluded_trade(trade, rules):
+            continue
         total += Decimal(str(trade.pnl_dollars))
     return total
+
+
+def _is_excluded_trade(trade, rules: list) -> bool:
+    from app.trades.exclusion import matches_trade
+
+    return matches_trade(
+        {
+            "symbol": trade.option_symbol,
+            "qty": trade.quantity,
+            "quantity": trade.quantity,
+            "avg_entry_price": trade.entry_price,
+            "entry_price": trade.entry_price,
+            "opened_at": trade.entry_at,
+        },
+        rules,
+    )
 
 
 def underlyings_stopped_today(session, moment: datetime) -> set[str]:

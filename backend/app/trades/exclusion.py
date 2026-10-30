@@ -226,22 +226,20 @@ def compute_adjusted_day_pnl(
 ) -> Decimal | None:
     """Account day P&L after funding and excluded-lot strip.
 
-    Shared by /risk, the worker floor/kill path, and the entry-gate kill check so
-    they never disagree. `read_session_funding` returns funding rows only (no FILL
-    sells), so `closed_rows_from_activities` alone cannot see closed bug lots —
-    seeded closed rows for `session_date` are always merged. Open excluded lots
-    are stripped via unrealized only; closed seed impact applies once (`seen` +
-    `open_excluded`). Seed impacts are date-keyed; other session days are untouched.
+    Shared by /risk, the worker floor/kill path, the entry-gate kill check, and
+    the scan entry gate so they never disagree. `read_session_funding` returns
+    funding rows only (no FILL sells), so `closed_rows_from_activities` alone
+    cannot see closed bug lots — seeded closed rows for `session_date` are always
+    merged. Open excluded lots are stripped via unrealized only; closed seed
+    impact applies once (`seen` + `open_excluded`). Seed impacts are date-keyed;
+    other session days are untouched. A missing activity list returns None.
     """
     from app.analytics.finance import trading_day_pnl
 
     if activities is None:
         return None
     measured = trading_day_pnl(equity, last_equity, activities, session_date)
-    rules = list(exclusions) if exclusions is not None else active_exclusions()
-    if not rules:
-        rules = [{**seed, "active": True} for seed in SEEDS]
-    rules = [_enrich_rule(dict(rule)) for rule in rules]
+    rules = rules_for_adjustment(exclusions)
     held = [row for row in (positions or []) if isinstance(row, dict)]
     open_excluded = {
         _symbol(row.get("symbol") or row.get("option_symbol"))
@@ -259,6 +257,31 @@ def compute_adjusted_day_pnl(
         closed_rows=seed_closed,
         contract_multiplier=contract_multiplier,
     )
+
+
+def rules_for_adjustment(
+    exclusions: Iterable[dict] | None = None,
+    session: Session | None = None,
+) -> list[dict]:
+    """Active exclusion rules with seed day-impact attached. Seeds fill an empty table."""
+    if exclusions is not None:
+        rules = list(exclusions)
+    else:
+        rules = active_exclusions(session)
+    if not rules:
+        rules = [{**seed, "active": True} for seed in SEEDS]
+    return [_enrich_rule(dict(rule)) for rule in rules]
+
+
+def adjusted_realized_session_pnl(session, moment: datetime) -> Decimal:
+    """Closed paper P&L since New York midnight, omitting excluded bug lots.
+
+    Each skipped row drops the pnl_dollars the unadjusted sum included. Every
+    other close is unchanged. Rows stay in the database.
+    """
+    from app.positions.admission import realized_session_pnl
+
+    return realized_session_pnl(session, moment, exclusions=rules_for_adjustment(session=session))
 
 
 def closed_rows_from_activities(activities: list, rules: list[dict], session_date) -> list[dict]:
