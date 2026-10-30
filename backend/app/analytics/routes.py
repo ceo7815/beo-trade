@@ -381,6 +381,15 @@ def register(app: FastAPI, settings: Settings) -> None:
             pass
         return cached
 
+    @app.get("/api/v1/diag/day-floor")
+    def day_floor_diag(authorization: str | None = Header(default=None)):
+        """Read-only ops snapshot for the day-floor latch and monitor health. No side effects."""
+        from app.main import user_id_from_header
+        from app.ops.day_floor_diag import collect_day_floor_snapshot
+
+        user_id_from_header(settings, authorization)
+        return collect_day_floor_snapshot()
+
     def _risk_body(settings) -> dict:
         trading = settings.trading()
         account = None

@@ -115,6 +115,18 @@ def run_monitor_cycle(settings, phase: str) -> bool:
     worker_heartbeat.txt is rewritten either way so Docker sees a live process.
     last_success moves only when the pass finishes.
     """
+    from app.ops.day_floor_diag import (
+        arm_monitor_watchdog,
+        cancel_monitor_watchdog,
+        log_monitor_cycle,
+        should_log_monitor_cycle,
+    )
+
+    started = time.monotonic()
+    log_this = should_log_monitor_cycle()
+    if log_this:
+        log_monitor_cycle(phase=phase, ok=True, duration_ms=0, event="start")
+    watchdog, _state = arm_monitor_watchdog(120.0)
     try:
         monitor_once(settings)
         ok = True
@@ -123,6 +135,13 @@ def run_monitor_cycle(settings, phase: str) -> bool:
 
         log_failure("worker.monitor_failed", exc, service="monitor")
         ok = False
+    finally:
+        cancel_monitor_watchdog(watchdog)
+    duration_ms = int((time.monotonic() - started) * 1000)
+    if log_this or not ok:
+        if not log_this:
+            should_log_monitor_cycle(force=True)
+        log_monitor_cycle(phase=phase, ok=ok, duration_ms=duration_ms, event="finish")
     phase_name = "HALTED" if is_halted() else phase
     beat(HEARTBEAT, phase_name)
     beat(MONITOR_HEARTBEAT, phase)
