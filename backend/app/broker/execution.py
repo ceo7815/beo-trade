@@ -324,9 +324,9 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
     """Block the buy and latch the day when the dollar kill or the percent hard stop is already reached."""
     from zoneinfo import ZoneInfo
 
-    from app.analytics.finance import trading_day_pnl
     from app.options.day_floor import latch_hard_stop
     from app.options.risk_limits import day_flatten_reason
+    from app.trades.exclusion import compute_adjusted_day_pnl
 
     if not hasattr(adapter, "get_activities") and not hasattr(adapter, "get_session_activities"):
         return None
@@ -337,20 +337,19 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
         activities = read_session_funding(adapter, session_date)
     except Exception:
         return None
-    from app.trades.exclusion import adjust_day_pnl
-
+    if not isinstance(activities, list):
+        return None
     try:
         held = adapter.get_positions()
     except Exception:
         held = []
-    pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-    # Must pass session_date + activities so closed bug lots are stripped before
-    # the percent hard stop / dollar kill decide to latch.
-    pnl = adjust_day_pnl(
-        pnl,
+    # Same adjusted figure as /risk and the worker floor (funding + seeded closed lots).
+    pnl = compute_adjusted_day_pnl(
+        account.get("equity"),
+        account.get("last_equity"),
         held if isinstance(held, list) else [],
-        session_date=session_date,
-        activities=activities if isinstance(activities, list) else None,
+        session_date,
+        activities=activities,
     )
     equity = _decimal(account.get("equity"))
     if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":

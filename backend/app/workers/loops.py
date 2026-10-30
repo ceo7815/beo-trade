@@ -212,11 +212,15 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
         positions = adapter.sync_positions()
         _retire_closed_states({str(row.get("symbol") or "") for row in positions})
         live = quotes is None
-        if quotes is None and positions:
-            quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
-        bundles = quotes if quotes is not None else {}
+        # Day floor / kill must not wait on Theta. Load quotes after the account latch.
         session_open, book_close = _session_state(settings, adapter, moment)
         floor = _account_day_floor(settings, adapter, moment, session_open, positions)
+        if quotes is None and positions:
+            try:
+                quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
+            except Exception:
+                quotes = {}
+        bundles = quotes if quotes is not None else {}
         if floor.get("closed") and submit:
             if floor.get("reason") == "DAILY_HARD_STOP" and not floor.get("cleared"):
                 _cancel_open_orders(adapter, include_sells=True)
@@ -374,11 +378,15 @@ def _load_tracked_day(settings: Settings, adapter, moment: datetime, positions: 
     if not isinstance(activities, list):
         return None, None, False
     try:
-        from app.analytics.finance import trading_day_pnl
-        from app.trades.exclusion import adjust_day_pnl
+        from app.trades.exclusion import compute_adjusted_day_pnl
 
-        pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date, activities=activities)
+        pnl = compute_adjusted_day_pnl(
+            account.get("equity"),
+            account.get("last_equity"),
+            positions or [],
+            session_date,
+            activities=activities,
+        )
     except Exception:
         return None, None, False
     if pnl is None:
@@ -411,28 +419,19 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
             except Exception:
                 account = None
             if account is not None:
-                from app.analytics.finance import trading_day_pnl
                 from zoneinfo import ZoneInfo
 
+                from app.trades.exclusion import compute_adjusted_day_pnl
+
                 session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
-                from app.trades.exclusion import adjust_day_pnl
-
-                pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), None, session_date)
-                # No Alpaca activities: strip seeded closed bug lots locally, then prefer /risk cache.
-                try:
-                    from app.trades.exclusion import SEEDS, closed_rows_from_seeds, matches_trade
-
-                    rules = [{**seed, "active": True} for seed in SEEDS]
-                    held = positions or []
-                    open_excluded = {
-                        str(row.get("symbol") or row.get("option_symbol") or "").replace(" ", "").upper()
-                        for row in held
-                        if isinstance(row, dict) and matches_trade(row, rules)
-                    }
-                    seed_closed = closed_rows_from_seeds(rules, session_date, open_excluded)
-                except Exception:
-                    seed_closed = []
-                pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date, closed_rows=seed_closed)
+                # No activity reader: empty funding list + seeded closed rows (same helper as /risk).
+                pnl = compute_adjusted_day_pnl(
+                    account.get("equity"),
+                    account.get("last_equity"),
+                    positions or [],
+                    session_date,
+                    activities=[],
+                )
                 try:
                     from app.analytics.read_cache import read_cache
 
@@ -709,7 +708,9 @@ def _loaded_bundles(settings: Settings, now: datetime, underlyings_held: tuple[s
                 continue
             bundles[option.option_symbol.replace(" ", "")] = {"option": option, "underlying": underlying}
         return bundles
-    except (ProviderNotConfigured, ProviderUnavailable, OSError):
+    except (ProviderNotConfigured, ProviderUnavailable, OSError, TimeoutError):
+        return {}
+    except Exception:
         return {}
 
 
@@ -1148,7 +1149,6 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         _submit_step(log, "get_account", equity_ready=account.get("equity") not in {None, ""})
         if account.get("equity") not in {None, ""}:
             equity = Decimal(str(account["equity"]))
-        from app.analytics.finance import trading_day_pnl
         from app.options.day_floor import observe_day_floor
         from zoneinfo import ZoneInfo
 
@@ -1174,12 +1174,11 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             activity_after=activity_after,
             activity_until=activity_until,
         )
-        from app.trades.exclusion import adjust_day_pnl
+        from app.trades.exclusion import compute_adjusted_day_pnl
 
-        measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        measured = adjust_day_pnl(measured, positions, session_date=session_date, activities=activities)
         if activities is None:
-            # Closed bug-lot impact needs fills. Prefer /risk's adjusted today_pnl over raw mark.
+            measured = None
+            # Prefer /risk's adjusted today_pnl when funding activities could not be read.
             try:
                 from app.analytics.read_cache import read_cache
 
@@ -1188,6 +1187,14 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     measured = Decimal(str(cached["today_pnl"]))
             except Exception:
                 pass
+        else:
+            measured = compute_adjusted_day_pnl(
+                account.get("equity"),
+                account.get("last_equity"),
+                positions,
+                session_date,
+                activities=activities,
+            )
         _submit_step(log, "trading_day_pnl", pnl_ready=measured is not None)
         floor = observe_day_floor(settings, measured, moment, session_open)
         _submit_step(log, "day_floor", closed=bool(floor.get("closed")), reason=str(floor.get("reason") or ""))

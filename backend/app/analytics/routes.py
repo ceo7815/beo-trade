@@ -422,11 +422,21 @@ def register(app: FastAPI, settings: Settings) -> None:
             account = None
         equity = None if account is None or account.get("equity") in {None, ""} else Decimal(str(account["equity"]))
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
-        measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        from app.trades.exclusion import active_exclusions, adjust_day_pnl, annotate_positions, countable_positions, excluded_open_rows
+        from app.trades.exclusion import active_exclusions, annotate_positions, compute_adjusted_day_pnl, countable_positions, excluded_open_rows
 
         exclusions = active_exclusions()
-        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date, activities=activities)
+        measured = (
+            None
+            if account is None or not isinstance(activities, list)
+            else compute_adjusted_day_pnl(
+                account.get("equity"),
+                account.get("last_equity"),
+                positions or [],
+                session_date,
+                activities=activities,
+                exclusions=exclusions,
+            )
+        )
         excluded_rows = excluded_open_rows(positions or [], exclusions)
         countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))

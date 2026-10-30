@@ -214,6 +214,53 @@ def adjust_day_pnl(
     return adjusted
 
 
+def compute_adjusted_day_pnl(
+    equity: object,
+    last_equity: object,
+    positions: list[dict] | None,
+    session_date,
+    *,
+    activities: list | None,
+    exclusions: Iterable[dict] | None = None,
+    contract_multiplier: int = 100,
+) -> Decimal | None:
+    """Account day P&L after funding and excluded-lot strip.
+
+    Shared by /risk, the worker floor/kill path, and the entry-gate kill check so
+    they never disagree. `read_session_funding` returns funding rows only (no FILL
+    sells), so `closed_rows_from_activities` alone cannot see closed bug lots —
+    seeded closed rows for `session_date` are always merged. Open excluded lots
+    are stripped via unrealized only; closed seed impact applies once (`seen` +
+    `open_excluded`). Seed impacts are date-keyed; other session days are untouched.
+    """
+    from app.analytics.finance import trading_day_pnl
+
+    if activities is None:
+        return None
+    measured = trading_day_pnl(equity, last_equity, activities, session_date)
+    rules = list(exclusions) if exclusions is not None else active_exclusions()
+    if not rules:
+        rules = [{**seed, "active": True} for seed in SEEDS]
+    rules = [_enrich_rule(dict(rule)) for rule in rules]
+    held = [row for row in (positions or []) if isinstance(row, dict)]
+    open_excluded = {
+        _symbol(row.get("symbol") or row.get("option_symbol"))
+        for row in held
+        if matches_trade(row, rules)
+    }
+    day = _as_date(session_date)
+    seed_closed = closed_rows_from_seeds(rules, day, open_excluded) if day is not None else []
+    return adjust_day_pnl(
+        measured,
+        held,
+        rules,
+        session_date=session_date,
+        activities=activities,
+        closed_rows=seed_closed,
+        contract_multiplier=contract_multiplier,
+    )
+
+
 def closed_rows_from_activities(activities: list, rules: list[dict], session_date) -> list[dict]:
     """Minimal closed stubs for excluded lots with a sell fill on session_date."""
     rows: list[dict] = []
