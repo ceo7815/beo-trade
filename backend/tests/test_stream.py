@@ -229,7 +229,7 @@ def test_snapshot_day_return_uses_the_shown_pnl_and_capital_opened_today(tmp_pat
     from datetime import timedelta
 
     prior = (yesterday - timedelta(days=1)).astimezone(timezone.utc).isoformat()
-    read_cache.set(("risk",), {"today_pnl": "1.00", "daily_loss_state": "ok", "available": True}, 30)
+    read_cache.set(("risk",), {"today_pnl": "1840.00", "daily_loss_state": "ok", "available": True}, 30)
     read_cache.set(
         ("trades", "today", "", ""),
         {
@@ -301,4 +301,52 @@ def test_preopen_snapshot_shows_a_fresh_day_without_changing_the_raw_mark(tmp_pa
     assert snap["day"]["protection"]["line"] == "עוד 4,000$ (ב-4,000$) נכנסת הגנה של 2,000$"
     assert "עוד 0$" not in snap["day"]["protection"]["line"]
     assert snap["day"]["day_return_pct"] is None
+    read_cache.clear()
+
+
+def test_stream_display_pnl_uses_risk_when_excluded_lot_is_closed(tmp_path, monkeypatch):
+    """Closed bug trade: /risk today_pnl is 0; stream card must show 0, not raw mark -1827."""
+    from app.broker import snapshot as broker_snapshot
+
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr(
+        "app.options.day_floor.observe_day_floor",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")),
+    )
+    monkeypatch.setattr(
+        "app.broker.runtime.open_paper_broker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not call Alpaca")),
+    )
+    monkeypatch.setattr(
+        "app.options.protection_view.display_moment",
+        lambda: __import__("datetime").datetime(2026, 10, 30, 18, 0, tzinfo=__import__("datetime").timezone.utc),
+    )
+    broker_snapshot.isolate(tmp_path)
+    # META already closed — positions empty; equity mark still carries -1827.
+    broker_snapshot.prime(
+        {
+            "positions": [],
+            "account": {"equity": "98173", "cash": "1", "last_equity": "100000", "buying_power": "1"},
+        }
+    )
+    read_cache.clear()
+    read_cache.set(
+        ("risk",),
+        {"today_pnl": "0.00", "daily_loss_state": "ok", "available": True, "excluded_trades": []},
+        30,
+    )
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "excl-stream.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    assert snap["day"]["pnl"] == "0.00"
+    assert snap["day"]["pnl_source"] == "risk"
+    assert snap["day"]["mark_pnl"] == "-1827.00"  # raw equity mark still visible
+    assert snap["day"]["display_pnl"] == "0.00"
+    assert snap["day"]["protection"]["pnl"] == "0.00"
     read_cache.clear()

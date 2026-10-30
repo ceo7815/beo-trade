@@ -419,6 +419,16 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
 
                 pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), None, session_date)
                 pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date)
+                # No activities here — closed exclusions cannot be evidenced. Reuse
+                # /risk's cached today_pnl for floor + kill (same figure the desk shows).
+                try:
+                    from app.analytics.read_cache import read_cache
+
+                    cached = read_cache.get(("risk",))
+                    if isinstance(cached, dict) and cached.get("today_pnl") not in {None, ""}:
+                        pnl = Decimal(str(cached["today_pnl"]))
+                except Exception:
+                    pass
     if read_ok is True:
         from app.options.account_read import note_success
 
