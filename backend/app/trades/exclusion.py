@@ -26,12 +26,9 @@ SEED = {
     "entry_after": "2026-10-29T17:30:00+00:00",
     "entry_before": "2026-10-30T04:00:00+00:00",
     "reason": BUG_REASON,
-    # Filled sell 30.10 17:30:22 Dubai (13:30:22 UTC) at 1.06. Full round-trip
-    # is about -$3,143; the NY session day piece in account P&L on 30.10 is the
-    # amount below (today_pnl was -1,827 with this lot as the only mover).
+    # Filled sell 30.10 17:30:22 Dubai (13:30:22 UTC) at 1.06.
     "exit_price": "1.06",
     "exit_at": "2026-10-30T13:30:22+00:00",
-    "session_day_pnl": {"2026-10-30": "-1827.00"},
 }
 
 
@@ -126,62 +123,207 @@ def adjust_day_pnl(
     positions: list[dict] | None,
     exclusions: Iterable[dict] | None = None,
     session_date=None,
+    closed_rows: list[dict] | None = None,
+    activities: list | None = None,
+    contract_multiplier: int = 100,
 ) -> Decimal | None:
     """Remove excluded lots from account day P&L.
 
     Open lots: subtract unrealized_intraday_pl (else unrealized_pl).
-    Closed seeded lots: subtract SEED session_day_pnl for that NY date when the
-    lot is no longer in positions (so we do not double-count).
+    Closed lots: only when session_date is supplied and we have closed_rows or
+    activities that evidence an exit that day. Prefer each row's session/day
+    P&L field, or full P&L for a same-day round-trip. When an overnight
+    excluded close has no day field, infer the excluded impact as measured
+    minus the countable session estimate from the same data — never a
+    hard-coded constant, and never when session evidence is omitted
+    (stream fixtures, other days).
     """
     if measured is None:
         return None
     rules = list(exclusions) if exclusions is not None else active_exclusions()
+    if not rules:
+        return measured
     adjusted = measured
-    open_hit = False
     for row in positions or []:
         if not matches_trade(row, rules):
             continue
-        open_hit = True
         piece = _decimal(row.get("unrealized_intraday_pl"))
         if piece is None:
             piece = _decimal(row.get("unrealized_pl") or row.get("unrealized_pnl"))
         if piece is None:
             continue
         adjusted -= piece
-    if not open_hit:
-        day = _session_key(session_date)
-        seeded = SEED.get("session_day_pnl") or {}
-        if day and day in seeded and _seed_active(rules):
-            piece = _decimal(seeded[day])
-            if piece is not None:
-                adjusted -= piece
+    day = _as_date(session_date)
+    if day is None:
+        return adjusted
+    if closed_rows is None and activities is not None:
+        closed_rows = closed_rows_from_activities(activities, rules, day)
+    if closed_rows is None:
+        return adjusted
+    open_excluded = {
+        _symbol(row.get("symbol") or row.get("option_symbol"))
+        for row in positions or []
+        if matches_trade(row, rules)
+    }
+    computed = Decimal("0")
+    unresolved = False
+    for row in closed_rows:
+        if not matches_trade(row, rules):
+            continue
+        if _symbol(row.get("symbol") or row.get("option_symbol")) in open_excluded:
+            continue
+        if not _closed_on_session(row, day):
+            continue
+        piece = _session_pnl_of_closed(row, day, contract_multiplier)
+        if piece is None:
+            unresolved = True
+        else:
+            computed += piece
+    adjusted -= computed
+    if unresolved:
+        known = _countable_session_estimate(positions or [], closed_rows, rules, day, contract_multiplier)
+        if known is not None:
+            return known
     return adjusted
 
 
-def _session_key(session_date) -> str | None:
-    if session_date is None:
-        from datetime import date as date_cls
 
-        try:
-            from zoneinfo import ZoneInfo
-
-            session_date = datetime.now(timezone.utc).astimezone(ZoneInfo("America/New_York")).date()
-        except Exception:
-            session_date = datetime.now(timezone.utc).date()
-    if hasattr(session_date, "isoformat"):
-        return session_date.isoformat()
-    text = str(session_date).strip()
-    return text[:10] if text else None
-
-
-def _seed_active(rules: list[dict]) -> bool:
-    want = _symbol(SEED["symbol"])
+def closed_rows_from_activities(activities: list, rules: list[dict], session_date) -> list[dict]:
+    """Minimal closed stubs for excluded lots with a sell fill on session_date."""
+    rows: list[dict] = []
     for rule in rules:
         if not rule.get("active", True):
             continue
-        if _symbol(rule.get("symbol")) == want:
-            return True
-    return False
+        symbol = _symbol(rule.get("symbol"))
+        sell = _session_sell(activities, symbol, session_date)
+        if sell is None:
+            continue
+        opened = rule.get("entry_after")
+        rows.append(
+            {
+                "symbol": symbol,
+                "quantity": rule.get("quantity") or sell.get("qty") or sell.get("quantity"),
+                "qty": rule.get("quantity") or sell.get("qty") or sell.get("quantity"),
+                "entry_price": rule.get("entry_price"),
+                "avg_entry_price": rule.get("entry_price"),
+                "exit_price": sell.get("price") or sell.get("fill_price"),
+                "opened_at": opened,
+                "closed_at": sell.get("timestamp") or sell.get("transaction_time") or sell.get("date"),
+            }
+        )
+    return rows
+
+
+def _session_sell(activities: list, symbol: str, session_date) -> dict | None:
+    from zoneinfo import ZoneInfo
+
+    want = _symbol(symbol)
+    ny = ZoneInfo("America/New_York")
+    for raw in activities or []:
+        if not isinstance(raw, dict):
+            continue
+        sym = _symbol(raw.get("symbol") or raw.get("option_symbol"))
+        if sym != want:
+            continue
+        side = str(raw.get("side") or raw.get("order_side") or "").lower()
+        if side not in {"sell", "sell_to_close"}:
+            continue
+        stamp = _parse(raw.get("timestamp") or raw.get("transaction_time") or raw.get("date"))
+        if stamp is None:
+            continue
+        if stamp.astimezone(ny).date() != session_date:
+            continue
+        return raw
+    return None
+
+
+def _as_date(session_date):
+    if session_date is None:
+        return None
+    if hasattr(session_date, "year") and hasattr(session_date, "month") and not hasattr(session_date, "hour"):
+        return session_date
+    if hasattr(session_date, "astimezone"):
+        from zoneinfo import ZoneInfo
+
+        return session_date.astimezone(ZoneInfo("America/New_York")).date()
+    text = str(session_date).strip()
+    if not text:
+        return None
+    try:
+        from datetime import date as date_cls
+
+        return date_cls.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def _closed_on_session(row: dict, session_date) -> bool:
+    closed = _parse(row.get("closed_at") or row.get("exit_time"))
+    if closed is None:
+        return False
+    from zoneinfo import ZoneInfo
+
+    return closed.astimezone(ZoneInfo("America/New_York")).date() == session_date
+
+
+def _session_pnl_of_closed(row: dict, session_date, multiplier: int) -> Decimal | None:
+    """P&L of this closed trade that belongs on the account day for session_date."""
+    if not _closed_on_session(row, session_date):
+        return None
+    for key in ("session_pnl", "day_pnl", "realized_session_pnl", "unrealized_intraday_pl"):
+        piece = _decimal(row.get(key))
+        if piece is not None:
+            return piece
+    opened = _parse(row.get("opened_at") or row.get("entry_time") or row.get("created_at"))
+    from zoneinfo import ZoneInfo
+
+    open_day = None if opened is None else opened.astimezone(ZoneInfo("America/New_York")).date()
+    if open_day == session_date:
+        piece = _decimal(row.get("pnl") or row.get("net_pnl") or row.get("gross_pnl"))
+        if piece is not None:
+            return piece
+        return _pnl_from_prices(row, multiplier)
+    # Overnight hold: do not invent a split from entry→exit alone.
+    return None
+
+
+def _pnl_from_prices(row: dict, multiplier: int) -> Decimal | None:
+    entry = _decimal(row.get("entry_price") or row.get("avg_entry_price") or row.get("entry_fill_price"))
+    exit_px = _decimal(row.get("exit_price") or row.get("current_price"))
+    qty = _int(row.get("qty") or row.get("quantity") or row.get("entry_fill_quantity"))
+    if entry is None or exit_px is None or qty is None:
+        return None
+    return (exit_px - entry) * Decimal(qty) * Decimal(int(multiplier))
+
+
+def _countable_session_estimate(
+    positions: list[dict],
+    closed_rows: list[dict],
+    rules: list[dict],
+    session_date,
+    multiplier: int,
+) -> Decimal | None:
+    """Sum of day P&L we can attribute to non-excluded lots from the same inputs."""
+    total = Decimal("0")
+    for row in positions:
+        if matches_trade(row, rules):
+            continue
+        piece = _decimal(row.get("unrealized_intraday_pl"))
+        if piece is None:
+            piece = _decimal(row.get("unrealized_pl") or row.get("unrealized_pnl"))
+        if piece is None:
+            return None
+        total += piece
+    for row in closed_rows:
+        if matches_trade(row, rules):
+            continue
+        if not _closed_on_session(row, session_date):
+            continue
+        piece = _session_pnl_of_closed(row, session_date, multiplier)
+        if piece is None:
+            return None
+        total += piece
+    return total
 
 
 def for_stats(rows: list[dict], exclusions: Iterable[dict] | None = None) -> list[dict]:
@@ -244,19 +386,28 @@ def _load(session: Session | None) -> list:
 
 
 def _audit_once(session: Session, symbol: str, reason: str) -> None:
-    from app.broker.store import record_trade_event
-    from app.models.tables import BrokerTradeEvent
+    """Record TRADE_EXCLUDED on audit_logs (not broker_trade_events — those are fill-scoped)."""
+    from app.models.tables import AuditLog
 
-    trade_id = f"excluded:{symbol}"
+    entity_id = f"excluded:{symbol}"[:36]
     prior = session.scalar(
-        select(BrokerTradeEvent).where(
-            BrokerTradeEvent.trade_id == trade_id,
-            BrokerTradeEvent.state == "TRADE_EXCLUDED",
+        select(AuditLog).where(
+            AuditLog.action == "TRADE_EXCLUDED",
+            AuditLog.entity == "trade_exclusion",
+            AuditLog.entity_id == entity_id,
         )
     )
     if prior is not None:
         return
-    record_trade_event(session, trade_id, "TRADE_EXCLUDED", "beo-trade", reason)
+    session.add(
+        AuditLog(
+            actor="beo-trade",
+            action="TRADE_EXCLUDED",
+            entity="trade_exclusion",
+            entity_id=entity_id,
+            payload={"symbol": symbol, "reason": reason},
+        )
+    )
 
 
 def _public_row(row) -> dict:

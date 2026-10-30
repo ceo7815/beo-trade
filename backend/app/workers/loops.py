@@ -378,7 +378,7 @@ def _load_tracked_day(settings: Settings, adapter, moment: datetime, positions: 
         from app.trades.exclusion import adjust_day_pnl
 
         pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date)
+        pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date, activities=activities)
     except Exception:
         return None, None, False
     if pnl is None:
@@ -1104,7 +1104,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         from app.trades.exclusion import adjust_day_pnl
 
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        measured = adjust_day_pnl(measured, positions, session_date=session_date)
+        measured = adjust_day_pnl(measured, positions, session_date=session_date, activities=activities)
         _submit_step(log, "trading_day_pnl", pnl_ready=measured is not None)
         floor = observe_day_floor(settings, measured, moment, session_open)
         _submit_step(log, "day_floor", closed=bool(floor.get("closed")), reason=str(floor.get("reason") or ""))

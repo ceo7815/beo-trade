@@ -300,7 +300,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         grouped = [ratio_return(row) for row in counted]
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date)
+        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date, activities=activities, closed_rows=[finance_row(row) for row in closed])
         points = [] if history is None else history.get("points") or []
         year_points = [] if year is None else year.get("points") or []
         payload = {
@@ -417,7 +417,7 @@ def register(app: FastAPI, settings: Settings) -> None:
         from app.trades.exclusion import active_exclusions, adjust_day_pnl, annotate_positions, countable_positions, excluded_open_rows
 
         exclusions = active_exclusions()
-        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date)
+        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date, activities=activities)
         excluded_rows = excluded_open_rows(positions or [], exclusions)
         countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
