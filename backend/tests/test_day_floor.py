@@ -467,3 +467,50 @@ def test_after_false_release_real_loss_still_latches(tmp_path, monkeypatch):
     # Auto-release will not clear a post-release real latch (marker exists).
     assert maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000")) is None
     assert public_from_store(settings, moment)["closed"] is True
+
+
+def test_worker_floor_cycle_releases_false_hard_stop_on_live_adjusted_pnl(tmp_path, monkeypatch):
+    """The release must happen in the running worker cycle, not only at boot (boot has no account data)."""
+    from app.options.day_floor import latch_hard_stop, public_from_store
+    from app.workers import loops
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    moment = datetime(2026, 10, 30, 14, 35, tzinfo=timezone.utc)
+    latch_hard_stop(settings, moment)
+    assert public_from_store(settings, moment)["closed"] is True
+
+    class Adapter:
+        def get_account(self):
+            return {"equity": "97984.19", "last_equity": "102136.71"}
+
+        def get_activities(self, *a, **k):
+            return []
+
+    monkeypatch.setattr(loops, "_load_tracked_day", lambda s, a, m, p=None: ({"equity": "97984.19"}, Decimal("-2.52"), True))
+    view = loops._account_day_floor(settings, Adapter(), moment, True, [])
+    assert view["closed"] is False
+    assert public_from_store(settings, moment)["closed"] is False
+
+
+def test_worker_floor_cycle_keeps_latch_on_real_loss(tmp_path, monkeypatch):
+    from app.options.day_floor import latch_hard_stop, public_from_store
+    from app.workers import loops
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel5.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    moment = datetime(2026, 10, 30, 14, 35, tzinfo=timezone.utc)
+    latch_hard_stop(settings, moment)
+
+    class Adapter:
+        def get_account(self):
+            return {}
+
+        def get_activities(self, *a, **k):
+            return []
+
+    monkeypatch.setattr(loops, "_load_tracked_day", lambda s, a, m, p=None: ({"equity": "96000"}, Decimal("-3600"), True))
+    loops._account_day_floor(settings, Adapter(), moment, True, [])
+    assert public_from_store(settings, moment)["closed"] is True

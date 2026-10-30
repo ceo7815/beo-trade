@@ -453,6 +453,18 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
         note_failure(moment)
         account = None
         pnl = None
+    if session_open is True and account is not None and pnl is not None and already_closed:
+        # One-time, date-scoped release of the false 30.10 hard-stop latch (bug lots), on live adjusted P&L.
+        try:
+            from app.options.day_floor import maybe_release_false_hard_stop
+
+            equity_now = None
+            if account.get("equity") not in {None, ""}:
+                equity_now = Decimal(str(account["equity"]))
+            if maybe_release_false_hard_stop(settings, moment, Decimal(str(pnl)), equity_now) is not None:
+                already_closed = bool(public_from_store(settings, moment).get("closed"))
+        except Exception:
+            pass
     try:
         view = observe_day_floor(settings, pnl, moment, session_open is True)
     except Exception:
