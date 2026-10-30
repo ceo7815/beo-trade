@@ -44,7 +44,7 @@ def _point_data_dir(tmp_path, monkeypatch) -> Path:
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: data / "day_floor.json")
     monkeypatch.setattr(
         "app.options.day_floor._release_marker_path",
-        lambda: data / "day_floor_false_hs_released_2026-10-30",
+        lambda: data / "day_floor_false_hs_released_2026-10-30_v2",
     )
     monkeypatch.setattr("app.options.account_read.store_path", lambda: data / "account_read.json")
     return data
@@ -71,7 +71,7 @@ def test_diag_endpoint_allows_read_key_and_returns_shape(tmp_path, monkeypatch):
         ),
         encoding="utf-8",
     )
-    (data / "day_floor_false_hs_released_2026-10-30").write_text("marker\n", encoding="utf-8")
+    (data / "day_floor_false_hs_released_2026-10-30_v2").write_text("marker\n", encoding="utf-8")
     (data / "monitor_cycle.json").write_text(
         json.dumps({"last_attempt": NOW.isoformat(), "last_success": NOW.isoformat(), "ok": True}),
         encoding="utf-8",
@@ -115,7 +115,7 @@ def test_diag_endpoint_allows_read_key_and_returns_shape(tmp_path, monkeypatch):
             assert key in body, key
         assert body["day_floor_store"]["reason"] == "DAILY_HARD_STOP"
         assert body["release_marker"]["exists"] is True
-        assert body["release_marker"]["path_name"] == "day_floor_false_hs_released_2026-10-30"
+        assert body["release_marker"]["path_name"] == "day_floor_false_hs_released_2026-10-30_v2"
         assert body["monitor_cycle"]["ok"] is True
         assert body["account_read"]["consecutive_failures"] == 0
         assert body["day_floor_diag"]["pnl"] == "-2.52"

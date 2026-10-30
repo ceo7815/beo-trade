@@ -514,3 +514,31 @@ def test_worker_floor_cycle_keeps_latch_on_real_loss(tmp_path, monkeypatch):
     monkeypatch.setattr(loops, "_load_tracked_day", lambda s, a, m, p=None: ({"equity": "96000"}, Decimal("-3600"), True))
     loops._account_day_floor(settings, Adapter(), moment, True, [])
     assert public_from_store(settings, moment)["closed"] is True
+
+
+def test_second_release_after_stale_relatch_uses_v2_marker(tmp_path, monkeypatch):
+    """Live 30.10: release v1 fired at 14:29Z, then the pre-fix raw-mark path re-latched.
+    The v1 marker must not block one more release on the now-correct adjusted P&L."""
+    from app.options.day_floor import _release_marker_path, latch_hard_stop, maybe_release_false_hard_stop, public_from_store
+
+    monkeypatch.setattr("app.ops.paths.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    (tmp_path / "day_floor_false_hs_released_2026-10-30").write_text("v1\n", encoding="utf-8")
+    assert _release_marker_path().name == "day_floor_false_hs_released_2026-10-30_v2"
+    moment = datetime(2026, 10, 30, 15, 20, tzinfo=timezone.utc)
+    latch_hard_stop(settings, moment)
+    # Real loss still keeps it closed.
+    assert maybe_release_false_hard_stop(settings, moment, Decimal("-3600"), Decimal("97984.19")) is None
+    assert public_from_store(settings, moment)["closed"] is True
+    out = maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("97984.19"))
+    assert out is not None and out["closed"] is False
+    assert public_from_store(settings, moment)["closed"] is False
+    # Still one-shot for v2.
+    latch_hard_stop(settings, moment)
+    assert maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("97984.19")) is None
+    assert public_from_store(settings, moment)["closed"] is True
+    # Other days untouched.
+    other = datetime(2026, 11, 2, 15, 20, tzinfo=timezone.utc)
+    latch_hard_stop(settings, other)
+    assert maybe_release_false_hard_stop(settings, other, Decimal("0"), Decimal("97984.19")) is None
