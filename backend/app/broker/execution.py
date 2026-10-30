@@ -344,7 +344,14 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
     except Exception:
         held = []
     pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
-    pnl = adjust_day_pnl(pnl, held if isinstance(held, list) else [])
+    # Must pass session_date + activities so closed bug lots are stripped before
+    # the percent hard stop / dollar kill decide to latch.
+    pnl = adjust_day_pnl(
+        pnl,
+        held if isinstance(held, list) else [],
+        session_date=session_date,
+        activities=activities if isinstance(activities, list) else None,
+    )
     equity = _decimal(account.get("equity"))
     if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":
         return None
