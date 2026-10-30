@@ -400,3 +400,70 @@ def test_a_normal_stop_still_fires_when_the_kill_is_not_hit(tmp_path, monkeypatc
     result = monitor_once(settings, {symbol: {"option": option, "underlying": underlying}}, book, NOW, submit=False)
     assert result["exits"][0]["reason"] == "STOP"
     assert book.submitted == []
+
+
+def test_false_hard_stop_release_only_on_target_day(tmp_path, monkeypatch):
+    from app.options.day_floor import (
+        FALSE_HARD_STOP_RELEASE_DATE,
+        latch_hard_stop,
+        maybe_release_false_hard_stop,
+        public_from_store,
+    )
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    # Latch on the bug day.
+    moment = datetime(2026, 10, 30, 18, 0, tzinfo=timezone.utc)
+    latch_hard_stop(settings, moment)
+    assert public_from_store(settings, moment)["closed"] is True
+    # Healthy adjusted P&L → release.
+    out = maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000"))
+    assert out is not None
+    assert out["closed"] is False
+    assert out["armed"] is False
+    assert public_from_store(settings, moment)["closed"] is False
+    # Idempotent: second call is no-op (marker).
+    assert maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000")) is None
+
+
+def test_false_hard_stop_release_noop_other_date_or_real_loss(tmp_path, monkeypatch):
+    from app.options.day_floor import latch_hard_stop, maybe_release_false_hard_stop, public_from_store
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel2.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    other = datetime(2026, 10, 31, 18, 0, tzinfo=timezone.utc)
+    latch_hard_stop(settings, other)
+    assert maybe_release_false_hard_stop(settings, other, Decimal("0"), Decimal("100000")) is None
+    assert public_from_store(settings, other)["closed"] is True
+
+    bug_day = datetime(2026, 10, 30, 18, 0, tzinfo=timezone.utc)
+    # Fresh store for bug day
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor_b.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release_b.marker")
+    latch_hard_stop(settings, bug_day)
+    # Real adjusted loss beyond -3500 → keep latch.
+    assert maybe_release_false_hard_stop(settings, bug_day, Decimal("-4000"), Decimal("100000")) is None
+    assert public_from_store(settings, bug_day)["closed"] is True
+
+
+def test_after_false_release_real_loss_still_latches(tmp_path, monkeypatch):
+    from app.options.day_floor import latch_hard_stop, maybe_release_false_hard_stop, public_from_store
+    from app.options.risk_limits import day_flatten_reason
+
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel3.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    moment = datetime(2026, 10, 30, 18, 0, tzinfo=timezone.utc)
+    latch_hard_stop(settings, moment)
+    maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000"))
+    assert public_from_store(settings, moment)["closed"] is False
+    # Kill logic still active.
+    assert day_flatten_reason(Decimal("100000"), Decimal("-3500"), TradingConfig()) == "DAILY_HARD_STOP"
+    latch_hard_stop(settings, moment)
+    assert public_from_store(settings, moment)["closed"] is True
+    assert public_from_store(settings, moment)["reason"] == "DAILY_HARD_STOP"
+    # Auto-release will not clear a post-release real latch (marker exists).
+    assert maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000")) is None
+    assert public_from_store(settings, moment)["closed"] is True

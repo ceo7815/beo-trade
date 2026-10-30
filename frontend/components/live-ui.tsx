@@ -197,7 +197,8 @@ export function Gauge({ pnl, kill, state }: { pnl: number | null; kill: number |
 export function KillBanner({ pnl, kill, state }: { pnl: number | null; kill: number | null; state?: string | null }) {
   if (state === "unknown" || pnl === null || kill === null || kill <= 0) return null;
   const loss = pnl < 0 ? -pnl : 0;
-  const tripped = state === "hard_stop" || loss >= kill;
+  // Tripped only from server hard_stop (exclusion-adjusted). Raw mark loss must not invent the banner.
+  const tripped = state === "hard_stop";
   const near = !tripped && loss >= kill * 0.7;
   if (!near && !tripped) return null;
   return (

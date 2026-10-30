@@ -418,13 +418,27 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
                 from app.trades.exclusion import adjust_day_pnl
 
                 pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), None, session_date)
-                pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date)
-                # No activities here — closed exclusions cannot be evidenced. Reuse
-                # /risk's cached today_pnl for floor + kill (same figure the desk shows).
+                # No Alpaca activities: strip seeded closed bug lots locally, then prefer /risk cache.
+                try:
+                    from app.trades.exclusion import SEEDS, closed_rows_from_seeds, matches_trade
+
+                    rules = [{**seed, "active": True} for seed in SEEDS]
+                    held = positions or []
+                    open_excluded = {
+                        str(row.get("symbol") or row.get("option_symbol") or "").replace(" ", "").upper()
+                        for row in held
+                        if isinstance(row, dict) and matches_trade(row, rules)
+                    }
+                    seed_closed = closed_rows_from_seeds(rules, session_date, open_excluded)
+                except Exception:
+                    seed_closed = []
+                pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date, closed_rows=seed_closed)
                 try:
                     from app.analytics.read_cache import read_cache
 
                     cached = read_cache.get(("risk",))
+                    if not isinstance(cached, dict):
+                        cached = read_cache.get_stale(("risk",))
                     if isinstance(cached, dict) and cached.get("today_pnl") not in {None, ""}:
                         pnl = Decimal(str(cached["today_pnl"]))
                 except Exception:
