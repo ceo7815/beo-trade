@@ -24,6 +24,8 @@ DEFAULT_BASE = "http://127.0.0.1:25503"
 EXCHANGE = ZoneInfo("America/New_York")
 LATE_QUOTE_SECONDS = 90
 REQUEST_TIMEOUT_SECONDS = 10
+# Explicit connect+read so a stuck terminal cannot hold sock.recv forever.
+REQUEST_TIMEOUT = httpx.Timeout(REQUEST_TIMEOUT_SECONDS, connect=5.0, read=15.0, write=10.0, pool=5.0)
 # A terminal that stops answering would otherwise hold one scan for every optional request's timeout.
 MAX_TRANSPORT_FAILURES = 3
 # Option paths this desk requests. Theta Terminal, not this process, decides which of them
@@ -510,9 +512,9 @@ class ThetaFeed:
         started = time.monotonic()
         stats = self.request_stats.setdefault(path, {"count": 0, "seconds": 0.0, "slowest": 0.0})
         try:
-            with httpx.Client(transport=self.transport, timeout=REQUEST_TIMEOUT_SECONDS) as client:
+            with httpx.Client(transport=self.transport, timeout=REQUEST_TIMEOUT) as client:
                 response = client.get(self.base + path, params={"format": "json", **params})
-        except httpx.HTTPError as exc:
+        except (httpx.TimeoutException, httpx.TransportError, httpx.HTTPError) as exc:
             self._count(stats, started)
             self._transport_failures += 1
             if self._transport_failures >= MAX_TRANSPORT_FAILURES:
