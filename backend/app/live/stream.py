@@ -165,6 +165,9 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     from app.analytics.kill_line import display_kill_usd
 
     kill = display_kill_usd(trading, equity)
+    # Raw equity mark. Open excluded lots can be stripped from peeked positions;
+    # closed exclusions need session fills, which the stream must not fetch — so
+    # the live card prefers risk.today_pnl (same figure as /api/v1/risk).
     mark = None if equity is None or last_equity is None else str((equity - last_equity).quantize(Decimal("0.01")))
     try:
         from app.broker.snapshot import peek
@@ -207,8 +210,14 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         state = "unknown"
     from app.options.protection_view import build_protection, display_moment, present_broker_day
 
-    # The kill state above still uses the raw mark. The card uses one presented figure.
-    source_pnl = _dec(mark) if mark is not None else (None if unknown else _dec(pnl))
+    # Prefer risk.today_pnl for the card so closed bug trades match /api/v1/risk.
+    # mark_pnl stays the (open-lot-adjusted) equity mark for diagnostics.
+    if not unknown and source == "risk" and pnl is not None:
+        source_pnl = _dec(pnl)
+    elif mark is not None:
+        source_pnl = _dec(mark)
+    else:
+        source_pnl = None if unknown else _dec(pnl)
     presented = present_broker_day(source_pnl, display_moment(), settings.calendar())
     if presented["stale"]:
         display = presented["pnl"]
