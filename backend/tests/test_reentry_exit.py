@@ -128,3 +128,37 @@ def test_a_stale_entry_is_reanchored_to_the_broker_and_keeps_the_peak(tmp_path):
         assert levels["trailing_active"] is True
         assert levels["trailing_trigger"] == Decimal(str(float(Decimal("6.10") * (Decimal("1") - Decimal(str(config.trailing_pct))))))
         assert rebase_entry(row, Decimal("2.79"), 17, config) is False
+
+def test_a_replaced_exit_order_does_not_block_the_next_exit():
+    """Alpaca replace leaves the old client id as replaced; the next exit must get a fresh id."""
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    adapter = Mock()
+    adapter.get_order_by_client_id.side_effect = lambda cid: (
+        {"client_order_id": cid, "status": "replaced", "internal_state": "REPLACED"} if cid == first else None
+    )
+    client_order_id, existing, remote = _resolve_client_order_id(_session_without_local_orders(), adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == client_order_id_for(SYMBOL, "sell_to_close", 1)
+    assert client_order_id != first
+    assert existing is None and remote is None
+
+
+def test_a_pending_replace_exit_order_is_still_not_resent():
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    adapter = Mock()
+    adapter.get_order_by_client_id.side_effect = lambda cid: (
+        {"client_order_id": cid, "status": "pending_replace", "internal_state": "PENDING_REPLACE"} if cid == first else None
+    )
+    client_order_id, _, remote = _resolve_client_order_id(_session_without_local_orders(), adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == first
+    assert remote is not None
+    assert remote["internal_state"] == "PENDING_REPLACE"
+
+
+def test_replaced_internal_state_alone_counts_as_finished():
+    """Local/remembered REPLACED without a raw status still frees the exit slot."""
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    adapter = _broker({first: "REPLACED"})
+    client_order_id, existing, remote = _resolve_client_order_id(_session_without_local_orders(), adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == client_order_id_for(SYMBOL, "sell_to_close", 1)
+    assert existing is None and remote is None
+

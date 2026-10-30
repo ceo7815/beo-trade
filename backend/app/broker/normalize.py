@@ -170,7 +170,7 @@ STATUS_TO_INTERNAL = {
     "expired": "EXPIRED",
     "done_for_day": "DONE_FOR_DAY",
     "replaced": "REPLACED",
-    "pending_replace": "REPLACED",
+    "pending_replace": "PENDING_REPLACE",
 }
 
 EVENT_TO_INTERNAL = {
@@ -186,7 +186,7 @@ EVENT_TO_INTERNAL = {
     "replaced": "REPLACED",
 }
 
-OPEN_ORDER_STATES = {"CREATED", "SUBMITTED", "ACCEPTED", "PARTIALLY_FILLED", "CANCEL_REQUESTED"}
+OPEN_ORDER_STATES = {"CREATED", "SUBMITTED", "ACCEPTED", "PARTIALLY_FILLED", "CANCEL_REQUESTED", "PENDING_REPLACE"}
 OCC = re.compile(r"^([A-Z]{1,6})(\d{2})(\d{2})(\d{2})([CP])(\d{8})$")
 
 
