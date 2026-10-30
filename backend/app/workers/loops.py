@@ -453,16 +453,53 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
         note_failure(moment)
         account = None
         pnl = None
+    maybe_release_called = False
+    maybe_release_returned = None
+    release_exception = None
+    equity_now = None
+    if account is not None and account.get("equity") not in {None, ""}:
+        try:
+            equity_now = Decimal(str(account["equity"]))
+        except Exception:
+            equity_now = None
     if session_open is True and account is not None and pnl is not None and already_closed:
         # One-time, date-scoped release of the false 30.10 hard-stop latch (bug lots), on live adjusted P&L.
+        maybe_release_called = True
         try:
             from app.options.day_floor import maybe_release_false_hard_stop
 
-            equity_now = None
-            if account.get("equity") not in {None, ""}:
-                equity_now = Decimal(str(account["equity"]))
-            if maybe_release_false_hard_stop(settings, moment, Decimal(str(pnl)), equity_now) is not None:
+            released = maybe_release_false_hard_stop(settings, moment, Decimal(str(pnl)), equity_now)
+            maybe_release_returned = released is not None
+            if released is not None:
                 already_closed = bool(public_from_store(settings, moment).get("closed"))
+        except Exception as exc:
+            release_exception = f"{type(exc).__name__}: {exc}"[:300]
+    flatten_reason = None
+    if session_open is True and pnl is not None:
+        try:
+            from app.options.risk_limits import day_flatten_reason
+
+            flatten_reason = day_flatten_reason(equity_now, pnl if isinstance(pnl, Decimal) else Decimal(str(pnl)), settings.trading())
+        except Exception as exc:
+            flatten_reason = f"error:{type(exc).__name__}"
+    if session_open is True:
+        try:
+            from app.ops.day_floor_diag import build_floor_cycle_diag, maybe_log_day_floor_diag, write_day_floor_diag
+
+            diag = build_floor_cycle_diag(
+                moment=moment,
+                session_open=session_open,
+                read_ok=read_ok,
+                already_closed=already_closed,
+                pnl=pnl if pnl is None or isinstance(pnl, Decimal) else Decimal(str(pnl)),
+                equity=equity_now,
+                flatten_reason=flatten_reason,
+                maybe_release_called=maybe_release_called,
+                maybe_release_returned=maybe_release_returned,
+                release_exception=release_exception,
+            )
+            write_day_floor_diag(diag)
+            maybe_log_day_floor_diag(diag)
         except Exception:
             pass
     try:
