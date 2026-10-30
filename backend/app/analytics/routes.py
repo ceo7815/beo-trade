@@ -441,12 +441,12 @@ def register(app: FastAPI, settings: Settings) -> None:
         countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
         from app.options.risk_limits import daily_loss_state, entry_pnl
-        from app.positions.admission import realized_session_pnl
+        from app.trades.exclusion import adjusted_realized_session_pnl
 
         realized = None
         if database_ready():
             with session_scope() as session:
-                realized = realized_session_pnl(session, datetime.now(timezone.utc))
+                realized = adjusted_realized_session_pnl(session, datetime.now(timezone.utc))
         counted = entry_pnl(measured, realized)
         from app.options.account_read import public_status
         from app.options.protection_view import build_protection

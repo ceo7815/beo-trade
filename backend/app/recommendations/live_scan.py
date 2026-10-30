@@ -218,6 +218,7 @@ def execute_scan(
         "ai_failures": counts.get("ai_failures", {}),
         "buys": counts.get("buys", 0),
         "decisions": len(rows),
+        "suppress_reasons": counts.get("suppress_reasons", {}),
         "rejections": len(rejections),
         "orders": 0,
         "fills": 0,
