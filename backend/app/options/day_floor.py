@@ -95,6 +95,161 @@ def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
     return _public(stored, trading.day_floor_steps)
 
 
+# One-time: clear the false DAILY_HARD_STOP latch caused by excluded bug lots on this NY day.
+FALSE_HARD_STOP_RELEASE_DATE = "2026-10-30"
+FALSE_HARD_STOP_RELEASE_REASON = (
+    "false hard stop from excluded bug lots, approved by Or 30.10"
+)
+
+
+def _release_marker_path():
+    from app.ops.paths import DATA_DIR
+
+    return DATA_DIR / f"day_floor_false_hs_released_{FALSE_HARD_STOP_RELEASE_DATE}"
+
+
+def maybe_release_false_hard_stop(
+    settings: Settings,
+    moment: datetime,
+    adjusted_pnl: Decimal | None,
+    equity: Decimal | None = None,
+) -> dict | None:
+    """Idempotent, date-scoped: reopen only today's false hard-stop latch.
+
+    No-op when the session is not 2026-10-30, the latch is not DAILY_HARD_STOP,
+    a release marker already exists, adjusted P&L is missing, or adjusted P&L
+    still justifies the kill / percent hard stop. Does not change kill logic —
+    a later real breach re-latches normally and will not be auto-released.
+    """
+    from app.options.risk_limits import day_flatten_reason
+
+    session_date = _session_date(settings, moment)
+    if session_date != FALSE_HARD_STOP_RELEASE_DATE:
+        return None
+    marker = _release_marker_path()
+    if marker.exists():
+        return None
+    prior = _for_date(_read(), session_date)
+    if not prior or not prior.get("closed"):
+        return None
+    if str(prior.get("reason") or "") != "DAILY_HARD_STOP":
+        return None
+    if adjusted_pnl is None:
+        return None
+    trading = settings.trading()
+    if day_flatten_reason(equity, adjusted_pnl, trading) == "DAILY_HARD_STOP":
+        return None
+    fresh = _blank(session_date)
+    # Write directly — _commit/_merge keep closed sticky and would block a release.
+    path = store_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(fresh), encoding="utf-8")
+    temporary.replace(path)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(FALSE_HARD_STOP_RELEASE_REASON + "\n", encoding="utf-8")
+    try:
+        from app.analytics.read_cache import invalidate_heavy_reads
+
+        invalidate_heavy_reads()
+    except Exception:
+        pass
+    _audit_latch_released(session_date, adjusted_pnl)
+    return _public(fresh, trading.day_floor_steps)
+
+
+def run_false_hard_stop_release_once(settings: Settings, moment: datetime | None = None) -> dict | None:
+    """Startup hook: peek broker snapshot + seed exclusions, then maybe release. No Alpaca call."""
+    moment = moment or datetime.now(ZoneInfo("UTC"))
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=ZoneInfo("UTC"))
+    equity = None
+    adjusted = None
+    try:
+        from app.broker.snapshot import peek
+        from app.trades.exclusion import SEEDS, adjust_day_pnl, closed_rows_from_seeds, matches_trade
+
+        account = peek("account")
+        raw_positions = peek("positions")
+        held = [row for row in (raw_positions if isinstance(raw_positions, list) else []) if isinstance(row, dict)]
+        if isinstance(account, dict):
+            equity = _decimal(account.get("equity"))
+            last = _decimal(account.get("last_equity"))
+            measured = None if equity is None or last is None else equity - last
+        else:
+            measured = None
+        # Prefer /risk cache when present (already exclusion-adjusted).
+        try:
+            from app.analytics.read_cache import read_cache
+
+            cached = read_cache.get(("risk",))
+            if not isinstance(cached, dict):
+                cached = read_cache.get_stale(("risk",))
+            if isinstance(cached, dict) and cached.get("today_pnl") not in {None, ""}:
+                adjusted = _decimal(cached.get("today_pnl"))
+        except Exception:
+            pass
+        if adjusted is None and measured is not None:
+            rules = [{**seed, "active": True} for seed in SEEDS]
+            try:
+                from app.trades.exclusion import active_exclusions
+
+                loaded = active_exclusions()
+                if loaded:
+                    rules = loaded
+            except Exception:
+                pass
+            session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+            open_excluded = {
+                str(row.get("symbol") or row.get("option_symbol") or "").replace(" ", "").upper()
+                for row in held
+                if matches_trade(row, rules)
+            }
+            closed = closed_rows_from_seeds(rules, session_date, open_excluded)
+            adjusted = adjust_day_pnl(measured, held, rules, session_date=session_date, closed_rows=closed)
+    except Exception:
+        return None
+    return maybe_release_false_hard_stop(settings, moment, adjusted, equity)
+
+
+def _audit_latch_released(session_date: str, adjusted_pnl: Decimal) -> None:
+    try:
+        from sqlalchemy import select
+
+        from app.models.db import SessionLocal, database_ready
+        from app.models.tables import AuditLog
+
+        if not database_ready() or SessionLocal is None:
+            return
+        entity_id = f"latch-rel:{session_date}"[:36]
+        with SessionLocal() as session:
+            prior = session.scalar(
+                select(AuditLog).where(
+                    AuditLog.action == "DAY_LATCH_RELEASED",
+                    AuditLog.entity == "day_floor",
+                    AuditLog.entity_id == entity_id,
+                )
+            )
+            if prior is not None:
+                return
+            session.add(
+                AuditLog(
+                    actor="beo-trade",
+                    action="DAY_LATCH_RELEASED",
+                    entity="day_floor",
+                    entity_id=entity_id,
+                    payload={
+                        "session_date": session_date,
+                        "reason": FALSE_HARD_STOP_RELEASE_REASON,
+                        "adjusted_pnl": str(adjusted_pnl),
+                    },
+                )
+            )
+            session.commit()
+    except Exception:
+        pass
+
+
 def day_close_reason(settings: Settings, moment: datetime) -> str | None:
     view = public_from_store(settings, moment)
     if not view.get("closed"):

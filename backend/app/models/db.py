@@ -75,6 +75,14 @@ def init_db(settings: Settings) -> None:
         except Exception:
             pass
         session.commit()
+    try:
+        from datetime import datetime, timezone
+
+        from app.options.day_floor import run_false_hard_stop_release_once
+
+        run_false_hard_stop_release_once(settings, datetime.now(timezone.utc))
+    except Exception:
+        pass
 
 
 def session_scope() -> Session:

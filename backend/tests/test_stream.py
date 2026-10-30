@@ -350,3 +350,106 @@ def test_stream_display_pnl_uses_risk_when_excluded_lot_is_closed(tmp_path, monk
     assert snap["day"]["display_pnl"] == "0.00"
     assert snap["day"]["protection"]["pnl"] == "0.00"
     read_cache.clear()
+
+
+def test_stream_without_risk_cache_does_not_use_raw_mark_for_excluded_lots(tmp_path, monkeypatch):
+    """Regression: risk cache missing + excluded seeds => not -4152 / not hard_stop."""
+    from datetime import datetime as real_dt, timezone as real_tz
+
+    from app.broker import snapshot as broker_snapshot
+    from app.live import stream as live_mod
+
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr(
+        "app.options.day_floor.observe_day_floor",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not write the day floor")),
+    )
+    monkeypatch.setattr(
+        "app.broker.runtime.open_paper_broker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not call Alpaca")),
+    )
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    fixed = real_dt(2026, 10, 30, 18, 0, tzinfo=real_tz.utc)
+    monkeypatch.setattr(
+        "app.options.protection_view.display_moment",
+        lambda: fixed,
+    )
+
+    class _DT(real_dt):
+        @classmethod
+        def now(cls, tz=None):
+            return fixed if tz is None else fixed.astimezone(tz)
+
+    monkeypatch.setattr(live_mod, "datetime", _DT)
+    broker_snapshot.isolate(tmp_path)
+    # Equity mark still carries the three bug lots (~-4150).
+    broker_snapshot.prime(
+        {
+            "positions": [],
+            "account": {"equity": "95847.48", "cash": "1", "last_equity": "100000", "buying_power": "1"},
+        }
+    )
+    read_cache.clear()
+    live_mod._LAST_GOOD_RISK = None
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "no-risk-stream.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    pnl = Decimal(snap["day"]["pnl"])
+    assert pnl > Decimal("-3500"), snap["day"]
+    assert snap["day"]["daily_loss_state"] != "hard_stop", snap["day"]
+    assert snap["day"]["pnl_source"] in {"mark_adjusted", "risk", "risk_memory"}, snap["day"]
+    # Raw diagnostic mark may still show the equity gap.
+    assert Decimal(snap["day"]["mark_pnl"]) < Decimal("-4000")
+    read_cache.clear()
+    live_mod._LAST_GOOD_RISK = None
+
+
+def test_stream_uses_stale_risk_after_ttl(tmp_path, monkeypatch):
+    from app.broker import snapshot as broker_snapshot
+    from app.live import stream as live_mod
+
+    monkeypatch.setattr("app.providers.registry.resolve_secret", lambda settings, name: ("", "missing"))
+    monkeypatch.setattr(
+        "app.broker.runtime.open_paper_broker",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("stream must not call Alpaca")),
+    )
+    monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
+    monkeypatch.setattr(
+        "app.options.protection_view.display_moment",
+        lambda: __import__("datetime").datetime(2026, 10, 30, 18, 0, tzinfo=__import__("datetime").timezone.utc),
+    )
+    broker_snapshot.isolate(tmp_path)
+    broker_snapshot.prime(
+        {
+            "positions": [],
+            "account": {"equity": "95847.48", "cash": "1", "last_equity": "100000", "buying_power": "1"},
+        }
+    )
+    read_cache.clear()
+    live_mod._LAST_GOOD_RISK = None
+    read_cache.set(("risk",), {"today_pnl": "-2.52", "daily_loss_state": "ok", "available": True}, 30)
+    # Expire fresh window the way invalidate_heavy does.
+    read_cache.invalidate_heavy()
+    assert read_cache.get(("risk",)) is None
+    stale = read_cache.get_stale(("risk",))
+    assert stale is not None and stale.get("today_pnl") == "-2.52"
+    settings = Settings(
+        app_env="local",
+        database_url="sqlite:///" + (tmp_path / "stale-risk.db").as_posix(),
+        auto_create_tables=True,
+        auth_required=False,
+        openai_price_input_per_million=Decimal("0"),
+        openai_price_output_per_million=Decimal("0"),
+    )
+    snap = live.build_snapshot(settings)
+    assert snap["day"]["pnl"] == "-2.52"
+    assert snap["day"]["daily_loss_state"] == "ok"
+    assert snap["day"]["pnl_source"] in {"risk", "risk_memory"}
+    read_cache.clear()
+    live_mod._LAST_GOOD_RISK = None

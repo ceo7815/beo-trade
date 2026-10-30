@@ -89,7 +89,8 @@ export function shownDayPnl(input: {
   if (input.note) {
     return { pnl: input.display ?? 0, note: input.note, showLast: false };
   }
-  const live = input.display !== null ? input.display : input.mark ?? input.risk;
+  // Prefer display/risk (adjusted). Never let raw mark_pnl drive the desk when risk exists.
+  const live = input.display !== null ? input.display : input.risk ?? input.mark;
   const showLast = input.closed && (live === null || live === 0) && input.lastDay !== null;
   return { pnl: showLast ? input.lastDay : live, note: null, showLast };
 }

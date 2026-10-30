@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from typing import NamedTuple
 
 REPORT_TTL_SECONDS = 45
-RISK_TTL_SECONDS = 30
+RISK_TTL_SECONDS = 60
 FINANCE_TTL_SECONDS = 45
 BROKER_TTL_SECONDS = 8
 # Fill pages are the slow part of report/trades. A new fill drops this entry,
@@ -47,6 +47,10 @@ class ReadCache:
             if item is None or item.expires <= time.monotonic():
                 return None
             return copy.deepcopy(item.value)
+
+    def get_stale(self, key: tuple):
+        """Last good payload even after TTL / invalidate_heavy. Never hits the broker."""
+        return self._stale(key)
 
     def set(self, key: tuple, value: object, ttl: float) -> None:
         if ttl <= 0 or not _keep(value):

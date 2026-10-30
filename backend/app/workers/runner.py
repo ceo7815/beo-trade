@@ -154,6 +154,12 @@ def run_forever() -> None:
     _lock_handle = acquire_single_worker_lock(WORKER_LOCK)
     configure_database(settings)
     init_db(settings)
+    try:
+        from app.options.day_floor import run_false_hard_stop_release_once
+
+        run_false_hard_stop_release_once(settings)
+    except Exception:
+        pass
     signal.signal(signal.SIGTERM, _request_stop)
     signal.signal(signal.SIGINT, _request_stop)
     calendar = settings.calendar()

@@ -26,6 +26,9 @@ HEARTBEAT_SECONDS = 15
 # Tests stop the generator. Production stays at 0 (no cap).
 MAX_EVENTS = 0
 
+# Last risk-derived day fields when the cache is briefly empty.
+_LAST_GOOD_RISK: dict | None = None
+
 
 def _plain(value):
     if isinstance(value, Decimal):
@@ -148,7 +151,7 @@ def _scan() -> dict:
 
 
 def _hard_stop_state(trading, equity: Decimal | None, pnl: str | None, state: str | None, floor: dict | None) -> str | None:
-    """Surface #3's DAILY_HARD_STOP. Read only: no floor write."""
+    """Surface #3's DAILY_HARD_STOP from adjusted P&L only. Read only: no floor write."""
     from app.options.risk_limits import day_flatten_reason
 
     if day_flatten_reason(equity, _dec(pnl), trading) == "DAILY_HARD_STOP":
@@ -158,6 +161,67 @@ def _hard_stop_state(trading, equity: Decimal | None, pnl: str | None, state: st
     return state
 
 
+def _remember_risk(risk: dict | None) -> None:
+    global _LAST_GOOD_RISK
+    if not isinstance(risk, dict):
+        return
+    if risk.get("today_pnl") in {None, ""}:
+        return
+    if risk.get("daily_loss_state") == "unknown":
+        return
+    _LAST_GOOD_RISK = {
+        "today_pnl": str(risk.get("today_pnl")),
+        "daily_loss_state": risk.get("daily_loss_state"),
+        "daily_loss_used": risk.get("daily_loss_used"),
+        "daily_loss_limit": risk.get("daily_loss_limit"),
+        "daily_kill_loss_usd": risk.get("daily_kill_loss_usd"),
+        "open_positions": risk.get("open_positions"),
+        "day_floor": risk.get("day_floor"),
+        "available": True,
+    }
+
+
+def _resolve_risk(risk: dict | None) -> tuple[dict | None, str]:
+    """Prefer fresh risk, then stale cache, then last good in-memory frame. Never invent from raw mark here."""
+    if isinstance(risk, dict) and risk.get("today_pnl") not in {None, ""}:
+        _remember_risk(risk)
+        return risk, "risk"
+    if isinstance(risk, dict) and risk.get("daily_loss_state") == "unknown":
+        return risk, "risk"
+    if _LAST_GOOD_RISK is not None:
+        return dict(_LAST_GOOD_RISK), "risk_memory"
+    return None, "none"
+
+
+def _seed_adjusted_mark(raw_mark: Decimal | None, held: list[dict], settings: Settings) -> Decimal | None:
+    """Strip seeded closed bug lots from the equity mark without calling Alpaca."""
+    if raw_mark is None:
+        return None
+    from zoneinfo import ZoneInfo
+
+    from app.trades.exclusion import SEEDS, adjust_day_pnl, closed_rows_from_seeds
+
+    moment = datetime.now(timezone.utc)
+    session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+    rules = [{**seed, "active": True} for seed in SEEDS]
+    try:
+        from app.trades.exclusion import active_exclusions
+
+        loaded = active_exclusions()
+        if loaded:
+            rules = loaded
+    except Exception:
+        pass
+    open_excluded = set()
+    from app.trades.exclusion import matches_trade
+
+    for row in held:
+        if matches_trade(row, rules):
+            open_excluded.add(str(row.get("symbol") or row.get("option_symbol") or "").replace(" ", "").upper())
+    closed = closed_rows_from_seeds(rules, session_date, open_excluded)
+    return adjust_day_pnl(raw_mark, held, rules, session_date=session_date, closed_rows=closed)
+
+
 def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     trading = settings.trading()
     equity = _dec((account or {}).get("equity"))
@@ -165,35 +229,42 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     from app.analytics.kill_line import display_kill_usd
 
     kill = display_kill_usd(trading, equity)
-    # Raw equity mark. Open excluded lots can be stripped from peeked positions;
-    # closed exclusions need session fills, which the stream must not fetch — so
-    # the live card prefers risk.today_pnl (same figure as /api/v1/risk).
-    mark = None if equity is None or last_equity is None else str((equity - last_equity).quantize(Decimal("0.01")))
+    # Diagnostic equity mark (open-lot adjust only). Never drive the card / hard-stop from this alone.
+    raw_mark = None if equity is None or last_equity is None else (equity - last_equity)
+    mark = None if raw_mark is None else str(raw_mark.quantize(Decimal("0.01")))
+    held: list[dict] = []
     try:
         from app.broker.snapshot import peek
         from app.trades.exclusion import adjust_day_pnl
 
         raw = peek("positions")
-        held = raw if isinstance(raw, list) else []
-        adjusted_mark = adjust_day_pnl(_dec(mark), [row for row in held if isinstance(row, dict)])
-        mark = None if adjusted_mark is None else str(adjusted_mark.quantize(Decimal("0.01")))
+        held = [row for row in (raw if isinstance(raw, list) else []) if isinstance(row, dict)]
+        open_only = adjust_day_pnl(raw_mark, held)
+        mark = None if open_only is None else str(open_only.quantize(Decimal("0.01")))
     except Exception:
         pass
+
+    risk_body, risk_kind = _resolve_risk(risk)
     pnl = None
     source = "none"
     state = None
-    if isinstance(risk, dict) and risk.get("daily_loss_state") == "unknown":
+    if isinstance(risk_body, dict) and risk_body.get("daily_loss_state") == "unknown":
         state = "unknown"
-    elif isinstance(risk, dict) and risk.get("today_pnl") not in {None, ""}:
-        pnl = str(risk.get("today_pnl"))
-        source = "risk"
-        state = risk.get("daily_loss_state")
-    elif mark is not None and equity is not None:
-        pnl = mark
-        source = "mark"
-        from app.options.risk_limits import daily_loss_state
+        source = risk_kind
+    elif isinstance(risk_body, dict) and risk_body.get("today_pnl") not in {None, ""}:
+        pnl = str(risk_body.get("today_pnl"))
+        source = risk_kind
+        state = risk_body.get("daily_loss_state")
+    else:
+        # Never fall back to the raw/open-only mark for display or kill state — it still
+        # includes closed bug lots. Seed-adjust locally (no Alpaca) or stay unknown.
+        adjusted = _seed_adjusted_mark(raw_mark, held, settings)
+        if adjusted is not None and equity is not None:
+            from app.options.risk_limits import daily_loss_state
 
-        state = daily_loss_state(equity, _dec(mark), trading)
+            pnl = str(adjusted.quantize(Decimal("0.01")))
+            source = "mark_adjusted"
+            state = daily_loss_state(equity, adjusted, trading)
     floor = None
     try:
         from app.options.day_floor import public_from_store
@@ -201,23 +272,17 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         floor = public_from_store(settings, datetime.now(timezone.utc))
     except Exception:
         floor = None
+    # Hard-stop banner uses the same adjusted pnl as the card — never raw mark.
     state = _hard_stop_state(trading, equity, pnl, state, floor)
-    if state is None and isinstance(risk, dict):
-        state = risk.get("daily_loss_state")
+    if state is None and isinstance(risk_body, dict):
+        state = risk_body.get("daily_loss_state")
     unknown = state == "unknown" or (pnl is None and state != "hard_stop")
     if unknown:
         pnl = None
         state = "unknown"
     from app.options.protection_view import build_protection, display_moment, present_broker_day
 
-    # Prefer risk.today_pnl for the card so closed bug trades match /api/v1/risk.
-    # mark_pnl stays the (open-lot-adjusted) equity mark for diagnostics.
-    if not unknown and source == "risk" and pnl is not None:
-        source_pnl = _dec(pnl)
-    elif mark is not None:
-        source_pnl = _dec(mark)
-    else:
-        source_pnl = None if unknown else _dec(pnl)
+    source_pnl = None if unknown else _dec(pnl)
     presented = present_broker_day(source_pnl, display_moment(), settings.calendar())
     if presented["stale"]:
         display = presented["pnl"]
@@ -235,18 +300,19 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
 
     opened = None if display is None or presented["stale"] else cached_day_capital(settings)
     returns = day_return_fields(None if presented["stale"] else display, opened)
+    risk_for_fields = risk_body if isinstance(risk_body, dict) else None
     return {
         "pnl": pnl,
         "mark_pnl": mark,
         "display_pnl": None if display is None else str(Decimal(display).quantize(Decimal("0.01"))),
         "day_pnl_note": presented["note"],
         "pnl_source": source,
-        "daily_loss_used": None if unknown or not isinstance(risk, dict) else risk.get("daily_loss_used"),
-        "daily_loss_limit": None if not isinstance(risk, dict) else risk.get("daily_loss_limit"),
-        "daily_kill_loss_usd": kill if kill is not None else (None if not isinstance(risk, dict) else risk.get("daily_kill_loss_usd")),
+        "daily_loss_used": None if unknown or not risk_for_fields else risk_for_fields.get("daily_loss_used"),
+        "daily_loss_limit": None if not risk_for_fields else risk_for_fields.get("daily_loss_limit"),
+        "daily_kill_loss_usd": kill if kill is not None else (None if not risk_for_fields else risk_for_fields.get("daily_kill_loss_usd")),
         "daily_loss_state": state,
-        "open_positions": None if not isinstance(risk, dict) else risk.get("open_positions"),
-        "day_floor": floor if floor is not None else (None if not isinstance(risk, dict) else risk.get("day_floor")),
+        "open_positions": None if not risk_for_fields else risk_for_fields.get("open_positions"),
+        "day_floor": floor if floor is not None else (None if not risk_for_fields else risk_for_fields.get("day_floor")),
         "protection": protection,
         "day_return_pct": returns["day_return_pct"],
         "day_invested_usd": returns["day_invested_usd"],
@@ -297,6 +363,10 @@ def build_snapshot(settings: Settings) -> dict:
     position_frame = _cached_positions()
     account_frame = _cached_account()
     risk = read_cache.get(("risk",))
+    if not isinstance(risk, dict):
+        # TTL / invalidate_heavy ends the fresh window; keep serving the last good risk
+        # so the day card never flickers onto the raw equity mark.
+        risk = read_cache.get_stale(("risk",))
     if not isinstance(risk, dict):
         risk = None
     return {
