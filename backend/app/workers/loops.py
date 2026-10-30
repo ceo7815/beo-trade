@@ -1115,6 +1115,16 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
 
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
         measured = adjust_day_pnl(measured, positions, session_date=session_date, activities=activities)
+        if activities is None:
+            # Closed bug-lot impact needs fills. Prefer /risk's adjusted today_pnl over raw mark.
+            try:
+                from app.analytics.read_cache import read_cache
+
+                cached = read_cache.get(("risk",))
+                if isinstance(cached, dict) and cached.get("today_pnl") not in {None, ""}:
+                    measured = Decimal(str(cached["today_pnl"]))
+            except Exception:
+                pass
         _submit_step(log, "trading_day_pnl", pnl_ready=measured is not None)
         floor = observe_day_floor(settings, measured, moment, session_open)
         _submit_step(log, "day_floor", closed=bool(floor.get("closed")), reason=str(floor.get("reason") or ""))
