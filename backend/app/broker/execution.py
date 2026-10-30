@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.broker.normalize import clock_day, parse_option_symbol
+from app.broker.normalize import OPEN_ORDER_STATES, clock_day, parse_option_symbol
 from app.control.halt import is_halted, order_blocked_by_halt
 from app.broker.store import open_order_for_symbol, order_by_client, record_trade_event
 from app.config.settings import Settings
@@ -16,7 +16,7 @@ from app.models.tables import ApprovalRecord, BrokerOrderRecord, RecommendationR
 from app.schemas.domain import OptionSnapshot
 
 
-FINISHED_ORDER_STATES = frozenset({"FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED", "DONE_FOR_DAY"})
+FINISHED_ORDER_STATES = frozenset({"FILLED", "CANCELLED", "CANCELED", "EXPIRED", "REJECTED", "DONE_FOR_DAY", "REPLACED"})
 MAX_EXIT_ATTEMPTS = 50
 
 
@@ -26,9 +26,30 @@ def client_order_id_for(trade_id: str, intent: str, attempt: int = 0) -> str:
 
 
 def _finished(existing: BrokerOrderRecord | None, remote: dict | None) -> bool:
+    """A replaced Alpaca order is done; its replacement is a separate order. pending_replace stays live."""
     if remote is not None:
+        raw = str(remote.get("status") or "").lower()
+        if raw == "replaced":
+            return True
+        if raw == "pending_replace":
+            return False
         return str(remote.get("internal_state") or "").upper() in FINISHED_ORDER_STATES
     return existing is not None and str(existing.status or "").upper() in FINISHED_ORDER_STATES
+
+
+def _order_is_live(existing: BrokerOrderRecord | None, remote: dict | None) -> bool:
+    if remote is not None:
+        raw = str(remote.get("status") or "").lower()
+        if raw == "replaced":
+            return False
+        if raw == "pending_replace":
+            return True
+        state = str(remote.get("internal_state") or "").upper()
+        return state in OPEN_ORDER_STATES or state == "PENDING_REPLACE"
+    if existing is None:
+        return False
+    state = str(existing.status or "").upper()
+    return state in OPEN_ORDER_STATES or state == "PENDING_REPLACE"
 
 
 def _resolve_client_order_id(session: Session, adapter, trade_id: str, intent: str):
@@ -200,6 +221,25 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
     trade_id = str(request.get("trade_id") or (stored.trade_id if stored is not None else "") or uuid.uuid4())
     client_order_id, existing, remote = _resolve_client_order_id(session, adapter, trade_id, intent)
     if existing is not None or remote is not None:
+        if intent == "sell_to_close" and not _order_is_live(existing, remote):
+            from app.ops.failure import log_failure
+
+            log_failure(
+                "worker.exit_duplicate_without_live_order",
+                RuntimeError("exit duplicate without live order"),
+                service="worker",
+                where="place_order",
+                trade_id=trade_id,
+                client_order_id=client_order_id,
+            )
+            record_trade_event(
+                session,
+                trade_id,
+                "BLOCKED",
+                "beo-trade",
+                "EXIT_DUPLICATE_WITHOUT_LIVE_ORDER",
+                str(request.get("recommendation_id") or ""),
+            )
         record_trade_event(session, trade_id, "ENTRY_SUBMITTED" if intent == "buy_to_open" else "EXIT_SUBMITTED", "beo-trade", "פקודה קיימת לא נשלחה שוב", str(request.get("recommendation_id") or ""))
         return {"duplicate": True, "order": remote or {"client_order_id": client_order_id, "status": existing.status}, "trade_id": trade_id}
     account = adapter.get_account()

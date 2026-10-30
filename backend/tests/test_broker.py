@@ -150,6 +150,7 @@ def test_order_states_do_not_treat_submitted_as_filled():
     assert internal_state("expired") == "EXPIRED"
     assert internal_state("done_for_day") == "DONE_FOR_DAY"
     assert internal_state("replaced") == "REPLACED"
+    assert internal_state("pending_replace") == "PENDING_REPLACE"
     assert internal_state("nope") == "ERROR"
     assert internal_state("new") != "FILLED"
 
