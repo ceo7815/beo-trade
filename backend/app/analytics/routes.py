@@ -257,18 +257,22 @@ def register(app: FastAPI, settings: Settings) -> None:
             history = fetched.get("history")
             year = fetched.get("year")
             activities = fetched.get("activities")
+        from app.trades.exclusion import active_exclusions, adjust_day_pnl, annotate_trades, countable_positions, for_stats
+
+        exclusions = active_exclusions()
+        countable = countable_positions(positions or [], exclusions) if positions is not None else None
         exposure = None
-        if positions is not None:
+        if countable is not None:
             total = Decimal("0")
             seen = False
-            for row in positions:
+            for row in countable:
                 raw = row.get("market_value")
                 if raw in {None, ""}:
                     continue
                 seen = True
                 total += abs(Decimal(str(raw)))
-            exposure = str(total.quantize(Decimal("0.01"))) if seen or positions == [] else None
-            if positions == []:
+            exposure = str(total.quantize(Decimal("0.01"))) if seen or countable == [] else None
+            if countable == []:
                 exposure = "0.00"
         book = canonical_book(
             fetched.get("fills") or [],
@@ -291,9 +295,12 @@ def register(app: FastAPI, settings: Settings) -> None:
             exit_reason=exit_reason,
             hour=hour,
         )
-        grouped = [ratio_return(row) for row in filtered]
+        counted = for_stats(filtered, exclusions)
+        display_closed = annotate_trades(filtered, exclusions)
+        grouped = [ratio_return(row) for row in counted]
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date, activities=activities, closed_rows=[finance_row(row) for row in closed])
         points = [] if history is None else history.get("points") or []
         year_points = [] if year is None else year.get("points") or []
         payload = {
@@ -308,7 +315,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             },
             "today_pnl": None if measured is None else str(measured.quantize(Decimal("0.01"))),
             "paper_limitation": "ביצוע Paper אינו משחזר השפעת שוק, מיקום בתור, דליפת מידע או slippage של לייב. רווח Paper אינו ראיה לרווח בלייב.",
-            "open_positions": None if positions is None else len(positions),
+            "open_positions": None if countable is None else len(countable),
             "exposure": exposure,
             "history": history,
             "drawdown": drawdown_from_equity(points),
@@ -321,13 +328,13 @@ def register(app: FastAPI, settings: Settings) -> None:
             "hours": {"note": "אין מספיק נתונים"},
             "exits": {"note": "אין מספיק נתונים"},
             "closed_trades_source": book["source"],
-            "trades": finance_totals(filtered),
-            "closed_trades": [public_closed(row) for row in filtered],
+            "trades": finance_totals(counted),
+            "closed_trades": [public_closed(row) for row in display_closed],
             "by_side": split_by(grouped, "right"),
             "by_dte": split_by([row for row in grouped if row.get("bucket")], "bucket"),
             "by_symbol": split_by(grouped, "underlying"),
             "sector": {"available": False, "note": "נתוני סקטור אינם זמינים"},
-            "best_worst": {"note": "אין מספיק מידע לניתוח"} if len(filtered) < 3 else _best_worst(filtered),
+            "best_worst": {"note": "אין מספיק מידע לניתוח"} if len(counted) < 3 else _best_worst(counted),
         }
         if account is None or history is None:
             payload["available"] = False
@@ -407,6 +414,12 @@ def register(app: FastAPI, settings: Settings) -> None:
         equity = None if account is None or account.get("equity") in {None, ""} else Decimal(str(account["equity"]))
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         measured = None if account is None else trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        from app.trades.exclusion import active_exclusions, adjust_day_pnl, annotate_positions, countable_positions, excluded_open_rows
+
+        exclusions = active_exclusions()
+        measured = adjust_day_pnl(measured, positions or [], exclusions, session_date=session_date, activities=activities)
+        excluded_rows = excluded_open_rows(positions or [], exclusions)
+        countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
         from app.options.risk_limits import daily_loss_state, entry_pnl
         from app.positions.admission import realized_session_pnl
@@ -430,7 +443,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                 loss_used = "0.00"
         else:
             daily = None
-        count = None if positions is None else len(positions)
+        count = None if countable is None else len(countable)
         stopped = False
         warning = False
         from app.options.risk_limits import day_flatten_reason
@@ -507,6 +520,22 @@ def register(app: FastAPI, settings: Settings) -> None:
             "sector_note": "נתוני סקטור אינם זמינים",
             "day_floor": day_floor,
             "protection": protection,
+            "excluded_trades": [
+                {
+                    "symbol": row.get("symbol"),
+                    "qty": row.get("qty"),
+                    "pnl": "0.00",
+                    "reason": row.get("excluded_reason"),
+                    "bug_label": row.get("bug_label"),
+                }
+                for row in excluded_rows
+            ],
+            "excluded_note": None
+            if not excluded_rows
+            else "עסקת באג אינה נספרת ב-P&L היום, ברצפה או בקייל. היתרה ב-Alpaca כוללת אותה.",
+            "equity_note": None
+            if not excluded_rows
+            else "יתרת Alpaca כפי שהיא; P&L התצוגה מנוכה מעסקת הבאג",
         }
 
     @app.get("/api/v1/report/trades")
@@ -548,14 +577,18 @@ def register(app: FastAPI, settings: Settings) -> None:
 
                 entries = load_usage(session, _usage_since(frame, settings.exchange_timezone), make_ledger(settings).cost_of)
                 ai_cost = sum((entry.cost for entry in entries if within(entry.created_at, frame)), Decimal("0"))
+        from app.trades.exclusion import active_exclusions, annotate_trades, for_stats
+
+        exclusions = active_exclusions()
+        summary = summarize(for_stats(closed, exclusions), for_stats(still_open, exclusions), ai_cost)
         return {
             "environment": "PAPER",
             "available": True,
             "source": report["source"],
             "window": frame,
-            "summary": summarize(closed, still_open, ai_cost),
-            "closed": closed,
-            "open": still_open,
+            "summary": summary,
+            "closed": annotate_trades(closed, exclusions),
+            "open": annotate_trades(still_open, exclusions),
             "orphan_sells": report["orphan_sells"],
             "paper_limitation": "מחירי מילוי Paper אופטימיים ביחס ללייב. רווח Paper אינו ראיה לרווח בכסף אמיתי.",
         }
@@ -574,12 +607,13 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     def _learning_trades(authorization: str | None, period: str) -> dict:
         from app.analytics import learning
+        from app.trades.exclusion import for_stats
 
         report = trades_report(authorization=authorization, period=period, start="", end="")
         if not report.get("available"):
             return report
         config = settings.trading()
-        closed = report["closed"]
+        closed = for_stats(report["closed"])
         paths = learning.load_paths(closed, config)
         rules = learning.current_rules(config)
         rows = []
@@ -640,16 +674,18 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     def _learning_lab(authorization: str | None, period: str) -> dict:
         from app.analytics import learning
+        from app.trades.exclusion import for_stats
 
         report = trades_report(authorization=authorization, period=period, start="", end="")
         if not report.get("available"):
             return report
         config = settings.trading()
-        paths = learning.load_paths(report["closed"], config)
-        key = (period, len(report["closed"]), sum(len(points) for points in paths.values()))
+        closed = for_stats(report["closed"])
+        paths = learning.load_paths(closed, config)
+        key = (period, len(closed), sum(len(points) for points in paths.values()))
         cached = _lab_cache.get(key)
         if cached is None:
-            cached = learning.lab(report["closed"], paths, config)
+            cached = learning.lab(closed, paths, config)
             _lab_cache.clear()
             _lab_cache[key] = cached
         return _with_source_age({"environment": "PAPER", "available": True, "window": report["window"], **cached}, report)

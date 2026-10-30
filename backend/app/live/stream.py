@@ -73,10 +73,12 @@ def _slim_account(account: dict) -> dict:
 
 def _cached_positions() -> dict:
     from app.broker.snapshot import peek
+    from app.trades.exclusion import annotate_positions
 
     rows = peek("positions")
     items = rows if isinstance(rows, list) else []
-    return {"items": [_slim_position(item) for item in items if isinstance(item, dict)]}
+    slim = [_slim_position(item) for item in items if isinstance(item, dict)]
+    return {"items": annotate_positions(slim)}
 
 
 def _cached_account() -> dict | None:
@@ -164,6 +166,16 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
 
     kill = display_kill_usd(trading, equity)
     mark = None if equity is None or last_equity is None else str((equity - last_equity).quantize(Decimal("0.01")))
+    try:
+        from app.broker.snapshot import peek
+        from app.trades.exclusion import adjust_day_pnl
+
+        raw = peek("positions")
+        held = raw if isinstance(raw, list) else []
+        adjusted_mark = adjust_day_pnl(_dec(mark), [row for row in held if isinstance(row, dict)])
+        mark = None if adjusted_mark is None else str(adjusted_mark.quantize(Decimal("0.01")))
+    except Exception:
+        pass
     pnl = None
     source = "none"
     state = None
@@ -178,7 +190,7 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         source = "mark"
         from app.options.risk_limits import daily_loss_state
 
-        state = daily_loss_state(equity, equity - last_equity, trading)  # type: ignore[operator]
+        state = daily_loss_state(equity, _dec(mark), trading)
     floor = None
     try:
         from app.options.day_floor import public_from_store

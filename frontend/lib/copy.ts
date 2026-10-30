@@ -66,6 +66,7 @@ export const copy = {
   paper: "PAPER",
   paperTrading: "PAPER",
   common: {
+    bugTrade: "עסקת באג",
     loading: "טוען",
     connecting: "מתחבר",
     live: "חי",

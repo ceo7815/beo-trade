@@ -216,7 +216,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             quotes = _loaded_bundles(settings, moment, _held_underlyings(positions))
         bundles = quotes if quotes is not None else {}
         session_open, book_close = _session_state(settings, adapter, moment)
-        floor = _account_day_floor(settings, adapter, moment, session_open)
+        floor = _account_day_floor(settings, adapter, moment, session_open, positions)
         if floor.get("closed") and submit:
             if floor.get("reason") == "DAILY_HARD_STOP" and not floor.get("cleared"):
                 _cancel_open_orders(adapter, include_sells=True)
@@ -355,7 +355,7 @@ def _theta_exit(settings: Settings, adapter, symbol: str, trade_id: str, entry, 
     return signal, session_close
 
 
-def _load_tracked_day(settings: Settings, adapter, moment: datetime):
+def _load_tracked_day(settings: Settings, adapter, moment: datetime, positions: list | None = None):
     """Account plus day P&L. False means the read failed and the kill was not seen."""
     try:
         account = adapter.get_account()
@@ -375,8 +375,10 @@ def _load_tracked_day(settings: Settings, adapter, moment: datetime):
         return None, None, False
     try:
         from app.analytics.finance import trading_day_pnl
+        from app.trades.exclusion import adjust_day_pnl
 
         pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date, activities=activities)
     except Exception:
         return None, None, False
     if pnl is None:
@@ -384,7 +386,7 @@ def _load_tracked_day(settings: Settings, adapter, moment: datetime):
     return account, pnl, True
 
 
-def _account_day_floor(settings: Settings, adapter, moment: datetime, session_open: bool | None) -> dict:
+def _account_day_floor(settings: Settings, adapter, moment: datetime, session_open: bool | None, positions: list | None = None) -> dict:
     """Latch the day floor, and the daily kill, from the account mark. A quote-only test adapter does not write the latch.
 
     A failed account read leaves the latch where it is and marks the day loss unknown.
@@ -402,7 +404,7 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
     if session_open is True:
         already_closed = bool(public_from_store(settings, moment).get("closed"))
         if hasattr(adapter, "get_activities"):
-            account, pnl, read_ok = _load_tracked_day(settings, adapter, moment)
+            account, pnl, read_ok = _load_tracked_day(settings, adapter, moment, positions)
         else:
             try:
                 account = adapter.get_account()
@@ -413,7 +415,10 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
                 from zoneinfo import ZoneInfo
 
                 session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
+                from app.trades.exclusion import adjust_day_pnl
+
                 pnl = trading_day_pnl(account.get("equity"), account.get("last_equity"), None, session_date)
+                pnl = adjust_day_pnl(pnl, positions or [], session_date=session_date)
     if read_ok is True:
         from app.options.account_read import note_success
 
@@ -872,8 +877,10 @@ def _measured_sectors(settings: Settings) -> dict[str, Decimal] | None:
     from app.broker.normalize import parse_option_symbol
     from app.options.risk_limits import sector_key
 
+    from app.trades.exclusion import countable_positions
+
     book: dict[str, Decimal] = {}
-    for row in rows:
+    for row in countable_positions(rows):
         symbol = str(row.get("symbol") or "")
         contract = parse_option_symbol(symbol)
         underlying = str(row.get("underlying") or (contract or {}).get("underlying") or symbol)
@@ -1039,7 +1046,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 blocked_all("BROKER_POSITIONS_UNAVAILABLE")
             return
         _submit_step(log, "positions_orders", positions=len(positions), open_orders=len(open_orders))
-        open_premium = _open_premium(positions, open_orders, settings.trading().contract_multiplier)
+        from app.trades.exclusion import countable_positions
+
+        limit_positions = countable_positions(positions)
+        open_premium = _open_premium(limit_positions, open_orders, settings.trading().contract_multiplier)
         if open_premium is None:
             blocked_all("OPEN_PREMIUM_UNKNOWN")
             return
@@ -1091,7 +1101,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             activity_after=activity_after,
             activity_until=activity_until,
         )
+        from app.trades.exclusion import adjust_day_pnl
+
         measured = trading_day_pnl(account.get("equity"), account.get("last_equity"), activities, session_date)
+        measured = adjust_day_pnl(measured, positions, session_date=session_date, activities=activities)
         _submit_step(log, "trading_day_pnl", pnl_ready=measured is not None)
         floor = observe_day_floor(settings, measured, moment, session_open)
         _submit_step(log, "day_floor", closed=bool(floor.get("closed")), reason=str(floor.get("reason") or ""))
@@ -1160,13 +1173,13 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 equity,
                 row.quantity,
                 settings.trading(),
-                positions=positions,
+                positions=limit_positions,
                 orders=open_orders,
                 state_risk=state_risk,
                 open_premium=open_premium,
                 sector_premium=sector_premium,
                 buying_power=buying,
-                open_positions=len(positions),
+                open_positions=len(limit_positions),
                 failed_underlyings=failed_underlyings,
             )
             snapshot = broker_risk_snapshot(
