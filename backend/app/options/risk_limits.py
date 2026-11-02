@@ -50,13 +50,13 @@ def day_flatten_reason(equity: Decimal | None, day_pnl: Decimal | None, config: 
 
     day_pnl is the account mark versus last_equity: realized plus the unrealized of open positions, after same-day funding.
     A missing mark does not flatten. The dollar line is daily_kill_loss_usd on the 100K profile, or
-    daily_kill_ils converted at ils_per_usd on the 10K profile; 0 turns that line off and leaves the percent stop.
+    daily_kill_pct × live equity on the 10K profile (kill first); 0 turns that line off and leaves the percent stop.
     """
     if day_pnl is None:
         return None
     from app.capital import effective_kill_usd
 
-    limit = effective_kill_usd(config)
+    limit = effective_kill_usd(config, equity)
     if limit > 0 and day_pnl <= -limit:
         return "DAILY_HARD_STOP"
     if equity is None:

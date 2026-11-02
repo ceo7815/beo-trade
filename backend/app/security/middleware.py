@@ -29,6 +29,8 @@ READ_PATHS = (
     "/api/v1/finance",
     "/api/v1/finance/reconciliation",
     "/api/v1/risk",
+    "/api/v1/trading-periods",
+    "/api/v1/trading-rules",
     "/api/v1/diag/day-floor",
     "/api/v1/report/trades",
     "/api/v1/learning/trades",

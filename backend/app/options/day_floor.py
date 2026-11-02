@@ -126,17 +126,25 @@ def advance_trail(
     }
 
 
-def observe_day_floor(settings: Settings, pnl: Decimal | None, moment: datetime, session_open: bool) -> dict:
+def observe_day_floor(
+    settings: Settings,
+    pnl: Decimal | None,
+    moment: datetime,
+    session_open: bool,
+    equity: Decimal | None = None,
+) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
-    from app.capital import day_trail_arm_usd, day_trail_enabled
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
 
-    if day_trail_enabled(trading):
-        arm = day_trail_arm_usd(trading)
+    if day_trail_enabled(trading, equity):
+        arm = day_trail_arm_usd(trading, equity)
         if arm is None:
             return _public_trail(prior, None, None)
-        initial = (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.5) or 0.5))).quantize(Decimal("0.01"))
+        initial = day_trail_protect_usd(trading, equity)
+        if initial is None:
+            initial = (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.75) or 0.75))).quantize(Decimal("0.01"))
         trail_pct = Decimal(str(getattr(trading, "day_trail_pct", 0.30) or 0.30))
         if not session_open:
             return _public_trail(prior, arm, initial)
@@ -159,11 +167,11 @@ def latch_hard_stop(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": "DAILY_HARD_STOP"}
     stored = _commit(prior, updated)
-    from app.capital import day_trail_arm_usd, day_trail_enabled
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
 
     if day_trail_enabled(trading):
         arm = day_trail_arm_usd(trading)
-        initial = None if arm is None else (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.5) or 0.5))).quantize(Decimal("0.01"))
+        initial = day_trail_protect_usd(trading) if arm is not None else None
         return _public_trail(stored, arm, initial)
     return _public(stored, trading.day_floor_steps)
 
@@ -176,11 +184,11 @@ def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": str(base.get("reason") or "DAILY_HARD_STOP"), "cleared": True}
     stored = _commit(prior, updated)
-    from app.capital import day_trail_arm_usd, day_trail_enabled
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
 
     if day_trail_enabled(trading):
         arm = day_trail_arm_usd(trading)
-        initial = None if arm is None else (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.5) or 0.5))).quantize(Decimal("0.01"))
+        initial = day_trail_protect_usd(trading) if arm is not None else None
         return _public_trail(stored, arm, initial)
     return _public(stored, trading.day_floor_steps)
 
@@ -353,11 +361,11 @@ def public_from_store(settings: Settings, moment: datetime) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
-    from app.capital import day_trail_arm_usd, day_trail_enabled
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
 
     if day_trail_enabled(trading):
         arm = day_trail_arm_usd(trading)
-        initial = None if arm is None else (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.5) or 0.5))).quantize(Decimal("0.01"))
+        initial = day_trail_protect_usd(trading) if arm is not None else None
         return _public_trail(prior, arm, initial)
     return _public(prior, trading.day_floor_steps)
 

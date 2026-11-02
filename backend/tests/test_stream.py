@@ -3,6 +3,13 @@ from decimal import Decimal
 from fastapi.testclient import TestClient
 
 from app.analytics.read_cache import read_cache
+
+import pytest
+
+@pytest.fixture(autouse=True)
+def _freeze_fx(monkeypatch):
+    monkeypatch.setattr("app.capital.fx.live_ils_per_usd", lambda force=False: None)
+
 from app.config.settings import Settings
 from app.live import stream as live
 from app.main import create_app
@@ -142,8 +149,8 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
     assert snap["positions"]["items"][0]["underlying"] == "AMD"
     assert snap["day"]["pnl"] == "-250.50"
     assert snap["day"]["pnl_source"] == "risk"
-    assert snap["day"]["daily_kill_loss_usd"] == "108.11"
-    # 70,000 × 5% is also 3,500. A different equity must still read the dollar line.
+    # $70k equity × 3.14 ≈ 219.8k ₪ → tier-3 100K rules → kill 3.5% = $2,450
+    assert snap["day"]["daily_kill_loss_usd"] == "2450.00"
     broker_snapshot.prime(
         {
             "positions": [{"symbol": "X", "underlying": "AMD", "current_price": "1.10", "unrealized_pl": "12"}],
@@ -152,7 +159,7 @@ def test_snapshot_reads_cache_sets_kill_dollars_and_does_not_write_the_floor(tmp
     )
     larger = live.build_snapshot(settings)
     assert larger["day"]["mark_pnl"] == "10000.00"
-    assert larger["day"]["daily_kill_loss_usd"] == "108.11"
+    assert larger["day"]["daily_kill_loss_usd"] == "3500.00"
     assert snap["day"]["mark_pnl"] == "1000.00"
     assert "status" in snap and snap["status"]["market_phase"]
     assert "positions" in snap and "day" in snap and "quotes" in snap
@@ -167,11 +174,12 @@ def test_snapshot_reports_hard_stop_at_the_dollar_kill(tmp_path, monkeypatch):
     broker_snapshot.prime(
         {
             "positions": [],
-            "account": {"equity": "100000", "cash": "1", "last_equity": "103500", "buying_power": "1"},
+            "account": {"equity": "3184.71", "cash": "1", "last_equity": "3500", "buying_power": "1"},
         }
     )
     read_cache.clear()
-    read_cache.set(("risk",), {"today_pnl": "-108.11", "daily_loss_state": "ok", "available": True}, 30)
+    # Kill at 8% of 3184.71 = 254.78
+    read_cache.set(("risk",), {"today_pnl": "-254.78", "daily_loss_state": "ok", "available": True}, 30)
     settings = Settings(
         app_env="local",
         database_url="sqlite:///" + (tmp_path / "kill-stop.db").as_posix(),
@@ -181,9 +189,9 @@ def test_snapshot_reports_hard_stop_at_the_dollar_kill(tmp_path, monkeypatch):
         openai_price_output_per_million=Decimal("0"),
     )
     snap = live.build_snapshot(settings)
-    assert snap["day"]["daily_kill_loss_usd"] == "108.11"
+    assert snap["day"]["daily_kill_loss_usd"] == "254.78"
     assert snap["day"]["daily_loss_state"] == "hard_stop"
-    read_cache.set(("risk",), {"today_pnl": "-108.00", "daily_loss_state": "ok", "available": True}, 30)
+    read_cache.set(("risk",), {"today_pnl": "-250.00", "daily_loss_state": "ok", "available": True}, 30)
     short = live.build_snapshot(settings)
     assert short["day"]["daily_loss_state"] == "ok"
 
@@ -197,8 +205,10 @@ def test_kill_line_falls_back_to_five_percent_only_when_dollars_are_off(tmp_path
     assert display_kill_usd(trading, Decimal("80000")) == "4000.00"
     assert display_kill_usd(trading, None) is None
     configured = Settings().trading()
-    assert display_kill_usd(configured, Decimal("100000")) == "108.11"
-    assert display_kill_usd(configured, None) == "108.11"
+    # Equity $100k on 10k profile → >100K ₪ → 100K rules kill 3.5% = $3500 (or fixed 3500).
+    assert display_kill_usd(configured, Decimal("100000")) == "3500.00"
+    # No equity → WC × 8% = 3184.71 * 0.08
+    assert display_kill_usd(configured, None) == "254.78"
 
 
 def test_snapshot_day_return_uses_the_shown_pnl_and_capital_opened_today(tmp_path, monkeypatch):
@@ -298,7 +308,7 @@ def test_preopen_snapshot_shows_a_fresh_day_without_changing_the_raw_mark(tmp_pa
     assert snap["day"]["display_pnl"] == "0.00"
     assert snap["day"]["day_pnl_note"] == "יום חדש — מתאפס בפתיחה"
     assert snap["day"]["protection"]["pnl"] == "0.00"
-    assert snap["day"]["protection"]["line"] == "עוד 108.11$ (ב-108.11$) נכנסת הגנה של טרייל יומי"
+    assert snap["day"]["protection"]["line"] == "עוד 191.08$ (ב-191.08$) נכנסת הגנה של טרייל יומי"
     assert "עוד 0$" not in snap["day"]["protection"]["line"]
     assert snap["day"]["day_return_pct"] is None
     read_cache.clear()

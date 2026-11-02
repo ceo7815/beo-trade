@@ -966,3 +966,21 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
   .fu { background: rgba(34, 195, 142, 0.16); }
   .fd { background: rgba(242, 54, 69, 0.16); }
 }
+
+
+/* Account switcher + trading rules */
+.account-switch { display: flex; flex-direction: column; gap: 0.35rem; min-width: 12rem; }
+.account-switch-row { display: flex; gap: 0.35rem; flex-wrap: wrap; }
+.account-switch .choice { border: 1px solid var(--line, #2a2e36); background: transparent; color: inherit; border-radius: 999px; padding: 0.25rem 0.7rem; font-size: 0.78rem; }
+.account-switch .choice.on { background: var(--accent, #3d7eff); border-color: transparent; color: #fff; }
+.account-switch .rules-link { font-size: 0.75rem; opacity: 0.85; text-decoration: underline; }
+.account-note { font-size: 0.7rem; color: var(--down, #ff6b6b); }
+.rules-page .page-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; margin-bottom: 1rem; }
+.rules-section { margin-bottom: 1rem; }
+.rules-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.75rem; }
+.rules-head { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.rules-money { display: flex; gap: 0.75rem; font-size: 0.8rem; }
+.rules-tiers { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 0.75rem; }
+.tier-card { border: 1px solid var(--line, #2a2e36); border-radius: 12px; padding: 0.75rem; }
+.tier-card ul { padding-inline-start: 1.1rem; margin: 0.4rem 0; }
+.rules-fx { padding: 0.75rem 1rem; min-width: 14rem; }

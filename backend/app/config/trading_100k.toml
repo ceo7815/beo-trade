@@ -57,9 +57,9 @@ daily_kill_loss_usd = 3500
 # --- capital profile (single switch) ---
 # "10k_ils" = working capital 10,000 ₪ + day trail + ILS kill. "100k" = prior 100K desk.
 capital_profile = "100k"
-# 10,000 ₪ / 3.7 ≈ 2,702.70 USD. ils_per_usd is an estimate of the FX rate.
+# 10,000 ₪ / 3.14 ≈ 3,184.71 USD. ils_per_usd is an estimate of the FX rate.
 working_capital_ils = 0
-ils_per_usd = 3.7
+ils_per_usd = 3.14
 daily_kill_ils = 400
 day_trail_enabled = false
 day_trail_arm_pct = 0.04

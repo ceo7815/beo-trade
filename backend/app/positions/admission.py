@@ -209,6 +209,8 @@ def admit_buy(
         return Admission(0, "LIQUIDITY")
     if option.mid > 0 and (option.ask - option.bid) / option.mid > Decimal(str(config.max_bid_ask_spread)):
         return Admission(0, "LIQUIDITY")
+    from app.capital import apply_tier
+    config = apply_tier(config, equity)
     plan = size_position(
         option,
         equity,

@@ -1,4 +1,5 @@
 import { copy, phases } from "./copy";
+import { readStoredPeriod, withTradingPeriod } from "./account";
 import { holdScreen, unavailable } from "./holdScreen";
 import type { RegimeStatus } from "./regime";
 
@@ -231,6 +232,7 @@ function fetchFresh<T>(path: string, timeoutMs: number): Promise<T> {
 }
 
 export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
+  path = withTradingPeriod(path, readStoredPeriod());
   const hit = cachedEntry(path);
   const age = hit ? Date.now() - hit.at : Infinity;
   const { fresh } = windowFor(path);
@@ -253,7 +255,7 @@ export function loadCached<T>(path: string, apply: (body: T) => void, timeoutMs 
 }
 
 export function warm(paths: string[]) {
-  for (const path of paths) void apiGet(path).catch(() => undefined);
+  for (const path of paths) void apiGet(withTradingPeriod(path, readStoredPeriod())).catch(() => undefined);
 }
 
 export function poll(task: () => Promise<unknown> | unknown, everyMs: number): () => void {

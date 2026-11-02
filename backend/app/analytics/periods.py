@@ -28,6 +28,9 @@ class TradingPeriod:
     capital_basis_usd: Decimal | None
     alpaca_account_id: str
     alpaca_account_number: str
+    trading: bool = True
+    read_only: bool = False
+    alpaca_account_name: str = ""
 
     def contains_day(self, day: date) -> bool:
         if day < self.start:
@@ -53,6 +56,9 @@ def load_periods(path: Path | None = None) -> list[TradingPeriod]:
                 capital_basis_usd=None if basis in {None, ""} else Decimal(str(basis)),
                 alpaca_account_id=str(item.get("alpaca_account_id") or "").strip(),
                 alpaca_account_number=str(item.get("alpaca_account_number") or "").strip(),
+                trading=bool(item.get("trading", item.get("id") == raw.get("current_id"))),
+                read_only=bool(item.get("read_only", False)),
+                alpaca_account_name=str(item.get("alpaca_account_name") or "").strip(),
             )
         )
     return rows
@@ -97,6 +103,9 @@ def public_periods(path: Path | None = None) -> dict:
                 "capital_basis_usd": None if row.capital_basis_usd is None else str(row.capital_basis_usd),
                 "alpaca_account_id": row.alpaca_account_id or None,
                 "alpaca_account_number": row.alpaca_account_number or None,
+                "alpaca_account_name": row.alpaca_account_name or None,
+                "trading": row.trading,
+                "read_only": row.read_only,
                 "is_current": row.id == current,
             }
             for row in load_periods(path)

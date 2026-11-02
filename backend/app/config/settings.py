@@ -127,19 +127,37 @@ class TradingConfig:
     daily_kill_loss_usd: float = 3500
     # Single switch: "10k_ils" enables working capital + ILS kill + day trail; "100k" recovers the old desk.
     capital_profile: str = "100k"
-    # Working capital for the 10K ₪ paper profile. ils_per_usd is an estimate (default 3.7).
+    # Working capital for the 10K ₪ paper profile.
+    # ils_per_usd default 3.14 = live-read 2026-11-02 (frankfurter 3.1393, er-api 3.1405).
+    # Daily Frankfurter fetch overrides when available; 3.14 remains the offline fallback.
+    # 10,000 ₪ / 3.14 ≈ 3,184.71 USD (docs round to $3,185).
     working_capital_ils: float = 0
-    ils_per_usd: float = 3.7
-    daily_kill_ils: float = 400
+    ils_per_usd: float = 3.14
+    daily_kill_ils: float = 800
+    daily_kill_pct: float = 0.08
     day_trail_enabled: bool = False
-    day_trail_arm_pct: float = 0.04
-    day_trail_initial_floor_frac: float = 0.5
+    day_trail_arm_pct: float = 0.06
+    day_trail_protect_pct: float = 0.045
+    day_trail_initial_floor_frac: float = 0.75  # legacy; prefer day_trail_protect_pct
     day_trail_pct: float = 0.30
+    # Equity-ILS size tiers (auto). Tier-2 arm/protect are provisional (scaled by kill 6/8).
+    capital_tier1_max_ils: float = 25000
+    capital_tier2_max_ils: float = 100000
+    capital_tier1_per_trade_pct: float = 0.15
+    capital_tier1_kill_pct: float = 0.08
+    capital_tier1_arm_pct: float = 0.06
+    capital_tier1_protect_pct: float = 0.045
+    capital_tier1_exposure_pct: float = 1.0
+    capital_tier2_per_trade_pct: float = 0.10
+    capital_tier2_kill_pct: float = 0.06
+    capital_tier2_arm_pct: float = 0.045  # provisional
+    capital_tier2_protect_pct: float = 0.03375  # provisional
+    capital_tier2_exposure_pct: float = 1.0
     max_capital_per_trade_pct: float = 0.07
     max_total_open_exposure_pct: float = 0.35
     max_concurrent_positions: int = 10
     max_positions_per_underlying: int = 1
-    max_daily_loss_pct: float = 0.04
+    max_daily_loss_pct: float = 0.12
     max_sector_exposure_pct: float = 0.10
     ai_max_calls_per_scan: int = 8
     ai_parallel_calls: int = 8
@@ -249,6 +267,10 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     alpaca_base_url: str = ""
+    # Read-only keys for viewing the legacy 100K paper account while the 10K account trades.
+    # Env: ALPACA_100K_API_KEY / ALPACA_100K_API_SECRET. Never required for trading.
+    alpaca_100k_api_key: str = ""
+    alpaca_100k_api_secret: str = ""
     # Shared account/positions/orders/clock snapshot. broker_snapshot_ttl() clamps this to 5–10s.
     broker_snapshot_ttl_seconds: float = 5
     thetadata_api_key: str = ""

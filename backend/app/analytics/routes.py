@@ -386,15 +386,21 @@ def register(app: FastAPI, settings: Settings) -> None:
         return {"environment": "PAPER", "available": True, "source": book["source"], **result}
 
     @app.get("/api/v1/risk")
-    def risk_view(authorization: str | None = Header(default=None)):
+    def risk_view(authorization: str | None = Header(default=None), trading_period: str = "current"):
         from app.main import user_id_from_header
         from app.analytics.read_cache import RISK_TTL_SECONDS, read_cache
+        from app.analytics.periods import current_period_id
 
         user_id_from_header(settings, authorization)
-        cached = read_cache.get(("risk",))
+        period_key = (trading_period or "current").strip() or "current"
+        cache_key = ("risk", period_key)
+        cached = read_cache.get(cache_key)
         if cached is None:
-            cached = _risk_body(settings)
-            read_cache.set(("risk",), cached, RISK_TTL_SECONDS)
+            cached = _risk_body(settings, trading_period=period_key)
+            # Only cache the active trading account on the legacy ("risk",) key too.
+            read_cache.set(cache_key, cached, RISK_TTL_SECONDS)
+            if period_key in {"current", current_period_id(), "paper_10k_ils", ""}:
+                read_cache.set(("risk",), cached, RISK_TTL_SECONDS)
         try:
             from app.options.day_floor import public_from_store
 
@@ -407,9 +413,39 @@ def register(app: FastAPI, settings: Settings) -> None:
     def trading_periods(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
         from app.analytics.periods import public_periods
+        from app.broker.accounts import has_view_keys
 
         user_id_from_header(settings, authorization)
-        return {"environment": "PAPER", **public_periods()}
+        body = {"environment": "PAPER", **public_periods()}
+        for row in body.get("periods") or []:
+            row["has_view_keys"] = has_view_keys(settings, row.get("id"))
+            row["view_mode"] = "broker" if row["has_view_keys"] else "db_history"
+        return body
+
+    @app.get("/api/v1/trading-rules")
+    def trading_rules(authorization: str | None = Header(default=None)):
+        """Read-only effective rulebook for the settings UI. Never prints secrets."""
+        from decimal import Decimal
+        from app.main import user_id_from_header
+        from app.analytics.trading_rules import build_trading_rules
+        from app.broker.runtime import cached_display_equity
+
+        user_id_from_header(settings, authorization)
+        equity = cached_display_equity()
+        try:
+            from app.broker.accounts import open_view_broker
+            from app.analytics.periods import current_period_id
+
+            adapter = open_view_broker(settings, current_period_id())
+            try:
+                account = adapter.get_account()
+                if isinstance(account, dict) and account.get("equity") not in {None, ""}:
+                    equity = Decimal(str(account["equity"]))
+            finally:
+                adapter.close()
+        except Exception:
+            pass
+        return build_trading_rules(settings, equity)
 
     @app.get("/api/v1/diag/day-floor")
 
@@ -421,14 +457,28 @@ def register(app: FastAPI, settings: Settings) -> None:
         user_id_from_header(settings, authorization)
         return collect_day_floor_snapshot()
 
-    def _risk_body(settings) -> dict:
+    def _risk_body(settings, trading_period: str = "current") -> dict:
         trading = settings.trading()
         account = None
         positions = None
         activities = None
         session_open = False
+        broker_source = "trading"
         try:
-            adapter = open_paper_broker(settings)
+            from app.broker.accounts import open_view_broker, has_view_keys, period_is_trading
+            from app.broker.runtime import open_paper_broker as _open_trading
+
+            if period_is_trading(trading_period):
+                adapter = _open_trading(settings)
+                broker_source = "trading"
+            elif has_view_keys(settings, trading_period):
+                adapter = open_view_broker(settings, trading_period)
+                broker_source = "view_100k"
+            else:
+                adapter = None
+                broker_source = "db_fallback"
+            if adapter is None:
+                raise RuntimeError("no view broker")
             try:
                 fetched = _parallel_reads(
                     {

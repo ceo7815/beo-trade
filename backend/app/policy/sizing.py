@@ -53,6 +53,8 @@ def size_position(
     if open_positions >= config.max_concurrent_positions or same_underlying_positions >= config.max_positions_per_underlying:
         return SizePlan(0, max_entry, equity * Decimal(str(config.risk_per_trade_pct)), premium, premium * stop, 0, 0, 0, 0, 0, 0, None, "positions", config.risk_policy_version, config.exit_policy_version)
     risk_budget = equity * Decimal(str(config.risk_per_trade_pct))
+    from app.capital import apply_tier
+    config = apply_tier(config, equity)
     normal_capital = equity * Decimal(str(config.normal_position_capital_pct))
     hard_capital = equity * Decimal(str(config.hard_position_capital_pct))
     risk_per_contract = premium * stop
