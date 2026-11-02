@@ -1,3 +1,6 @@
+# Active profile: 10k_ils. To recover the 100K desk, set capital_profile = "100k"
+# (or copy values from trading_100k.toml) and restart. One switch.
+
 # All scan, risk, and session thresholds. Change this file, then restart.
 # Fractions are 0–1 unless the name says percent (those are also 0–1 here).
 
@@ -43,23 +46,54 @@ max_capital_per_trade = 0
 paper_policy_name = "AGGRESSIVE"
 risk_policy_version = "aggressive-1"
 exit_policy_version = "aggressive-exit-3"
-risk_per_trade_pct = 0.02
-normal_position_capital_pct = 0.07
-hard_position_capital_pct = 0.10
-max_aggregate_planned_risk_pct = 0.15
-daily_warning_pct = 0.025
-daily_entry_stop_pct = 0.04
-daily_hard_stop_pct = 0.05
+risk_per_trade_pct = 0.06
+normal_position_capital_pct = 0.15
+hard_position_capital_pct = 0.20
+max_aggregate_planned_risk_pct = 1.0
+# Kill (8%) must fire first: raise warning / entry / hard above it.
+daily_warning_pct = 0.10
+daily_entry_stop_pct = 0.12
+daily_hard_stop_pct = 0.15
 # Total day P&L versus last_equity, including open marks. Fourteen sessions did not
 # recover to a profit after about -$3,000 realized, so the day flattens here.
 # The 5% hard stop still flattens first on a smaller account. 0 disables the dollar line.
 daily_kill_loss_usd = 3500
-max_capital_per_trade_pct = 0.07
-max_total_open_exposure_pct = 0.35
+# --- capital profile (single switch) ---
+# "10k_ils" = working capital 10,000 ₪ + day trail + % equity brakes. "100k" = prior 100K desk.
+capital_profile = "10k_ils"
+# 10,000 ₪ / 3.14 ≈ 3,184.71 USD (docs: $3,185). FX live-read 2026-11-02:
+# frankfurter 3.1393, er-api 3.1405. Daily Frankfurter fetch overrides; 3.14 is fallback.
+working_capital_ils = 10000
+ils_per_usd = 3.14
+# Display/legacy ILS kill (= 8% of 10K ₪). Brakes use daily_kill_pct × live equity.
+daily_kill_ils = 800
+daily_kill_pct = 0.08
+day_trail_enabled = true
+# DAY_TRAIL: arm +6% of equity, first floor 4.5%, then trail 30% under day peak.
+day_trail_arm_pct = 0.06
+day_trail_protect_pct = 0.045
+day_trail_initial_floor_frac = 0.75
+day_trail_pct = 0.30
+# Size tiers by equity×ils_per_usd (auto). Tier-2 arm/protect provisional (×6/8 from tier-1).
+capital_tier1_max_ils = 25000
+capital_tier2_max_ils = 100000
+capital_tier1_per_trade_pct = 0.15
+capital_tier1_kill_pct = 0.08
+capital_tier1_arm_pct = 0.06
+capital_tier1_protect_pct = 0.045
+capital_tier1_exposure_pct = 1.0
+capital_tier2_per_trade_pct = 0.10
+capital_tier2_kill_pct = 0.06
+capital_tier2_arm_pct = 0.045
+capital_tier2_protect_pct = 0.03375
+capital_tier2_exposure_pct = 1.0
+# Per-trade 15% of live equity; aggregate exposure up to 100%. Sector kept at 40%.
+max_capital_per_trade_pct = 0.15
+max_total_open_exposure_pct = 1.0
 max_concurrent_positions = 10
 max_positions_per_underlying = 1
-max_daily_loss_pct = 0.04
-max_sector_exposure_pct = 0.10
+max_daily_loss_pct = 0.12
+max_sector_exposure_pct = 0.40
 max_contracts = 100
 holding_minutes_0dte = 90
 holding_minutes_1dte = 180

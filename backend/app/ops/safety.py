@@ -4,22 +4,14 @@ from app.config.settings import Settings, TradingConfig
 
 PAPER_HOST = "https://paper-api.alpaca.markets"
 
-OFFICIAL_POLICY = {
+# Shared exit / floor / pacing fields that both capital profiles must keep.
+_SHARED_POLICY = {
     "paper_policy_name": "AGGRESSIVE",
     "risk_policy_version": "aggressive-1",
     "exit_policy_version": "aggressive-exit-3",
-    "risk_per_trade_pct": 0.02,
-    "normal_position_capital_pct": 0.07,
-    "hard_position_capital_pct": 0.10,
     "max_open_positions": 10,
     "max_concurrent_positions": 10,
-    "max_total_open_exposure_pct": 0.35,
-    "max_aggregate_planned_risk_pct": 0.15,
-    "max_sector_exposure_pct": 0.10,
     "max_positions_per_underlying": 1,
-    "daily_warning_pct": 0.025,
-    "daily_entry_stop_pct": 0.04,
-    "daily_hard_stop_pct": 0.05,
     "initial_stop_decline_pct": 0.40,
     "protect_at_r": 1.0,
     "protective_stop_r": 0.25,
@@ -52,13 +44,79 @@ OFFICIAL_POLICY = {
     ),
 }
 
+OFFICIAL_POLICY_100K = {
+    **_SHARED_POLICY,
+    "capital_profile": "100k",
+    "risk_per_trade_pct": 0.02,
+    "normal_position_capital_pct": 0.07,
+    "hard_position_capital_pct": 0.10,
+    "max_total_open_exposure_pct": 0.35,
+    "max_aggregate_planned_risk_pct": 0.15,
+    "max_sector_exposure_pct": 0.10,
+    "working_capital_ils": 0,
+    "day_trail_enabled": False,
+    "daily_kill_loss_usd": 3500,
+    "daily_warning_pct": 0.025,
+    "daily_entry_stop_pct": 0.04,
+    "daily_hard_stop_pct": 0.05,
+    "max_daily_loss_pct": 0.04,
+}
+
+OFFICIAL_POLICY_10K = {
+    **_SHARED_POLICY,
+    "capital_profile": "10k_ils",
+    "risk_per_trade_pct": 0.06,
+    "normal_position_capital_pct": 0.15,
+    "hard_position_capital_pct": 0.20,
+    "max_total_open_exposure_pct": 1.0,
+    "max_aggregate_planned_risk_pct": 1.0,
+    "max_sector_exposure_pct": 0.40,
+    "working_capital_ils": 10000,
+    "ils_per_usd": 3.14,
+    "daily_kill_ils": 800,
+    "daily_kill_pct": 0.08,
+    "day_trail_enabled": True,
+    "day_trail_arm_pct": 0.06,
+    "day_trail_protect_pct": 0.045,
+    "day_trail_initial_floor_frac": 0.75,
+    "day_trail_pct": 0.30,
+    "capital_tier1_max_ils": 25000,
+    "capital_tier2_max_ils": 100000,
+    "capital_tier1_per_trade_pct": 0.15,
+    "capital_tier1_kill_pct": 0.08,
+    "capital_tier1_arm_pct": 0.06,
+    "capital_tier1_protect_pct": 0.045,
+    "capital_tier1_exposure_pct": 1.0,
+    "capital_tier2_per_trade_pct": 0.10,
+    "capital_tier2_kill_pct": 0.06,
+    "capital_tier2_arm_pct": 0.045,
+    "capital_tier2_protect_pct": 0.03375,
+    "capital_tier2_exposure_pct": 1.0,
+    "max_capital_per_trade_pct": 0.15,
+    "daily_kill_loss_usd": 3500,
+    "daily_warning_pct": 0.10,
+    "daily_entry_stop_pct": 0.12,
+    "daily_hard_stop_pct": 0.15,
+    "max_daily_loss_pct": 0.12,
+}
+
+# Active desk after this release (trading.toml). Recovery = capital_profile "100k".
+OFFICIAL_POLICY = OFFICIAL_POLICY_10K
+
+
+def _policy_for(trading: TradingConfig) -> dict:
+    profile = str(getattr(trading, "capital_profile", "100k") or "100k")
+    if profile == "10k_ils":
+        return OFFICIAL_POLICY_10K
+    return OFFICIAL_POLICY_100K
+
 
 def policy_errors(trading: TradingConfig) -> list[str]:
     found: list[str] = []
-    for name, expected in OFFICIAL_POLICY.items():
-        actual = getattr(trading, name)
+    for name, expected in _policy_for(trading).items():
+        actual = getattr(trading, name, None)
         if isinstance(expected, float):
-            if abs(float(actual) - expected) > 1e-9:
+            if actual is None or abs(float(actual) - expected) > 1e-9:
                 found.append(name)
         elif actual != expected:
             found.append(name)

@@ -247,7 +247,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
             forced = _floor_exit(position, option, settings.trading(), close_reason) if close_reason else None
             if forced is not None:
                 signal, session_close = forced, book_close
-                source = "hard-stop" if forced.reason == "DAILY_HARD_STOP" else "day-floor"
+                source = "hard-stop" if forced.reason == "DAILY_HARD_STOP" else ("day-trail" if forced.reason == "DAY_TRAIL" else "day-floor")
             elif option is None or underlying is None or entry in {None, ""}:
                 _session_open, session_close = _session_state(settings, adapter, moment)
                 price = fallback_exit_price(position, moment, session_close, settings.trading())
@@ -462,6 +462,11 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
     if account is not None and account.get("equity") not in {None, ""}:
         try:
             equity_now = Decimal(str(account["equity"]))
+            from app.capital import risk_equity
+
+            capped = risk_equity(equity_now, settings.trading())
+            if capped is not None:
+                equity_now = capped
         except Exception:
             equity_now = None
     if session_open is True and account is not None and pnl is not None and already_closed:
@@ -523,6 +528,11 @@ def _latch_kill(settings: Settings, account: dict, day_pnl: Decimal | None, mome
     raw = account.get("equity")
     try:
         equity = None if raw in {None, ""} else Decimal(str(raw))
+        if equity is not None:
+            from app.capital import risk_equity
+            capped = risk_equity(equity, settings.trading())
+            if capped is not None:
+                equity = capped
     except Exception:
         equity = None
     if day_flatten_reason(equity, day_pnl, settings.trading()) != "DAILY_HARD_STOP":
@@ -547,7 +557,7 @@ def _floor_exit(position: dict, option, trading, reason: str = "DAY_FLOOR"):
     price = floor_sell_price(bid, mark, Decimal(str(trading.fallback_exit_discount)))
     if price is None:
         return None
-    exit_reason = reason if reason in {"DAY_FLOOR", "DAILY_HARD_STOP"} else "DAY_FLOOR"
+    exit_reason = reason if reason in {"DAY_FLOOR", "DAY_TRAIL", "DAILY_HARD_STOP"} else "DAY_FLOOR"
     return SimpleNamespace(reason=exit_reason, exit_price=price)
 
 
@@ -1104,6 +1114,12 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
         return
     equity = _cash(settings)
+    if equity is not None:
+        from app.capital import risk_equity
+
+        capped = risk_equity(equity, settings.trading())
+        if capped is not None:
+            equity = capped
     _submit_step(log, "_cash", equity_ready=equity is not None)
     pnl = _entry_pnl(settings)
     _submit_step(log, "_entry_pnl", pnl_ready=pnl is not None)
@@ -1177,6 +1193,11 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         _submit_step(log, "get_account", equity_ready=account.get("equity") not in {None, ""})
         if account.get("equity") not in {None, ""}:
             equity = Decimal(str(account["equity"]))
+            from app.capital import risk_equity
+
+            capped = risk_equity(equity, settings.trading())
+            if capped is not None:
+                equity = capped
         from app.options.day_floor import observe_day_floor
         from zoneinfo import ZoneInfo
 

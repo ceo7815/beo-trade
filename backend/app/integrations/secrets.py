@@ -10,6 +10,8 @@ SECRET_NAMES = (
     "openai_api_key",
     "alpaca_api_key",
     "alpaca_api_secret",
+    "alpaca_100k_api_key",
+    "alpaca_100k_api_secret",
     "thetadata_api_key",
     "thetadata_base_url",
     "benzinga_api_key",

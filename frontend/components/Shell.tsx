@@ -9,6 +9,7 @@ import { PHASES, apiGet, apiPost, poll, warm, type SystemStatus } from "@/lib/ap
 import { copy } from "@/lib/copy";
 import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
+import { AccountSwitcher } from "@/components/AccountSwitcher";
 import { Heartbeat, Ticker, Toasts } from "@/components/live-ui";
 import { LiveProvider, useLive } from "@/lib/live";
 
@@ -310,6 +311,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
         { href: "/status", label: "בריאות המערכת", icon: icons.status },
         { href: "/audit", label: "ביקורת מערכת", icon: icons.history },
         { href: "/settings", label: "הגדרות", icon: icons.settings },
+        { href: "/settings/rules", label: "חוקי מסחר", icon: icons.version },
         { href: "/versions", label: "גרסאות", icon: icons.version },
       ],
     },
@@ -410,6 +412,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 {phase}
                 <MobileClock />
               </span>
+              <AccountSwitcher />
             </div>
             <button
               type="button"
@@ -433,6 +436,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             </div>
             <Clock timeZone="America/New_York" label={copy.shell.ny} />
             <Clock timeZone="Asia/Dubai" label={copy.shell.dubai} />
+            <AccountSwitcher />
             <div className="bar-actions">
               <button
                 type="button"

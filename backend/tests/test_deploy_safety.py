@@ -15,8 +15,13 @@ from app.workers.runner import cycle_plan
 
 
 def test_official_policy_is_intact():
+    from pathlib import Path
+
     assert policy_errors(load_trading_config()) == []
     assert_boot_safe(Settings())
+    recovered = load_trading_config(Path(__file__).resolve().parents[1] / "app" / "config" / "trading_100k.toml")
+    assert recovered.capital_profile == "100k"
+    assert policy_errors(recovered) == []
 
 
 def _smoke_policy_source() -> str:

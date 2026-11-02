@@ -1,0 +1,178 @@
+# All scan, risk, and session thresholds. Change this file, then restart.
+# Fractions are 0–1 unless the name says percent (those are also 0–1 here).
+
+# Entry only. A thin contract can pass a 15% spread and then become unsellable, as AGQ and KORU did.
+# Daily volume starts at zero, so these floors must not force an exit.
+min_option_volume = 50
+min_open_interest = 100
+max_bid_ask_spread = 0.15
+# Retired hard floor. Still the liquidity-priority mark and the recorded comparison. It does not reject a stock before the option chain.
+min_underlying_volume = 1000000
+max_expiration_days = 21
+# Contracts past this many days rank lower per extra day. Week of Oct 7: 1-2 DTE made +$3,167 on 11 trades, 7-9 DTE lost $2,736 on 10.
+preferred_max_dte = 3
+# Closed book through Oct 20: 2 DTE was +$21,828 on 24 trades. 1 DTE was -$13,788 on 17. Ranking only; other days stay eligible.
+preferred_dte = 2
+long_dte_penalty = 0.15
+min_expiration_days = 0
+# Oct 12: MSFT delta 0.30 lost $1,845 and PLTR PUT delta 0.24 lost $800. SOFI 0.68, META 0.41 and MU 0.37 stayed in.
+min_delta = 0.35
+max_delta = 0.75
+target_delta = 0.40
+min_gamma = 0.0005
+max_theta_threshold = 0.80
+min_data_freshness_seconds = 20
+max_buys_per_scan = 2
+scan_interval_seconds = 60
+monitor_interval_seconds = 15
+shortlist_size = 4
+min_relative_volume = 0.50
+# Ranking tier only, after the size of the move. A name at or above this breaks a tie. It does not reject a stock.
+relative_volume_priority = 1.8
+min_underlying_move_percent = 0.6
+# Ranking only. A move from 2% up to (not including) 4% is scanned before a smaller move and before a larger one.
+move_rank_low_percent = 2
+move_rank_high_percent = 4
+min_option_price = 0.50
+max_option_price = 8.0
+entry_buffer_percent = 0.04
+holding_window_min_minutes = 15
+holding_window_max_minutes = 180
+max_risk_percent = 0.02
+max_capital_per_trade = 0
+paper_policy_name = "AGGRESSIVE"
+risk_policy_version = "aggressive-1"
+exit_policy_version = "aggressive-exit-3"
+risk_per_trade_pct = 0.02
+normal_position_capital_pct = 0.07
+hard_position_capital_pct = 0.10
+max_aggregate_planned_risk_pct = 0.15
+daily_warning_pct = 0.025
+daily_entry_stop_pct = 0.04
+daily_hard_stop_pct = 0.05
+# Total day P&L versus last_equity, including open marks. Fourteen sessions did not
+# recover to a profit after about -$3,000 realized, so the day flattens here.
+# The 5% hard stop still flattens first on a smaller account. 0 disables the dollar line.
+daily_kill_loss_usd = 3500
+# --- capital profile (single switch) ---
+# "10k_ils" = working capital 10,000 ₪ + day trail + ILS kill. "100k" = prior 100K desk.
+capital_profile = "100k"
+# 10,000 ₪ / 3.14 ≈ 3,184.71 USD. ils_per_usd is an estimate of the FX rate.
+working_capital_ils = 0
+ils_per_usd = 3.14
+daily_kill_ils = 400
+day_trail_enabled = false
+day_trail_arm_pct = 0.04
+day_trail_initial_floor_frac = 0.5
+day_trail_pct = 0.30
+# 10K profile: full working capital may be deployed; per-trade stays a fraction of WC.
+max_capital_per_trade_pct = 0.07
+max_total_open_exposure_pct = 0.35
+max_concurrent_positions = 10
+max_positions_per_underlying = 1
+max_daily_loss_pct = 0.04
+max_sector_exposure_pct = 0.10
+max_contracts = 100
+holding_minutes_0dte = 90
+holding_minutes_1dte = 180
+session_exit_minutes = 15
+# No new entry this close to the bell: an hour to work before the 0/1DTE exit 20 minutes before the close.
+# Three 1DTE buys at 15:10 had 30 minutes before that exit and lost about $1,540, and one stuck overnight.
+entry_cutoff_minutes = 80
+# At most this many new CALLs (or PUTs) in the window; 0 is off. At 2 per 30 minutes the week of Oct 7 would have
+# blocked AMZN +$2,660 and SOFI +$168 to save $230.
+max_same_direction_entries = 0
+same_direction_window_minutes = 30
+# Before 10:00 New York, two new buys and then stop. Oct 14-16: the third and later
+# opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
+opening_entry_cap = 2
+opening_entry_until_minutes = 600
+# CALL buys blocked before 10:00 New York. PUT and the 2-buy opening cap are unchanged. 0 disables.
+# Research 2.11 (191 trades / 18 days): CALL before 10:00 n=23, -$11.2k; green days 50%→61%.
+opening_call_block_until_minutes = 600
+# New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
+# mix inside that window, and after a losing close the opposite side waits 30 minutes.
+# The same side stays eligible. Pending buys count; a canceled buy does not.
+# Oct 7-28 in sample (16 sessions), with the opposite block measured after the first
+# loss only: about +$20,197 versus +$938, profit factor 1.38. The live rule starts a
+# fresh 30 minutes after every losing close. Set entry_pace_enabled to false to turn
+# all three off. Stops, the trail, the kill switch, the day floor, and size are unchanged.
+entry_pace_enabled = true
+entry_pace_window_minutes = 5
+entry_pace_max_entries = 2
+entry_pace_opposite_block_minutes = 30
+entry_rules_version = "v10.29-pacing"
+# Account day P&L, including open marks. 4,000 arms a floor of 2,000 and that floor holds through 6,999.
+# From 7,000 each extra 1,000 of peak lifts the floor by 1,000, through 15,000 which locks 11,000.
+# The floor never falls. Touching it sells everything and blocks new buys.
+day_floor_arm = 4000
+day_floor_lock = 2000
+day_floor_steps = [[4000, 2000], [7000, 3000], [8000, 4000], [9000, 5000], [10000, 6000], [11000, 7000], [12000, 8000], [13000, 9000], [14000, 10000], [15000, 11000]]
+initial_stop_decline_pct = 0.40
+protect_at_r = 1.0
+protective_stop_r = 0.25
+# Trail arms at +30% of premium (0.75R). Protection still arms at +40%.
+# Oct 13: MU peaked +39.6% and closed +4%; META peaked +38.8% and closed -2%; AAPL peaked +30% and then stopped at -40%.
+trail_activate_r = 0.75
+winner_run_r = 2.0
+ai_max_calls_per_scan = 8
+# Decisions for one scan are requested together; one after another they took 138s and prices drifted past the limit.
+ai_parallel_calls = 8
+ai_decision_ttl_seconds = 900
+contract_multiplier = 100
+risk_free_rate = 0.04
+dividend_yield = 0.0
+scenario_moves_percent = [0.5, 1.0, 2.0, 3.0, -0.5, -1.0, -2.0, 0.0]
+min_confirming_sources = 2
+official_source_credibility = 0.9
+stop_loss_percent = 0.40
+invalidation_underlying_percent = 0.01
+iv_crush_percent = 0.20
+outcome_target_percent = 0.0
+min_reason_codes = 2
+slippage_percent = 0.01
+allow_buy_without_news = true
+# A contract that passed the quote, greek, direction, and risk gates is a paper buy even when the model is silent.
+allow_quant_entry = true
+paper_auto_exit = true
+# One confirmed reason is enough to inspect the option chain. The move supplies that reason.
+min_events = 1
+max_input_tokens = 6000
+max_output_tokens = 800
+news_max_age_seconds = 21600
+gap_percent = 0.004
+target_pct = 0.30
+trailing_enabled = true
+trailing_pct = 0.15
+exit_before_expiration_minutes = 20
+max_open_positions = 10
+max_daily_loss_dollars = 0
+kill_switch = false
+# Measured from the scan clock. A scan with AI calls can run several minutes; the live-quote drift check guards the price.
+recommendation_max_age_seconds = 600
+revalidation_max_price_drift = 0.03
+liquidity_exit_spread = 0.25
+# One wide quote is not an exit. The monitor runs about every 15 seconds, so two hits is about half a minute.
+liquidity_exit_confirmations = 2
+# A resting sell above the bid is moved down to the bid once it is this old. A stale exit limit kept QQQ open overnight.
+exit_reprice_seconds = 15
+# STOP / PROTECTED_STOP: reprice a resting sell after this many seconds (faster than other exits).
+stop_exit_reprice_seconds = 5
+# Inside this many minutes before the close a resting exit follows the bid on every check, whatever its age.
+exit_reprice_close_minutes = 5
+# No ThetaData quote inside the session exit window: sell this far below Alpaca's mark rather than hold overnight.
+fallback_exit_discount = 0.10
+scan_strike_range = 15
+# Option chains are read only for the top-ranked names that passed the stock gates. 0 reads every one.
+max_chains_per_scan = 12
+min_eod_days = 5
+universe_max_symbols_per_scan = 40
+universe_refresh_seconds = 21600
+universe_min_price = 5
+universe_exclusions = []
+# Scanned every minute ahead of the rotating batch. They share universe_max_symbols_per_scan.
+core_symbols = ["SPY", "QQQ", "IWM", "NVDA", "TSLA", "AAPL", "AMD", "META", "AMZN", "MSFT", "GOOGL", "NFLX", "AVGO", "PLTR", "COIN", "MSTR", "SMCI", "MU", "INTC", "BA", "JPM", "UBER", "SOFI", "HOOD", "ARM"]
+research_probe_symbol = "NVDA"
+context_symbols = ["SPY", "QQQ", "IWM", "VIX"]
+fred_series = ["FEDFUNDS", "DGS2", "DGS10", "T10Y2Y"]
+sec_fact_tags = ["Revenues", "NetIncomeLoss", "EarningsPerShareDiluted"]

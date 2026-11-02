@@ -1,0 +1,29 @@
+{
+  "current_id": "paper_10k_ils",
+  "periods": [
+    {
+      "id": "paper_100k",
+      "label": "פייפר 100K",
+      "start": "2020-01-01",
+      "end": "2026-11-02",
+      "capital_basis_usd": "100000",
+      "alpaca_account_id": "",
+      "alpaca_account_number": "",
+      "note": "Account number unknown; only last 4 digits known (NXN0). Leave empty until full number is available.",
+      "trading": false,
+      "read_only": true
+    },
+    {
+      "id": "paper_10k_ils",
+      "label": "פייפר 10K ₪",
+      "start": "2026-11-03",
+      "end": null,
+      "capital_basis_usd": "3184.71",
+      "alpaca_account_id": "",
+      "alpaca_account_number": "PA3LU0NE5",
+      "trading": true,
+      "read_only": false,
+      "alpaca_account_name": "beo 10K ILS"
+    }
+  ]
+}

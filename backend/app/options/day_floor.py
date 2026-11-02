@@ -87,10 +87,71 @@ def marketable_sell_limit(bid: Decimal | None, reason: str | None = None) -> Dec
     return (priced / tick).to_integral_value(rounding="ROUND_FLOOR") * tick
 
 
-def observe_day_floor(settings: Settings, pnl: Decimal | None, moment: datetime, session_open: bool) -> dict:
+def advance_trail(
+    prior: dict | None,
+    session_date: str,
+    pnl: Decimal | None,
+    *,
+    arm: Decimal,
+    initial_floor: Decimal,
+    trail_pct: Decimal,
+) -> dict:
+    """Percent trail under the day peak. Arms at `arm`, locks `initial_floor`, then trails."""
+    state = prior if prior and prior.get("session_date") == session_date else _blank(session_date)
+    if arm <= 0 or trail_pct <= 0 or trail_pct >= 1 or initial_floor < 0:
+        return _blank(session_date)
+    if state.get("closed"):
+        return state
+    if pnl is None:
+        return state
+    peak = _decimal(state.get("peak"))
+    if peak is None or pnl > peak:
+        peak = pnl
+    armed = bool(state.get("armed")) or peak >= arm or pnl >= arm
+    floor = None
+    if armed:
+        trailed = (peak * (Decimal("1") - trail_pct)).quantize(Decimal("0.01"))
+        floor = max(initial_floor, trailed)
+    closed = bool(armed and floor is not None and pnl <= floor)
+    return {
+        "session_date": session_date,
+        "armed": armed,
+        "closed": closed,
+        "peak": _text(peak),
+        "floor": None if floor is None else _text(floor),
+        "arm": _text(arm),
+        "reason": "DAY_TRAIL" if closed else "",
+        "cleared": bool(state.get("cleared")),
+        "mode": "trail",
+    }
+
+
+def observe_day_floor(
+    settings: Settings,
+    pnl: Decimal | None,
+    moment: datetime,
+    session_open: bool,
+    equity: Decimal | None = None,
+) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_trail_enabled(trading, equity):
+        arm = day_trail_arm_usd(trading, equity)
+        if arm is None:
+            return _public_trail(prior, None, None)
+        initial = day_trail_protect_usd(trading, equity)
+        if initial is None:
+            initial = (arm * Decimal(str(getattr(trading, "day_trail_initial_floor_frac", 0.75) or 0.75))).quantize(Decimal("0.01"))
+        trail_pct = Decimal(str(getattr(trading, "day_trail_pct", 0.30) or 0.30))
+        if not session_open:
+            return _public_trail(prior, arm, initial)
+        updated = advance_trail(prior, session_date, pnl, arm=arm, initial_floor=initial, trail_pct=trail_pct)
+        stored = _commit(prior, updated)
+        return _public_trail(stored, arm, initial)
+
     if not session_open:
         return _public(prior, trading.day_floor_steps)
     updated = advance(prior, session_date, pnl, trading.day_floor_steps)
@@ -106,6 +167,12 @@ def latch_hard_stop(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": "DAILY_HARD_STOP"}
     stored = _commit(prior, updated)
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_trail_enabled(trading):
+        arm = day_trail_arm_usd(trading)
+        initial = day_trail_protect_usd(trading) if arm is not None else None
+        return _public_trail(stored, arm, initial)
     return _public(stored, trading.day_floor_steps)
 
 
@@ -117,6 +184,12 @@ def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": str(base.get("reason") or "DAILY_HARD_STOP"), "cleared": True}
     stored = _commit(prior, updated)
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_trail_enabled(trading):
+        arm = day_trail_arm_usd(trading)
+        initial = day_trail_protect_usd(trading) if arm is not None else None
+        return _public_trail(stored, arm, initial)
     return _public(stored, trading.day_floor_steps)
 
 
@@ -287,7 +360,14 @@ def day_close_reason(settings: Settings, moment: datetime) -> str | None:
 def public_from_store(settings: Settings, moment: datetime) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
-    return _public(_for_date(_read(), session_date), trading.day_floor_steps)
+    prior = _for_date(_read(), session_date)
+    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_trail_enabled(trading):
+        arm = day_trail_arm_usd(trading)
+        initial = day_trail_protect_usd(trading) if arm is not None else None
+        return _public_trail(prior, arm, initial)
+    return _public(prior, trading.day_floor_steps)
 
 
 def day_is_closed(settings: Settings, moment: datetime) -> bool:
@@ -301,7 +381,17 @@ def _session_date(settings: Settings, moment: datetime) -> str:
 
 
 def _blank(session_date: str) -> dict:
-    return {"session_date": session_date, "armed": False, "closed": False, "peak": None, "reason": "", "cleared": False}
+    return {
+        "session_date": session_date,
+        "armed": False,
+        "closed": False,
+        "peak": None,
+        "floor": None,
+        "arm": None,
+        "reason": "",
+        "cleared": False,
+        "mode": "",
+    }
 
 
 def _ladder(steps: tuple | None) -> tuple[tuple[Decimal, Decimal], ...]:
@@ -329,6 +419,30 @@ def _level(peak: Decimal | None, ladder: tuple[tuple[Decimal, Decimal], ...]) ->
         if peak >= step_arm:
             arm, floor = step_arm, step_floor
     return arm, floor
+
+
+def _public_trail(state: dict | None, arm: Decimal | None, initial_floor: Decimal | None) -> dict:
+    row = state or {}
+    peak = _decimal(row.get("peak"))
+    floor = _decimal(row.get("floor"))
+    shown_arm = _decimal(row.get("arm")) or arm
+    if row.get("armed") and floor is None and peak is not None and arm is not None and initial_floor is not None:
+        # Recompute from peak when an older store omitted floor.
+        trail_pct = Decimal("0.30")
+        floor = max(initial_floor, (peak * (Decimal("1") - trail_pct)).quantize(Decimal("0.01")))
+    reason = str(row.get("reason") or "")
+    if row.get("closed") and not reason:
+        reason = "DAY_TRAIL"
+    return {
+        "armed": bool(row.get("armed")),
+        "closed": bool(row.get("closed")),
+        "arm": _text(shown_arm) or "0.00",
+        "floor": _text(floor) or "0.00",
+        "peak": _text(peak),
+        "reason": reason,
+        "cleared": bool(row.get("cleared")),
+        "mode": "trail",
+    }
 
 
 def _public(state: dict | None, steps: tuple | None) -> dict:
@@ -394,17 +508,23 @@ def _merge(prior: dict | None, updated: dict) -> dict:
     if not prior:
         return updated
     peaks = [item for item in (_decimal(prior.get("peak")), _decimal(updated.get("peak"))) if item is not None]
+    floors = [item for item in (_decimal(prior.get("floor")), _decimal(updated.get("floor"))) if item is not None]
     reason = str(prior.get("reason") or "")
     incoming = str(updated.get("reason") or "")
-    if incoming == "DAILY_HARD_STOP" or not reason:
+    if incoming in {"DAILY_HARD_STOP", "DAY_TRAIL"} or not reason:
         reason = incoming or reason
+    mode = str(updated.get("mode") or prior.get("mode") or "")
+    arm = _decimal(updated.get("arm")) or _decimal(prior.get("arm"))
     return {
         "session_date": updated["session_date"],
         "armed": bool(prior.get("armed") or updated.get("armed")),
         "closed": bool(prior.get("closed") or updated.get("closed")),
         "peak": _text(max(peaks) if peaks else None),
+        "floor": _text(max(floors) if floors else None),
+        "arm": _text(arm),
         "reason": reason,
         "cleared": bool(prior.get("cleared") or updated.get("cleared")),
+        "mode": mode,
     }
 
 

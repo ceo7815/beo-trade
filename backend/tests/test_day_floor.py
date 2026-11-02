@@ -1,7 +1,11 @@
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
+from pathlib import Path
+
 from app.config.settings import Settings, TradingConfig
+
+TOML_100K = str(Path(__file__).resolve().parents[1] / "app" / "config" / "trading_100k.toml")
 from app.options.day_floor import advance, floor_sell_price, observe_day_floor
 from app.positions.admission import exit_blocks_reentry
 
@@ -70,7 +74,7 @@ def test_writing_the_day_latch_drops_the_read_cache(tmp_path, monkeypatch):
     from app.options.day_floor import latch_hard_stop
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     read_cache.set(("risk", "now"), {"available": True, "loss": "ok"}, 30)
     read_cache.set(("trades", "all"), {"available": True, "closed": []}, 45)
     quiet = observe_day_floor(settings, Decimal("100"), NOW, True)
@@ -85,7 +89,7 @@ def test_writing_the_day_latch_drops_the_read_cache(tmp_path, monkeypatch):
 
 def test_a_closed_session_does_not_arm_from_a_stale_mark(tmp_path, monkeypatch):
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     view = observe_day_floor(settings, Decimal("8000"), NOW, False)
     assert view["armed"] is False
     assert not (tmp_path / "day_floor.json").exists()
@@ -102,6 +106,7 @@ def test_monitor_sells_when_the_floor_is_touched(tmp_path, monkeypatch):
         auto_create_tables=True,
         auth_required=False,
         trading_mode="PAPER",
+    trading_config_path=TOML_100K,
     )
     configure_database(settings)
     init_db(settings)
@@ -145,7 +150,7 @@ def test_monitor_sells_when_the_floor_is_touched(tmp_path, monkeypatch):
 
 def test_an_open_session_arms_and_then_closes(tmp_path, monkeypatch):
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "floor.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     armed = observe_day_floor(settings, Decimal("4000"), NOW, True)
     assert armed == {"armed": True, "closed": False, "arm": "4000.00", "floor": "2000.00", "reason": "", "cleared": False}
     raised = observe_day_floor(settings, Decimal("9000"), NOW + timedelta(minutes=10), True)
@@ -253,6 +258,7 @@ def _desk(tmp_path, monkeypatch, name: str):
         auto_create_tables=True,
         auth_required=False,
         trading_mode="PAPER",
+    trading_config_path=TOML_100K,
     )
     configure_database(settings)
     init_db(settings)
@@ -412,7 +418,7 @@ def test_false_hard_stop_release_only_on_target_day(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     # Latch on the bug day.
     moment = datetime(2026, 10, 30, 18, 0, tzinfo=timezone.utc)
     latch_hard_stop(settings, moment)
@@ -432,7 +438,7 @@ def test_false_hard_stop_release_noop_other_date_or_real_loss(tmp_path, monkeypa
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel2.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel2.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     other = datetime(2026, 10, 31, 18, 0, tzinfo=timezone.utc)
     latch_hard_stop(settings, other)
     assert maybe_release_false_hard_stop(settings, other, Decimal("0"), Decimal("100000")) is None
@@ -454,7 +460,7 @@ def test_after_false_release_real_loss_still_latches(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel3.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel3.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     moment = datetime(2026, 10, 30, 18, 0, tzinfo=timezone.utc)
     latch_hard_stop(settings, moment)
     maybe_release_false_hard_stop(settings, moment, Decimal("-2.52"), Decimal("100000"))
@@ -476,7 +482,7 @@ def test_worker_floor_cycle_releases_false_hard_stop_on_live_adjusted_pnl(tmp_pa
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     moment = datetime(2026, 10, 30, 14, 35, tzinfo=timezone.utc)
     latch_hard_stop(settings, moment)
     assert public_from_store(settings, moment)["closed"] is True
@@ -500,7 +506,7 @@ def test_worker_floor_cycle_keeps_latch_on_real_loss(tmp_path, monkeypatch):
 
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
     monkeypatch.setattr("app.options.day_floor._release_marker_path", lambda: tmp_path / "release.marker")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel5.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel5.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     moment = datetime(2026, 10, 30, 14, 35, tzinfo=timezone.utc)
     latch_hard_stop(settings, moment)
 
@@ -523,7 +529,7 @@ def test_second_release_after_stale_relatch_uses_v2_marker(tmp_path, monkeypatch
 
     monkeypatch.setattr("app.ops.paths.DATA_DIR", tmp_path)
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
-    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER")
+    settings = Settings(app_env="local", database_url="sqlite:///" + (tmp_path / "rel4.db").as_posix(), auth_required=False, trading_mode="PAPER", trading_config_path=TOML_100K)
     (tmp_path / "day_floor_false_hs_released_2026-10-30").write_text("v1\n", encoding="utf-8")
     assert _release_marker_path().name == "day_floor_false_hs_released_2026-10-30_v2"
     moment = datetime(2026, 10, 30, 15, 20, tzinfo=timezone.utc)
