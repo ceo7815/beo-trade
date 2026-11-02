@@ -291,12 +291,12 @@ def rules_for_adjustment(
     exclusions: Iterable[dict] | None = None,
     session: Session | None = None,
 ) -> list[dict]:
-    """Active exclusion rules with seed day-impact attached. Seeds fill an empty table."""
+    """Active exclusion rules with seed day-impact attached. Seeds fill an empty table only."""
     if exclusions is not None:
         rules = list(exclusions)
     else:
         rules = active_exclusions(session)
-    if not rules:
+    if not rules and _exclusion_table_empty(session):
         rules = [{**seed, "active": True} for seed in SEEDS]
     return [_enrich_rule(dict(rule)) for rule in rules]
 
@@ -518,20 +518,32 @@ def present_excluded(row: dict, *, open_row: bool = False) -> dict:
     return shown
 
 
-def exclusion_cards(positions: list[dict] | None = None, exclusions: Iterable[dict] | None = None) -> list[dict]:
-    """Cards for /risk: open excluded lots, else every active seed so closed bugs stay visible at $0."""
+def exclusion_cards(
+    positions: list[dict] | None = None,
+    exclusions: Iterable[dict] | None = None,
+    session_date=None,
+) -> list[dict]:
+    """Cards for /risk: open excluded lots always; closed-bug cards only on their NY session day.
+
+    Seed fallback runs only when the exclusion table has no rows at all — not when every
+    stored rule is deactivated.
+    """
     rules = list(exclusions) if exclusions is not None else active_exclusions()
-    if not rules:
+    if not rules and _exclusion_table_empty():
         rules = [{**seed, "active": True} for seed in SEEDS]
     rules = [_enrich_rule(dict(rule)) for rule in rules]
     open_cards = excluded_open_rows(positions or [], rules)
     seen = {_symbol(row.get("symbol") or row.get("option_symbol")) for row in open_cards}
     cards = list(open_cards)
+    day = _as_date(session_date)
+    day_key = None if day is None else day.isoformat()
     for rule in rules:
         if not rule.get("active", True):
             continue
         sym = _symbol(rule.get("symbol"))
         if not sym or sym in seen:
+            continue
+        if day_key is None or not _closed_card_for_session_day(rule, day_key):
             continue
         cards.append(
             present_excluded(
@@ -635,6 +647,31 @@ def _order_ids(row: dict) -> set[str]:
         if value:
             found.add(value)
     return found
+
+
+
+def _exclusion_table_empty(session: Session | None = None) -> bool:
+    """True when trade_exclusions has zero rows (active or not). No DB → treat as empty."""
+    from app.models.tables import TradeExclusion
+    from app.models.db import SessionLocal, database_ready
+
+    if session is not None:
+        return session.scalar(select(TradeExclusion.id).limit(1)) is None
+    if not database_ready() or SessionLocal is None:
+        return True
+    with SessionLocal() as own:
+        return own.scalar(select(TradeExclusion.id).limit(1)) is None
+
+
+def _closed_card_for_session_day(rule: dict, day_key: str) -> bool:
+    """Closed /risk bug cards are day-scoped via session_day or excluded_day_impact keys."""
+    session_day = str(rule.get("session_day") or "").strip()
+    if session_day:
+        return session_day == day_key
+    impact = rule.get("excluded_day_impact") or {}
+    if isinstance(impact, dict) and day_key in impact:
+        return True
+    return False
 
 
 def _session_day_ok(rule: dict, opened: datetime | None, closed: datetime | None) -> bool:

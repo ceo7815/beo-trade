@@ -437,7 +437,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                 exclusions=exclusions,
             )
         )
-        excluded_rows = exclusion_cards(positions or [], exclusions)
+        excluded_rows = exclusion_cards(positions or [], exclusions, session_date=session_date)
         countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
         from app.options.risk_limits import daily_loss_state, entry_pnl

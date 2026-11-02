@@ -424,11 +424,40 @@ def test_order_id_match_scopes_bug_lot_even_without_qty():
 
 
 def test_exclusion_cards_show_closed_seeds_on_risk():
+    from datetime import date
+
     from app.trades.exclusion import exclusion_cards
 
-    cards = exclusion_cards([], ALL_RULES)
-    symbols = {row["symbol"] for row in cards}
+    on_incident = exclusion_cards([], ALL_RULES, session_date=date(2026, 10, 30))
+    symbols = {row["symbol"] for row in on_incident}
     assert "META261030C00630000" in symbols
     assert "NVDA261102P00205000" in symbols
     assert "SPY261102P00760000" in symbols
-    assert all(row["pnl"] == "0.00" and row["bug_trade"] for row in cards)
+    assert all(row["pnl"] == "0.00" and row["bug_trade"] for row in on_incident)
+
+
+def test_exclusion_cards_hide_closed_bugs_on_other_session_days():
+    from datetime import date
+
+    from app.trades.exclusion import exclusion_cards
+
+    # No open excluded positions → cards empty on a later NY session day.
+    assert exclusion_cards([], ALL_RULES, session_date=date(2026, 11, 2)) == []
+    # Incident day still lists the three closed bug lots.
+    on_day = exclusion_cards([], ALL_RULES, session_date=date(2026, 10, 30))
+    assert {row["symbol"] for row in on_day} == {
+        "META261030C00630000",
+        "NVDA261102P00205000",
+        "SPY261102P00760000",
+    }
+
+
+def test_exclusion_cards_keep_open_excluded_lots_on_any_day():
+    from datetime import date
+
+    from app.trades.exclusion import exclusion_cards
+
+    cards = exclusion_cards([META_OPEN], [RULE], session_date=date(2026, 11, 2))
+    assert len(cards) == 1
+    assert cards[0]["symbol"] == META_OPEN["symbol"]
+    assert cards[0]["bug_trade"] is True
