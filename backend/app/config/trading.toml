@@ -33,8 +33,8 @@ min_underlying_move_percent = 0.6
 # Ranking only. A move from 2% up to (not including) 4% is scanned before a smaller move and before a larger one.
 move_rank_low_percent = 2
 move_rank_high_percent = 4
-min_option_price = 0.30
-max_option_price = 20.0
+min_option_price = 0.50
+max_option_price = 8.0
 entry_buffer_percent = 0.04
 holding_window_min_minutes = 15
 holding_window_max_minutes = 180
@@ -75,6 +75,9 @@ same_direction_window_minutes = 30
 # opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
 opening_entry_cap = 2
 opening_entry_until_minutes = 600
+# CALL buys blocked before 10:00 New York. PUT and the 2-buy opening cap are unchanged. 0 disables.
+# Research 2.11 (191 trades / 18 days): CALL before 10:00 n=23, -$11.2k; green days 50%→61%.
+opening_call_block_until_minutes = 600
 # New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
 # mix inside that window, and after a losing close the opposite side waits 30 minutes.
 # The same side stays eligible. Pending buys count; a canceled buy does not.
@@ -141,6 +144,8 @@ liquidity_exit_spread = 0.25
 liquidity_exit_confirmations = 2
 # A resting sell above the bid is moved down to the bid once it is this old. A stale exit limit kept QQQ open overnight.
 exit_reprice_seconds = 15
+# STOP / PROTECTED_STOP: reprice a resting sell after this many seconds (faster than other exits).
+stop_exit_reprice_seconds = 5
 # Inside this many minutes before the close a resting exit follows the bid on every check, whatever its age.
 exit_reprice_close_minutes = 5
 # No ThetaData quote inside the session exit window: sell this far below Alpaca's mark rather than hold overnight.
