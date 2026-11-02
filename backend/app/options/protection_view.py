@@ -102,15 +102,51 @@ def protection_progress(
 
 def build_protection(settings, pnl: Decimal | None, latch: dict | None, *, unknown: bool) -> dict:
     trading = settings.trading()
-    kill = Decimal(str(trading.daily_kill_loss_usd or 0))
+    from app.capital import day_trail_enabled, effective_kill_usd
+
+    kill = effective_kill_usd(trading)
     if unknown or pnl is None:
         return _unknown(abs(kill) if kill > 0 else Decimal("0"))
     row = latch if isinstance(latch, dict) else {}
+    if day_trail_enabled(trading) or str(row.get("mode") or "") == "trail":
+        return _trail_protection(pnl, row, kill)
     armed = bool(row.get("armed"))
     peak = _stored_peak(settings, datetime.now(timezone.utc)) if armed else None
     if armed and peak is None:
         peak = _peak_for_floor(_steps(trading.day_floor_steps), _decimal(row.get("floor")))
     return protection_progress(pnl, peak, trading.day_floor_steps, kill, armed=armed)
+
+
+def _trail_protection(pnl: Decimal, row: dict, kill: Decimal) -> dict:
+    peak = _decimal(row.get("peak"))
+    floor = _decimal(row.get("floor"))
+    arm = _decimal(row.get("arm"))
+    armed = bool(row.get("armed")) and floor is not None
+    distance = None
+    if armed and floor is not None:
+        distance = pnl - floor
+    if not armed and arm is not None:
+        distance = arm - pnl
+        line = f"עוד {_words(distance)} (ב-{_words(arm)}) נכנסת הגנה של טרייל יומי"
+    elif armed and floor is not None and peak is not None:
+        line = f"מוגנים {_words(floor)} · שיא {_words(peak)} · טרייל 30%"
+        if distance is not None:
+            line = f"{line} · מרחק {_words(distance)}"
+    else:
+        line = "טרייל יומי"
+    return {
+        "status": "ok",
+        "line": line,
+        "kill": _money(abs(kill)),
+        "pnl": _money(pnl),
+        "floor": None if floor is None else _money(floor),
+        "peak": None if peak is None else _money(peak),
+        "next_threshold": None if arm is None else _money(arm),
+        "next_floor": None if floor is None else _money(floor),
+        "distance": None if distance is None else _money(distance),
+        "protection_kind": "trail" if armed else "kill",
+        "armed": armed,
+    }
 
 
 def _unknown(kill: Decimal) -> dict:

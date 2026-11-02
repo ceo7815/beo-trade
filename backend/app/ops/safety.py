@@ -4,18 +4,13 @@ from app.config.settings import Settings, TradingConfig
 
 PAPER_HOST = "https://paper-api.alpaca.markets"
 
-OFFICIAL_POLICY = {
+# Shared exit / floor / pacing fields that both capital profiles must keep.
+_SHARED_POLICY = {
     "paper_policy_name": "AGGRESSIVE",
     "risk_policy_version": "aggressive-1",
     "exit_policy_version": "aggressive-exit-3",
-    "risk_per_trade_pct": 0.02,
-    "normal_position_capital_pct": 0.07,
-    "hard_position_capital_pct": 0.10,
     "max_open_positions": 10,
     "max_concurrent_positions": 10,
-    "max_total_open_exposure_pct": 0.35,
-    "max_aggregate_planned_risk_pct": 0.15,
-    "max_sector_exposure_pct": 0.10,
     "max_positions_per_underlying": 1,
     "daily_warning_pct": 0.025,
     "daily_entry_stop_pct": 0.04,
@@ -52,13 +47,56 @@ OFFICIAL_POLICY = {
     ),
 }
 
+OFFICIAL_POLICY_100K = {
+    **_SHARED_POLICY,
+    "capital_profile": "100k",
+    "risk_per_trade_pct": 0.02,
+    "normal_position_capital_pct": 0.07,
+    "hard_position_capital_pct": 0.10,
+    "max_total_open_exposure_pct": 0.35,
+    "max_aggregate_planned_risk_pct": 0.15,
+    "max_sector_exposure_pct": 0.10,
+    "working_capital_ils": 0,
+    "day_trail_enabled": False,
+    "daily_kill_loss_usd": 3500,
+}
+
+OFFICIAL_POLICY_10K = {
+    **_SHARED_POLICY,
+    "capital_profile": "10k_ils",
+    "risk_per_trade_pct": 0.12,
+    "normal_position_capital_pct": 0.30,
+    "hard_position_capital_pct": 0.40,
+    "max_total_open_exposure_pct": 1.0,
+    "max_aggregate_planned_risk_pct": 1.0,
+    "max_sector_exposure_pct": 0.40,
+    "working_capital_ils": 10000,
+    "ils_per_usd": 3.7,
+    "daily_kill_ils": 400,
+    "day_trail_enabled": True,
+    "day_trail_arm_pct": 0.04,
+    "day_trail_initial_floor_frac": 0.5,
+    "day_trail_pct": 0.30,
+    "daily_kill_loss_usd": 3500,
+}
+
+# Active desk after this release (trading.toml). Recovery = capital_profile "100k".
+OFFICIAL_POLICY = OFFICIAL_POLICY_10K
+
+
+def _policy_for(trading: TradingConfig) -> dict:
+    profile = str(getattr(trading, "capital_profile", "100k") or "100k")
+    if profile == "10k_ils":
+        return OFFICIAL_POLICY_10K
+    return OFFICIAL_POLICY_100K
+
 
 def policy_errors(trading: TradingConfig) -> list[str]:
     found: list[str] = []
-    for name, expected in OFFICIAL_POLICY.items():
-        actual = getattr(trading, name)
+    for name, expected in _policy_for(trading).items():
+        actual = getattr(trading, name, None)
         if isinstance(expected, float):
-            if abs(float(actual) - expected) > 1e-9:
+            if actual is None or abs(float(actual) - expected) > 1e-9:
                 found.append(name)
         elif actual != expected:
             found.append(name)

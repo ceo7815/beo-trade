@@ -1,3 +1,6 @@
+# Active profile: 10k_ils. To recover the 100K desk, set capital_profile = "100k"
+# (or copy values from trading_100k.toml) and restart. One switch.
+
 # All scan, risk, and session thresholds. Change this file, then restart.
 # Fractions are 0–1 unless the name says percent (those are also 0–1 here).
 
@@ -43,10 +46,10 @@ max_capital_per_trade = 0
 paper_policy_name = "AGGRESSIVE"
 risk_policy_version = "aggressive-1"
 exit_policy_version = "aggressive-exit-3"
-risk_per_trade_pct = 0.02
-normal_position_capital_pct = 0.07
-hard_position_capital_pct = 0.10
-max_aggregate_planned_risk_pct = 0.15
+risk_per_trade_pct = 0.12
+normal_position_capital_pct = 0.30
+hard_position_capital_pct = 0.40
+max_aggregate_planned_risk_pct = 1.0
 daily_warning_pct = 0.025
 daily_entry_stop_pct = 0.04
 daily_hard_stop_pct = 0.05
@@ -54,12 +57,24 @@ daily_hard_stop_pct = 0.05
 # recover to a profit after about -$3,000 realized, so the day flattens here.
 # The 5% hard stop still flattens first on a smaller account. 0 disables the dollar line.
 daily_kill_loss_usd = 3500
-max_capital_per_trade_pct = 0.07
-max_total_open_exposure_pct = 0.35
+# --- capital profile (single switch) ---
+# "10k_ils" = working capital 10,000 ₪ + day trail + ILS kill. "100k" = prior 100K desk.
+capital_profile = "10k_ils"
+# 10,000 ₪ / 3.7 ≈ 2,702.70 USD. ils_per_usd is an estimate of the FX rate.
+working_capital_ils = 10000
+ils_per_usd = 3.7
+daily_kill_ils = 400
+day_trail_enabled = true
+day_trail_arm_pct = 0.04
+day_trail_initial_floor_frac = 0.5
+day_trail_pct = 0.30
+# 10K profile: full working capital may be deployed; per-trade stays a fraction of WC.
+max_capital_per_trade_pct = 0.30
+max_total_open_exposure_pct = 1.0
 max_concurrent_positions = 10
 max_positions_per_underlying = 1
 max_daily_loss_pct = 0.04
-max_sector_exposure_pct = 0.10
+max_sector_exposure_pct = 0.40
 max_contracts = 100
 holding_minutes_0dte = 90
 holding_minutes_1dte = 180

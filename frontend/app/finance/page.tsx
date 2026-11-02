@@ -7,6 +7,7 @@ import { apiGet, holdScreen, poll } from "@/lib/api";
 
 type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; win_rate_pct?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
 
+type TradingPeriod = { id: string; label: string; start?: string; end?: string | null; is_current?: boolean };
 type Finance = {
   available?: boolean;
   stale?: boolean;
@@ -19,6 +20,8 @@ type Finance = {
   history: { points?: { timestamp: number; equity: number | null; profit_loss: number | null }[] } | null;
   drawdown: { enough?: boolean; note?: string; current?: string; maximum?: string; maximum_percent?: string };
   periods?: { yesterday?: string | null; week?: string | null; month?: string | null; quarter?: string | null; year?: string | null; cumulative?: string | null };
+  trading_period?: TradingPeriod | null;
+  trading_periods?: { current_id?: string; periods?: TradingPeriod[] };
   daily?: { date: string; start: string | null; end: string | null; pnl: string | null }[];
   monthly?: { month: string; pnl: string | null }[];
   utilization?: string | null;
@@ -67,6 +70,7 @@ function percent(value: string | null | undefined) {
 
 export default function FinancePage() {
   const [windowName, setWindowName] = useState("month");
+  const [tradingPeriod, setTradingPeriod] = useState("current");
   const [side, setSide] = useState("");
   const [outcome, setOutcome] = useState("");
   const [symbol, setSymbol] = useState("");
@@ -81,7 +85,7 @@ export default function FinancePage() {
   useEffect(() => {
     let alive = true;
     const load = () => {
-      const query = new URLSearchParams({ window: windowName, side, outcome, symbol, dte, start, end, exit_reason: "", hour: "" });
+      const query = new URLSearchParams({ window: windowName, side, outcome, symbol, dte, start, end, exit_reason: "", hour: "", trading_period: tradingPeriod });
       return Promise.allSettled([
         apiGet<Finance>(`/api/v1/finance?${query.toString()}`),
         apiGet<Risk>("/api/v1/risk"),
@@ -102,7 +106,7 @@ export default function FinancePage() {
       alive = false;
       stop();
     };
-  }, [windowName, side, outcome, symbol, dte, start, end]);
+  }, [windowName, tradingPeriod, side, outcome, symbol, dte, start, end]);
 
   useEffect(() => {
     if (!body?.stale) return;
@@ -144,6 +148,22 @@ export default function FinancePage() {
           <p>{failed && !body ? "אין נתונים" : periodLabel} <StaleNote stale={body?.stale} asOf={body?.as_of} now={now} /></p>
           <p className={`num ${ink(headline)}`}>{body ? money(headline) : failed ? "אין נתונים" : "טוען"}</p>
         </header>
+        <div className="period-row" onClick={(event) => event.stopPropagation()}>
+          {(body?.trading_periods?.periods || [
+            { id: "paper_100k", label: "פייפר 100K" },
+            { id: "paper_10k_ils", label: "פייפר 10K ₪" },
+            { id: "all", label: "הכל" },
+          ]).concat([{ id: "all", label: "הכל" }]).filter((item, index, arr) => arr.findIndex((row) => row.id === item.id) === index).map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={(tradingPeriod === item.id || (tradingPeriod === "current" && item.id === body?.trading_periods?.current_id) ? "choice on" : "choice")}
+              onClick={() => setTradingPeriod(item.id === body?.trading_periods?.current_id ? "current" : item.id)}
+            >
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </div>
         <div className="period-row" onClick={(event) => event.stopPropagation()}>
           {WINDOWS.filter((item) => ["day", "week", "month", "all"].includes(item.id)).map((item) => (
             <button key={item.id} type="button" className={windowName === item.id ? "choice on" : "choice"} onClick={() => setWindowName(item.id)}>

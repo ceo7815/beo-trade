@@ -328,7 +328,7 @@ def test_finance_broker_failure_does_not_replace_the_last_good_account(tmp_path,
         auth_required=False,
         trading_mode="PAPER",
     )
-    key = ("finance", "month", "", "", "", "", "", "", "", "")
+    key = ("finance", "month", "", "", "", "", "", "", "", "", "current")
     read_cache.set(key, {"environment": "PAPER", "account": {"equity": "10.00"}, "history": {"points": [{"equity": 10}]}}, 45)
     clock["mono"] = 1_200.0
 

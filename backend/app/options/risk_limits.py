@@ -49,11 +49,14 @@ def day_flatten_reason(equity: Decimal | None, day_pnl: Decimal | None, config: 
     """Close the session when total day P&L hits the dollar kill or the percent hard stop, whichever is first.
 
     day_pnl is the account mark versus last_equity: realized plus the unrealized of open positions, after same-day funding.
-    A missing mark does not flatten. The dollar line is daily_kill_loss_usd; 0 turns that line off and leaves the percent stop.
+    A missing mark does not flatten. The dollar line is daily_kill_loss_usd on the 100K profile, or
+    daily_kill_ils converted at ils_per_usd on the 10K profile; 0 turns that line off and leaves the percent stop.
     """
     if day_pnl is None:
         return None
-    limit = Decimal(str(config.daily_kill_loss_usd))
+    from app.capital import effective_kill_usd
+
+    limit = effective_kill_usd(config)
     if limit > 0 and day_pnl <= -limit:
         return "DAILY_HARD_STOP"
     if equity is None:

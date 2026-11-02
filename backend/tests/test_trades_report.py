@@ -106,7 +106,7 @@ def test_the_report_route_is_not_taken_by_the_trade_detail_route(tmp_path, monke
         trading_mode="PAPER",
     )
     with TestClient(create_app(settings, allow_open_api=True)) as client:
-        body = client.get("/api/v1/report/trades", params={"period": "range", "start": "2026-10-07", "end": "2026-10-07"}).json()
+        body = client.get("/api/v1/report/trades", params={"period": "range", "start": "2026-10-07", "end": "2026-10-07", "trading_period": "all"}).json()
     assert body["available"] is True
     assert body["window"]["period"] == "range"
     assert len(body["closed"]) == 6

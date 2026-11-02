@@ -222,6 +222,21 @@ def admit_buy(
     )
     quantity = min(requested, plan.quantity)
     if quantity < 1:
+        premium = option.ask * Decimal(config.contract_multiplier)
+        # One contract already exceeds the per-trade capital / risk cap — do not oversize.
+        one_contract_capital = premium
+        one_contract_risk = premium * Decimal(str(config.initial_stop_decline_pct))
+        per_trade_cap = equity * Decimal(str(config.normal_position_capital_pct))
+        hard_cap = equity * Decimal(str(config.hard_position_capital_pct))
+        risk_cap = equity * Decimal(str(config.risk_per_trade_pct))
+        caps_block_one = (
+            one_contract_capital > per_trade_cap
+            or one_contract_capital > hard_cap
+            or one_contract_risk > risk_cap
+            or (plan.limiter in {"capital", "hard_cap", "risk"} and max(plan.by_capital, plan.by_hard_cap, plan.by_risk) < 1)
+        )
+        if premium > 0 and caps_block_one:
+            return Admission(0, "SIZE_TOO_SMALL")
         reason = {
             "aggregate_risk": "AGGREGATE_RISK_LIMIT",
             "positions": "UNDERLYING_POSITION_LIMIT",

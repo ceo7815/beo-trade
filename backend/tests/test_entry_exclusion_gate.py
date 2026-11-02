@@ -10,7 +10,11 @@ from dataclasses import replace
 from datetime import datetime, timezone
 from decimal import Decimal
 
+from pathlib import Path
+
 from app.config.settings import Settings, TradingConfig
+
+TOML_100K = str(Path(__file__).resolve().parents[1] / "app" / "config" / "trading_100k.toml")
 from app.options.risk_limits import daily_loss_reason, day_flatten_reason
 from app.recommendations.pipeline import run_scan
 from app.schemas.domain import DecisionKind
@@ -80,6 +84,7 @@ def _database(tmp_path):
         auth_required=False,
         database_url="sqlite:///" + (tmp_path / "entry.db").as_posix(),
         auto_create_tables=True,
+        trading_config_path=TOML_100K,
     )
     configure_database(settings)
     init_db(settings)

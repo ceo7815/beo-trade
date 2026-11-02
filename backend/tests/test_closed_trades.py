@@ -96,8 +96,8 @@ def test_finance_totals_equal_history_for_the_same_fills(tmp_path, monkeypatch):
                 remember_fill(session, row)
             session.commit()
         read_cache.clear()
-        finance = client.get("/api/v1/finance").json()
-        history = client.get("/api/v1/report/trades", params={"period": "all"}).json()
+        finance = client.get("/api/v1/finance", params={"trading_period": "all"}).json()
+        history = client.get("/api/v1/report/trades", params={"period": "all", "trading_period": "all"}).json()
     assert history["available"] is True
     assert history["summary"]["closed_count"] == 3
     assert history["summary"]["realized_pnl"] == "20.00"

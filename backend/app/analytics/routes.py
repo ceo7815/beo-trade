@@ -220,12 +220,13 @@ def register(app: FastAPI, settings: Settings) -> None:
         end: str = "",
         exit_reason: str = "",
         hour: str = "",
+        trading_period: str = "current",
     ):
         from app.main import user_id_from_header
         from app.analytics.read_cache import FINANCE_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
-        cache_key = ("finance", window, side, outcome, symbol, dte, start, end, exit_reason, hour)
+        cache_key = ("finance", window, side, outcome, symbol, dte, start, end, exit_reason, hour, trading_period)
         cached = read_cache.get(cache_key)
         if cached is not None:
             return cached
@@ -295,6 +296,18 @@ def register(app: FastAPI, settings: Settings) -> None:
             exit_reason=exit_reason,
             hour=hour,
         )
+        from app.analytics.periods import filter_trades_for_period, public_periods, resolve_period
+
+        account_id = None if not isinstance(account, dict) else str(account.get("id") or "") or None
+        account_number = None if not isinstance(account, dict) else str(account.get("account_number") or "") or None
+        filtered = filter_trades_for_period(
+            filtered,
+            trading_period,
+            zone=settings.exchange_timezone,
+            account_id=account_id,
+            account_number=account_number,
+        )
+        period_meta = resolve_period(trading_period)
         counted = for_stats(filtered, exclusions)
         display_closed = annotate_trades(filtered, exclusions)
         grouped = [ratio_return(row) for row in counted]
@@ -320,6 +333,15 @@ def register(app: FastAPI, settings: Settings) -> None:
             "history": history,
             "drawdown": drawdown_from_equity(points),
             "periods": period_cards(year_points),
+            "trading_period": None
+            if period_meta is None
+            else {
+                "id": period_meta.id,
+                "label": period_meta.label,
+                "start": period_meta.start.isoformat(),
+                "end": None if period_meta.end is None else period_meta.end.isoformat(),
+            },
+            "trading_periods": public_periods(),
             "daily": daily_rows(year_points),
             "monthly": monthly_rows(year_points),
             "utilization": None
@@ -381,7 +403,16 @@ def register(app: FastAPI, settings: Settings) -> None:
             pass
         return cached
 
+    @app.get("/api/v1/trading-periods")
+    def trading_periods(authorization: str | None = Header(default=None)):
+        from app.main import user_id_from_header
+        from app.analytics.periods import public_periods
+
+        user_id_from_header(settings, authorization)
+        return {"environment": "PAPER", **public_periods()}
+
     @app.get("/api/v1/diag/day-floor")
+
     def day_floor_diag(authorization: str | None = Header(default=None)):
         """Read-only ops snapshot for the day-floor latch and monitor health. No side effects."""
         from app.main import user_id_from_header
@@ -421,6 +452,13 @@ def register(app: FastAPI, settings: Settings) -> None:
         except Exception:
             account = None
         equity = None if account is None or account.get("equity") in {None, ""} else Decimal(str(account["equity"]))
+        broker_equity = equity
+        if equity is not None:
+            from app.capital import risk_equity
+
+            capped = risk_equity(equity, trading)
+            if capped is not None:
+                equity = capped
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
         from app.trades.exclusion import active_exclusions, annotate_positions, compute_adjusted_day_pnl, countable_positions, exclusion_cards
 
@@ -516,6 +554,9 @@ def register(app: FastAPI, settings: Settings) -> None:
 
         hide_return = no_account or level == "unknown" or presented["stale"]
         returns = day_return_fields(None if hide_return else display, None if hide_return else cached_day_capital(settings))
+        from app.capital import working_capital_usd
+        from app.analytics.periods import public_periods
+
         return {
             "environment": "PAPER",
             "state": state,
@@ -523,6 +564,11 @@ def register(app: FastAPI, settings: Settings) -> None:
             "exposure_limit": None if equity is None else str((equity * Decimal(str(trading.max_total_open_exposure_pct))).quantize(Decimal("0.01"))),
             "daily_loss_limit": None if equity is None else str((equity * Decimal(str(trading.daily_entry_stop_pct))).quantize(Decimal("0.01"))),
             "daily_kill_loss_usd": display_kill_usd(trading, equity),
+            "working_capital_usd": None if working_capital_usd(trading) is None else str(working_capital_usd(trading)),
+            "risk_equity_usd": None if equity is None else str(Decimal(equity).quantize(Decimal("0.01"))),
+            "broker_equity_usd": None if broker_equity is None else str(Decimal(broker_equity).quantize(Decimal("0.01"))),
+            "capital_profile": str(getattr(trading, "capital_profile", "100k")),
+            "trading_periods": public_periods(),
             "daily_loss_state": level,
             "daily_loss_used": loss_used,
             "today_pnl": daily,
@@ -558,18 +604,24 @@ def register(app: FastAPI, settings: Settings) -> None:
         }
 
     @app.get("/api/v1/report/trades")
-    def trades_report(authorization: str | None = Header(default=None), period: str = "all", start: str = "", end: str = ""):
+    def trades_report(
+        authorization: str | None = Header(default=None),
+        period: str = "all",
+        start: str = "",
+        end: str = "",
+        trading_period: str = "current",
+    ):
         from app.main import user_id_from_header
         from app.analytics.read_cache import REPORT_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
         return read_cache.get_or_compute(
-            ("trades", period, start, end),
+            ("trades", period, start, end, trading_period),
             REPORT_TTL_SECONDS,
-            lambda: _trades_report(period, start, end),
+            lambda: _trades_report(period, start, end, trading_period),
         )
 
-    def _trades_report(period: str, start: str, end: str) -> dict:
+    def _trades_report(period: str, start: str, end: str, trading_period: str = "current") -> dict:
         frame = window(period, start, end, zone=settings.exchange_timezone)
         try:
             adapter = open_paper_broker(settings)
@@ -584,7 +636,19 @@ def register(app: FastAPI, settings: Settings) -> None:
             adapter.close()
         report = canonical_book(fills, stored_fill_payloads(), positions, settings.trading().contract_multiplier)
         closed = [row for row in report["closed"] if within(row.get("closed_at"), frame)]
+        from app.analytics.periods import filter_trades_for_period, public_periods, resolve_period
+
+        closed = filter_trades_for_period(closed, trading_period, zone=settings.exchange_timezone)
+        period_meta = resolve_period(trading_period)
         still_open = report["open"] if frame["includes_today"] else []
+        # Open lots belong to the current period only when the selector is current/all or today's period.
+        if period_meta is not None and trading_period not in {"", "all"}:
+            from datetime import datetime, timezone
+            from zoneinfo import ZoneInfo
+
+            today = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
+            if not period_meta.contains_day(today):
+                still_open = []
         ai_cost = None
         if database_ready():
             with session_scope() as session:
@@ -610,25 +674,38 @@ def register(app: FastAPI, settings: Settings) -> None:
             "open": annotate_trades(still_open, exclusions),
             "orphan_sells": report["orphan_sells"],
             "paper_limitation": "מחירי מילוי Paper אופטימיים ביחס ללייב. רווח Paper אינו ראיה לרווח בכסף אמיתי.",
+            "trading_period": None
+            if period_meta is None
+            else {
+                "id": period_meta.id,
+                "label": period_meta.label,
+                "start": period_meta.start.isoformat(),
+                "end": None if period_meta.end is None else period_meta.end.isoformat(),
+            },
+            "trading_periods": public_periods(),
         }
 
     @app.get("/api/v1/learning/trades")
-    def learning_trades(authorization: str | None = Header(default=None), period: str = "all"):
+    def learning_trades(
+        authorization: str | None = Header(default=None),
+        period: str = "all",
+        trading_period: str = "current",
+    ):
         from app.main import user_id_from_header
         from app.analytics.read_cache import REPORT_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
         return read_cache.get_or_compute(
-            ("learning-trades", period),
+            ("learning-trades", period, trading_period),
             REPORT_TTL_SECONDS,
-            lambda: _learning_trades(authorization, period),
+            lambda: _learning_trades(authorization, period, trading_period),
         )
 
-    def _learning_trades(authorization: str | None, period: str) -> dict:
+    def _learning_trades(authorization: str | None, period: str, trading_period: str = "current") -> dict:
         from app.analytics import learning
         from app.trades.exclusion import for_stats
 
-        report = trades_report(authorization=authorization, period=period, start="", end="")
+        report = trades_report(authorization=authorization, period=period, start="", end="", trading_period=trading_period)
         if not report.get("available"):
             return report
         config = settings.trading()

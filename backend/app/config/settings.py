@@ -125,6 +125,16 @@ class TradingConfig:
     daily_entry_stop_pct: float = 0.04
     daily_hard_stop_pct: float = 0.05
     daily_kill_loss_usd: float = 3500
+    # Single switch: "10k_ils" enables working capital + ILS kill + day trail; "100k" recovers the old desk.
+    capital_profile: str = "100k"
+    # Working capital for the 10K ₪ paper profile. ils_per_usd is an estimate (default 3.7).
+    working_capital_ils: float = 0
+    ils_per_usd: float = 3.7
+    daily_kill_ils: float = 400
+    day_trail_enabled: bool = False
+    day_trail_arm_pct: float = 0.04
+    day_trail_initial_floor_frac: float = 0.5
+    day_trail_pct: float = 0.30
     max_capital_per_trade_pct: float = 0.07
     max_total_open_exposure_pct: float = 0.35
     max_concurrent_positions: int = 10

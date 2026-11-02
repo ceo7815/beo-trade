@@ -3,7 +3,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.config.settings import Settings
+from app.config.settings import Settings, TradingConfig
 from app.options.risk_limits import sector_exposure_reason, sector_key
 from app.universe.builder import filter_optionable_equities, is_leveraged_fund
 from app.workers.loops import entry_window_open
@@ -16,7 +16,7 @@ def _settings() -> Settings:
 
 
 def test_names_without_a_sector_do_not_share_one_bucket():
-    config = _settings().trading()
+    config = TradingConfig()
     equity = Decimal("108000")
     book = {
         sector_key("HOOD"): Decimal("7770"),
@@ -28,7 +28,7 @@ def test_names_without_a_sector_do_not_share_one_bucket():
 
 
 def test_a_known_sector_still_groups_its_names():
-    config = _settings().trading()
+    config = TradingConfig()
     sectors = {"NVDA": "SEMIS", "AMD": "SEMIS"}
     book = {sector_key("NVDA", sectors): Decimal("10000")}
     assert sector_key("AMD", sectors) == "SEMIS"
