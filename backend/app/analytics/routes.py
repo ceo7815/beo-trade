@@ -422,7 +422,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             account = None
         equity = None if account is None or account.get("equity") in {None, ""} else Decimal(str(account["equity"]))
         session_date = datetime.now(timezone.utc).astimezone(ZoneInfo(settings.exchange_timezone)).date()
-        from app.trades.exclusion import active_exclusions, annotate_positions, compute_adjusted_day_pnl, countable_positions, excluded_open_rows
+        from app.trades.exclusion import active_exclusions, annotate_positions, compute_adjusted_day_pnl, countable_positions, exclusion_cards
 
         exclusions = active_exclusions()
         measured = (
@@ -437,7 +437,7 @@ def register(app: FastAPI, settings: Settings) -> None:
                 exclusions=exclusions,
             )
         )
-        excluded_rows = excluded_open_rows(positions or [], exclusions)
+        excluded_rows = exclusion_cards(positions or [], exclusions)
         countable = countable_positions(positions or [], exclusions) if positions is not None else None
         daily = None if measured is None else str(measured.quantize(Decimal("0.01")))
         from app.options.risk_limits import daily_loss_state, entry_pnl

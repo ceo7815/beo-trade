@@ -73,6 +73,20 @@ def entry_pace_reason(side: str, moment: datetime, book: PaceBook | None, config
     return None
 
 
+
+def opening_call_blocked(side: str, moment: datetime, until_minutes: int) -> bool:
+    """True when a CALL buy is blocked before `until_minutes` on the New York clock.
+
+    PUT is never blocked here. `until_minutes` 0 turns the gate off. The existing
+    opening buy cap (any side) is a separate check.
+    """
+    if int(until_minutes) <= 0:
+        return False
+    if str(side or "").upper() != "CALL":
+        return False
+    local = _aware(moment).astimezone(_NY)
+    return local.hour * 60 + local.minute < int(until_minutes)
+
 def losses_from_closed(rows: list[dict], moment: datetime, minutes: int) -> list[LossStamp]:
     """Losing closes inside the window. A flat or winning close does not start a block."""
     found: list[LossStamp] = []

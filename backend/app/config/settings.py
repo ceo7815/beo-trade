@@ -36,8 +36,8 @@ class TradingConfig:
     min_underlying_move_percent: float = 0.6
     move_rank_low_percent: float = 2
     move_rank_high_percent: float = 4
-    min_option_price: float = 0.05
-    max_option_price: float = 20.0
+    min_option_price: float = 0.50
+    max_option_price: float = 8.0
     entry_buffer_percent: float = 0.04
     holding_window_min_minutes: int = 15
     holding_window_max_minutes: int = 180
@@ -84,6 +84,8 @@ class TradingConfig:
     same_direction_window_minutes: int = 30
     opening_entry_cap: int = 2
     opening_entry_until_minutes: int = 600
+    # Before this New York clock (minutes from midnight), CALL buys are blocked. PUT stays open. 0 disables.
+    opening_call_block_until_minutes: int = 600
     # New buys only. A third submit inside the window is skipped, an opposite side
     # inside that window is skipped, and a losing close blocks the other side for a while.
     entry_pace_enabled: bool = True
@@ -138,6 +140,8 @@ class TradingConfig:
     liquidity_exit_spread: float = 0.25
     liquidity_exit_confirmations: int = 2
     exit_reprice_seconds: int = 15
+    # STOP / PROTECTED_STOP reprice sooner so a resting limit does not slip further.
+    stop_exit_reprice_seconds: int = 5
     exit_reprice_close_minutes: int = 5
     scan_strike_range: int = 15
     min_eod_days: int = 5

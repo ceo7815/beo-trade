@@ -44,6 +44,11 @@ SEEDS = [
         "reason": HARD_STOP_BUG_REASON,
         "exit_price": "1.07",
         "exit_at": "2026-10-30T13:59:52+00:00",
+        # Alpaca paper ids for the false DAILY_HARD_STOP lot only (30.10 ~13:52Z buy / 13:59Z sell).
+        "session_day": "2026-10-30",
+        "buy_order_id": "8410566c-322b-433b-91cc-862543337146",
+        "sell_order_id": "d186fd0f-acc4-4a50-b1b3-32d60074800b",
+        "entry_client_order_id": "f8e21011-de18-5baa-82f6-dd38f1fc0b46",
         # (1.07-1.51)*32*100
         "excluded_day_impact": {"2026-10-30": "-1408.00"},
     },
@@ -56,6 +61,11 @@ SEEDS = [
         "reason": HARD_STOP_BUG_REASON,
         "exit_price": "2.58",
         "exit_at": "2026-10-30T13:59:53+00:00",
+        # Alpaca paper ids for the false DAILY_HARD_STOP lot only (30.10 ~13:52Z buy / 13:59Z sell).
+        "session_day": "2026-10-30",
+        "buy_order_id": "530f19f8-62cb-40c6-b829-4bde7eeed056",
+        "sell_order_id": "428a925a-664a-443a-8d0a-816bfd1d8ff5",
+        "entry_client_order_id": "ddcfe535-66d7-59b4-a823-d8291ae3283d",
         # (2.58-3.19)*15*100
         "excluded_day_impact": {"2026-10-30": "-915.00"},
     },
@@ -103,22 +113,35 @@ def active_exclusions(session: Session | None = None) -> list[dict]:
     return [_public_row(row) for row in rows]
 
 
-def matches_trade(row: dict, exclusions: Iterable[dict] | None = None) -> bool:
-    """True when a position or closed/open round-trip is an excluded lot."""
+def matching_rule(row: dict, exclusions: Iterable[dict] | None = None) -> dict | None:
+    """The active exclusion rule for this lot, or None.
+
+    Prefer an exact Alpaca order id when the row carries one. Otherwise match the
+    seeded symbol + quantity + entry price + entry window. A rule with session_day
+    only matches lots opened or closed on that New York day — afternoon re-entries
+    of the same OCC symbol stay countable.
+    """
     rules = list(exclusions) if exclusions is not None else active_exclusions()
     if not rules:
-        return False
+        return None
     symbol = _symbol(row.get("symbol") or row.get("option_symbol"))
     if not symbol:
-        return False
+        return None
     qty = _int(row.get("qty") or row.get("quantity") or row.get("entry_fill_quantity"))
     entry = _decimal(row.get("avg_entry_price") or row.get("entry_price") or row.get("entry_fill_price"))
     opened = _parse(row.get("opened_at") or row.get("entry_time") or row.get("created_at"))
+    closed = _parse(row.get("closed_at") or row.get("exit_time"))
+    row_ids = _order_ids(row)
     for rule in rules:
         if not rule.get("active", True):
             continue
         if _symbol(rule.get("symbol")) != symbol:
             continue
+        if not _session_day_ok(rule, opened, closed):
+            continue
+        rule_ids = _order_ids(rule)
+        if rule_ids and row_ids and rule_ids.intersection(row_ids):
+            return rule
         rule_qty = _int(rule.get("quantity"))
         if rule_qty is not None and qty is not None and rule_qty != qty:
             continue
@@ -135,8 +158,13 @@ def matches_trade(row: dict, exclusions: Iterable[dict] | None = None) -> bool:
         elif after is not None or before is not None:
             if rule_qty is None or entry is None or rule_entry is None:
                 continue
-        return True
-    return False
+        return rule
+    return None
+
+
+def matches_trade(row: dict, exclusions: Iterable[dict] | None = None) -> bool:
+    """True when a position or closed/open round-trip is an excluded lot."""
+    return matching_rule(row, exclusions) is not None
 
 
 def countable_positions(positions: list[dict], exclusions: Iterable[dict] | None = None) -> list[dict]:
@@ -460,10 +488,13 @@ def annotate_display(row: dict, exclusions: Iterable[dict] | None = None) -> dic
     """Keep the trade visible; force displayed P&L to zero and tag it as a bug trade."""
     rules = list(exclusions) if exclusions is not None else active_exclusions()
     shown = dict(row)
-    if not matches_trade(shown, rules):
+    rule = matching_rule(shown, rules)
+    if rule is None:
         shown.setdefault("bug_trade", False)
         shown.setdefault("excluded", False)
         return shown
+    if rule.get("reason") and not shown.get("excluded_reason"):
+        shown["excluded_reason"] = rule["reason"]
     return present_excluded(shown, open_row=bool(shown.get("unrealized_pnl") is not None or shown.get("unrealized_pl") is not None))
 
 
@@ -485,6 +516,36 @@ def present_excluded(row: dict, *, open_row: bool = False) -> dict:
     if open_row:
         shown["display_pnl"] = "0.00"
     return shown
+
+
+def exclusion_cards(positions: list[dict] | None = None, exclusions: Iterable[dict] | None = None) -> list[dict]:
+    """Cards for /risk: open excluded lots, else every active seed so closed bugs stay visible at $0."""
+    rules = list(exclusions) if exclusions is not None else active_exclusions()
+    if not rules:
+        rules = [{**seed, "active": True} for seed in SEEDS]
+    rules = [_enrich_rule(dict(rule)) for rule in rules]
+    open_cards = excluded_open_rows(positions or [], rules)
+    seen = {_symbol(row.get("symbol") or row.get("option_symbol")) for row in open_cards}
+    cards = list(open_cards)
+    for rule in rules:
+        if not rule.get("active", True):
+            continue
+        sym = _symbol(rule.get("symbol"))
+        if not sym or sym in seen:
+            continue
+        cards.append(
+            present_excluded(
+                {
+                    "symbol": sym,
+                    "qty": rule.get("quantity"),
+                    "quantity": rule.get("quantity"),
+                    "entry_price": rule.get("entry_price"),
+                    "excluded_reason": rule.get("reason") or BUG_REASON,
+                }
+            )
+        )
+        seen.add(sym)
+    return cards
 
 
 def annotate_positions(items: list[dict], exclusions: Iterable[dict] | None = None) -> list[dict]:
@@ -535,18 +596,63 @@ def _audit_once(session: Session, symbol: str, reason: str) -> None:
 
 
 def _enrich_rule(rule: dict) -> dict:
-    """Attach seed-only fields (exit, day impact) onto DB-backed exclusion rows."""
+    """Attach seed-only fields (exit, day impact, order ids) onto DB-backed exclusion rows."""
     sym = _symbol(rule.get("symbol"))
     for seed in SEEDS:
         if _symbol(seed["symbol"]) != sym:
             continue
-        for key in ("exit_price", "exit_at", "excluded_day_impact", "reason"):
+        for key in (
+            "exit_price",
+            "exit_at",
+            "excluded_day_impact",
+            "reason",
+            "session_day",
+            "buy_order_id",
+            "sell_order_id",
+            "entry_client_order_id",
+        ):
             if key in seed and key not in rule:
                 rule[key] = seed[key]
             elif key == "excluded_day_impact" and seed.get(key):
                 rule[key] = seed[key]
         break
     return rule
+
+
+def _order_ids(row: dict) -> set[str]:
+    found: set[str] = set()
+    for key in (
+        "buy_order_id",
+        "sell_order_id",
+        "entry_client_order_id",
+        "broker_order_id",
+        "order_id",
+        "client_order_id",
+        "entry_order_id",
+        "exit_order_id",
+    ):
+        value = str(row.get(key) or "").strip().lower()
+        if value:
+            found.add(value)
+    return found
+
+
+def _session_day_ok(rule: dict, opened: datetime | None, closed: datetime | None) -> bool:
+    day_key = str(rule.get("session_day") or "").strip()
+    if not day_key:
+        return True
+    from zoneinfo import ZoneInfo
+
+    ny = ZoneInfo("America/New_York")
+    for stamp in (opened, closed):
+        if stamp is None:
+            continue
+        if stamp.astimezone(ny).date().isoformat() == day_key:
+            return True
+    # No timestamps on the row: fall through to qty/price/window (still scoped by those).
+    if opened is None and closed is None:
+        return True
+    return False
 
 
 def _public_row(row) -> dict:

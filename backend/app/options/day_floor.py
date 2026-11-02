@@ -62,6 +62,31 @@ def floor_sell_price(bid: Decimal | None, mark: Decimal | None, discount: Decima
     return max(price, Decimal("0.01"))
 
 
+def option_tick(price: Decimal) -> Decimal:
+    """OCC-style option tick: a nickel at or above $3, otherwise a penny."""
+    return Decimal("0.05") if price >= 3 else Decimal("0.01")
+
+
+def marketable_sell_limit(bid: Decimal | None, reason: str | None = None) -> Decimal | None:
+    """Limit for a protective sell.
+
+    STOP and PROTECTED_STOP go one tick under the live bid so the order can take
+    liquidity instead of resting. Other exit reasons keep the bid unchanged.
+    The -40% stop threshold itself is not changed here — only the order price.
+    """
+    if bid is None or bid <= 0:
+        return None
+    urgent = str(reason or "") in {"STOP", "PROTECTED_STOP"}
+    if not urgent:
+        return bid
+    tick = option_tick(bid)
+    priced = bid - tick
+    if priced <= 0:
+        return max(tick, Decimal("0.01"))
+    # Snap down to the tick grid.
+    return (priced / tick).to_integral_value(rounding="ROUND_FLOOR") * tick
+
+
 def observe_day_floor(settings: Settings, pnl: Decimal | None, moment: datetime, session_open: bool) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)

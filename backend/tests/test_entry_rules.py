@@ -171,3 +171,61 @@ def test_a_universe_cached_before_the_leveraged_filter_is_read_again(tmp_path, m
     book = load_universe(settings, settings.trading(), NOW, path)
     assert book.symbols == ("HOOD",)
     reset_universe_state()
+
+
+def test_opening_call_block_before_ten_leaves_puts_alone():
+    from zoneinfo import ZoneInfo
+
+    from app.positions.entry_pace import opening_call_blocked
+
+    ny = ZoneInfo("America/New_York")
+    morning = datetime(2026, 11, 2, 9, 45, tzinfo=ny)
+    at_ten = datetime(2026, 11, 2, 10, 0, tzinfo=ny)
+    assert opening_call_blocked("CALL", morning, 600) is True
+    assert opening_call_blocked("PUT", morning, 600) is False
+    assert opening_call_blocked("CALL", at_ten, 600) is False
+    assert opening_call_blocked("CALL", morning, 0) is False
+    assert _settings().trading().opening_call_block_until_minutes == 600
+
+
+def test_premium_band_uses_half_to_eight_dollars():
+    from datetime import date
+    from decimal import Decimal
+
+    from app.quant.filters import reject_option
+    from app.schemas.domain import OptionRight, OptionSnapshot, UnderlyingSnapshot
+
+    config = _settings().trading()
+    assert config.min_option_price == 0.5
+    assert config.max_option_price == 8.0
+    now = datetime(2026, 11, 2, 15, 0, tzinfo=timezone.utc)
+    underlying = UnderlyingSnapshot(
+        "SPY", Decimal("500"), Decimal("500"), Decimal("500"), Decimal("500"), Decimal("500"),
+        2_000_000, Decimal("2"), Decimal("1"), Decimal("1"), Decimal("500"), now, True,
+    )
+
+    def option(bid: str, ask: str) -> OptionSnapshot:
+        mid = (Decimal(bid) + Decimal(ask)) / 2
+        return OptionSnapshot(
+            "SPY",
+            "SPY261106C00500000",
+            OptionRight.CALL,
+            Decimal("500"),
+            date(2026, 11, 6),
+            Decimal(bid),
+            Decimal(ask),
+            mid,
+            500,
+            500,
+            now,
+            Decimal("0.25"),
+            Decimal("0.45"),
+            Decimal("0.02"),
+            Decimal("-0.05"),
+            Decimal("0.10"),
+        )
+
+    assert reject_option(option("0.40", "0.44"), underlying, config, now, date(2026, 11, 2)) == "premium_band"
+    assert reject_option(option("0.50", "0.54"), underlying, config, now, date(2026, 11, 2)) is None
+    assert reject_option(option("8.00", "8.10"), underlying, config, now, date(2026, 11, 2)) == "premium_band"
+    assert reject_option(option("7.80", "7.90"), underlying, config, now, date(2026, 11, 2)) is None

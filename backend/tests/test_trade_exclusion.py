@@ -28,18 +28,7 @@ RULE = {
     "active": True,
 }
 
-ALL_RULES = [
-    {
-        "symbol": s["symbol"],
-        "quantity": s["quantity"],
-        "entry_price": s["entry_price"],
-        "entry_after": s["entry_after"],
-        "entry_before": s["entry_before"],
-        "reason": s["reason"],
-        "active": True,
-    }
-    for s in SEEDS
-]
+ALL_RULES = [{**s, "active": True} for s in SEEDS]
 
 META_OPEN = {
     "symbol": "META261030C00630000",
@@ -351,3 +340,95 @@ def test_nvda_spy_same_day_from_prices():
         closed_rows=[NVDA_CLOSED, SPY_CLOSED],
     )
     assert out == Decimal("0.00")
+
+
+AFTERNOON_NVDA = {
+    "symbol": "NVDA261102P00205000",
+    "quantity": 27,
+    "qty": 27,
+    "entry_price": "1.75",
+    "avg_entry_price": "1.75",
+    "exit_price": "2.25",
+    "pnl": "1350.00",
+    "opened_at": "2026-10-30T15:51:52+00:00",
+    "closed_at": "2026-10-30T16:41:19+00:00",
+    "buy_order_id": "65906fd0-2e95-4da0-802f-237f31e55e18",
+}
+
+AFTERNOON_SPY = {
+    "symbol": "SPY261102P00760000",
+    "quantity": 10,
+    "qty": "1E+1",
+    "entry_price": "4.88",
+    "avg_entry_price": "4.88",
+    "exit_price": "8.92",
+    "pnl": "4040.00",
+    "opened_at": "2026-10-30T15:45:09+00:00",
+    "closed_at": "2026-10-30T18:59:40+00:00",
+    "buy_order_id": "51fb3550-34b0-4b41-868c-fcd0b077a917",
+}
+
+OTHER_DAY_NVDA = {
+    "symbol": "NVDA261102P00205000",
+    "quantity": 32,
+    "qty": 32,
+    "entry_price": "1.51",
+    "avg_entry_price": "1.51",
+    "opened_at": "2026-10-29T13:52:29+00:00",
+    "closed_at": "2026-10-29T14:00:00+00:00",
+}
+
+
+def test_afternoon_nvda_spy_lots_are_not_excluded():
+    """Same OCC symbols after the bug window must stay countable (30.10 afternoon)."""
+    assert not matches_trade(AFTERNOON_NVDA, ALL_RULES)
+    assert not matches_trade(AFTERNOON_SPY, ALL_RULES)
+    kept = for_stats([NVDA_CLOSED, SPY_CLOSED, AFTERNOON_NVDA, AFTERNOON_SPY], ALL_RULES)
+    assert {row["symbol"] + ":" + str(row["qty"]) for row in kept} == {
+        "NVDA261102P00205000:27",
+        "SPY261102P00760000:1E+1",
+    }
+
+
+def test_other_session_days_unaffected_even_with_same_qty_price():
+    assert not matches_trade(OTHER_DAY_NVDA, ALL_RULES)
+    measured = Decimal("500.00")
+    assert (
+        adjust_day_pnl(
+            measured,
+            [],
+            ALL_RULES,
+            session_date=date(2026, 10, 29),
+            closed_rows=[OTHER_DAY_NVDA],
+        )
+        == measured
+    )
+
+
+def test_order_id_match_scopes_bug_lot_even_without_qty():
+    from app.trades.exclusion import HARD_STOP_BUG_REASON, SEEDS, matching_rule
+
+    nvda_seed = next(s for s in SEEDS if s["symbol"].startswith("NVDA"))
+    row = {
+        "symbol": "NVDA261102P00205000",
+        "buy_order_id": nvda_seed["buy_order_id"],
+        "opened_at": "2026-10-30T13:52:29+00:00",
+    }
+    rule = matching_rule(row, ALL_RULES)
+    assert rule is not None
+    assert rule["buy_order_id"] == nvda_seed["buy_order_id"]
+    shown = annotate_display(NVDA_CLOSED, ALL_RULES)
+    assert shown["excluded_reason"] == HARD_STOP_BUG_REASON
+    assert shown["bug_label"] == BUG_LABEL
+    assert shown["pnl"] == "0.00"
+
+
+def test_exclusion_cards_show_closed_seeds_on_risk():
+    from app.trades.exclusion import exclusion_cards
+
+    cards = exclusion_cards([], ALL_RULES)
+    symbols = {row["symbol"] for row in cards}
+    assert "META261030C00630000" in symbols
+    assert "NVDA261102P00205000" in symbols
+    assert "SPY261102P00760000" in symbols
+    assert all(row["pnl"] == "0.00" and row["bug_trade"] for row in cards)

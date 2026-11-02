@@ -270,7 +270,10 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                         exits[-1]["repriced"] = moved
                     session.commit()
                     continue
-                record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {signal.exit_price} {source}")
+                from app.options.day_floor import marketable_sell_limit
+
+                limit = marketable_sell_limit(signal.exit_price, getattr(signal, "reason", None)) or signal.exit_price
+                record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {limit} {source}")
                 if submit:
                     try:
                         place_order(
@@ -280,7 +283,7 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                             {
                                 "symbol": symbol,
                                 "qty": int(float(position.get("qty") or 0)),
-                                "limit_price": str(signal.exit_price),
+                                "limit_price": str(limit),
                                 "position_intent": "sell_to_close",
                                 "approved": False,
                                 "system_validated": True,
@@ -607,15 +610,21 @@ def _working_exit(adapter, symbol: str) -> dict | None:
 
 
 def _reprice_exit(adapter, session, trade_id: str, order: dict, signal, moment: datetime, session_close: datetime | None, trading) -> str | None:
-    """A resting sell above the bid does not fill. Move it to the bid instead of waiting for the close."""
+    """A resting sell above the marketable target does not fill. Move it down instead of waiting for the close.
+
+    STOP / PROTECTED_STOP reprice after stop_exit_reprice_seconds and target one tick under the bid.
+    Other exits keep the prior bid target and the general exit_reprice_seconds delay.
+    """
     from app.broker.store import record_trade_event, remember_orders
+    from app.options.day_floor import marketable_sell_limit
 
     try:
         limit = Decimal(str(order.get("limit_price")))
     except Exception:
         return None
-    bid = signal.exit_price
-    if bid <= 0 or bid >= limit:
+    reason = str(getattr(signal, "reason", "") or "")
+    target = marketable_sell_limit(signal.exit_price, reason)
+    if target is None or target <= 0 or target >= limit:
         return None
     stamp = str(order.get("submitted_at") or order.get("created_at") or "")
     try:
@@ -624,21 +633,23 @@ def _reprice_exit(adapter, session, trade_id: str, order: dict, signal, moment: 
         placed = None
     age = None if placed is None else (moment - placed).total_seconds()
     closing = session_close is not None and 0 <= (session_close - moment).total_seconds() / 60 <= trading.exit_reprice_close_minutes
-    if not closing and age is not None and age < trading.exit_reprice_seconds:
+    urgent = reason in {"STOP", "PROTECTED_STOP"}
+    min_age = trading.stop_exit_reprice_seconds if urgent else trading.exit_reprice_seconds
+    if not closing and age is not None and age < min_age:
         return None
     order_id = str(order.get("broker_order_id") or order.get("id") or "")
     if not order_id:
         return None
     try:
-        replaced = adapter.replace_order(order_id, {"limit_price": str(bid)})
+        replaced = adapter.replace_order(order_id, {"limit_price": str(target)})
     except Exception as exc:
-        record_trade_event(session, trade_id, "BLOCKED", "beo-trade", f"EXIT_REPRICE {limit} -> {bid}: {str(exc)[:200]}")
+        record_trade_event(session, trade_id, "BLOCKED", "beo-trade", f"EXIT_REPRICE {limit} -> {target}: {str(exc)[:200]}")
         return None
-    record_trade_event(session, trade_id, "EXIT_REPRICED", "alpaca-paper", f"{signal.reason} {limit} -> {bid}")
+    record_trade_event(session, trade_id, "EXIT_REPRICED", "alpaca-paper", f"{reason} {limit} -> {target}")
     if replaced:
         replaced.setdefault("trade_id", trade_id)
         remember_orders(session, [replaced])
-    return str(bid)
+    return str(target)
 
 
 def _held_underlyings(positions: list[dict]) -> tuple[str, ...]:
@@ -1229,7 +1240,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         trading = settings.trading()
         same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
         opening_taken = opening_entries_taken(moment, trading.opening_entry_until_minutes)
-        from app.positions.entry_pace import entry_pace_reason, load_pace_book
+        from app.positions.entry_pace import entry_pace_reason, load_pace_book, opening_call_blocked
 
         pace_book = load_pace_book(moment, trading) if trading.entry_pace_enabled else None
         _submit_step(
@@ -1250,6 +1261,15 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CAP"})
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CAP")
+                continue
+            if opening_call_blocked(side, moment, trading.opening_call_block_until_minutes):
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "OPENING_CALL_BLOCK", row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CALL_BLOCK"})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CALL_BLOCK")
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
