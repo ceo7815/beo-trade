@@ -74,6 +74,19 @@ def entry_pace_reason(side: str, moment: datetime, book: PaceBook | None, config
 
 
 
+def call_block_clocks(until_minutes: int, moment: datetime) -> tuple[str, str]:
+    """New York clock of the CALL block, and that same instant in Dubai.
+
+    Dubai has no daylight saving. New York does, so 10:00 New York is 19:00 Dubai
+    in winter and 18:00 Dubai in summer.
+    """
+    local = _aware(moment).astimezone(_NY)
+    hour, minute = divmod(int(until_minutes), 60)
+    ny_at = local.replace(hour=hour % 24, minute=minute % 60, second=0, microsecond=0)
+    dubai = ny_at.astimezone(ZoneInfo("Asia/Dubai"))
+    return ny_at.strftime("%H:%M"), dubai.strftime("%H:%M")
+
+
 def opening_call_blocked(side: str, moment: datetime, until_minutes: int) -> bool:
     """True when a CALL buy is blocked before `until_minutes` on the New York clock.
 

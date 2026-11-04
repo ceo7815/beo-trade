@@ -45,18 +45,24 @@ def daily_loss_reason(equity: Decimal, daily_pnl: Decimal, config: TradingConfig
     return None
 
 
-def day_flatten_reason(equity: Decimal | None, day_pnl: Decimal | None, config: TradingConfig) -> str | None:
+def day_flatten_reason(
+    equity: Decimal | None,
+    day_pnl: Decimal | None,
+    config: TradingConfig,
+    open_equity: Decimal | None = None,
+) -> str | None:
     """Close the session when total day P&L hits the dollar kill or the percent hard stop, whichever is first.
 
     day_pnl is the account mark versus last_equity: realized plus the unrealized of open positions, after same-day funding.
-    A missing mark does not flatten. The dollar line is daily_kill_loss_usd on the 100K profile, or
-    daily_kill_pct × live equity on the 10K profile (kill first); 0 turns that line off and leaves the percent stop.
+    A missing mark does not flatten. The kill dollars are locked to ``open_equity`` (session open /
+    Alpaca last_equity) when that is passed. They are not recomputed from the shrunk live equity.
+    The 100K profile keeps its fixed dollar kill. 0 turns that line off and leaves the percent stop.
     """
     if day_pnl is None:
         return None
     from app.capital import effective_kill_usd
 
-    limit = effective_kill_usd(config, equity)
+    limit = effective_kill_usd(config, equity, open_equity=open_equity)
     if limit > 0 and day_pnl <= -limit:
         return "DAILY_HARD_STOP"
     if equity is None:

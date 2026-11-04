@@ -100,12 +100,45 @@ OFFICIAL_POLICY_10K = {
     "max_daily_loss_pct": 0.12,
 }
 
-# Active desk after this release (trading.toml). Recovery = capital_profile "100k".
-OFFICIAL_POLICY = OFFICIAL_POLICY_10K
+OFFICIAL_POLICY_20K = {
+    **_SHARED_POLICY,
+    "capital_profile": "20k_ils",
+    "risk_per_trade_pct": 0.06,
+    "normal_position_capital_pct": 0.15,
+    "hard_position_capital_pct": 0.15,
+    "max_total_open_exposure_pct": 1.0,
+    "max_aggregate_planned_risk_pct": 1.0,
+    "max_sector_exposure_pct": 0.40,
+    "working_capital_ils": 20000,
+    "ils_per_usd": 3.14,
+    "daily_kill_ils": 2333,
+    "daily_kill_pct": 0.11666666666666667,
+    "daily_kill_ratio_loss_usd": 3500,
+    "daily_kill_ratio_deploy_usd": 30000,
+    "day_floor_deploy_reference_usd": 30000,
+    "day_trail_enabled": True,
+    "day_trail_arm_pct": 0,
+    "day_trail_protect_pct": 0,
+    "day_trail_initial_floor_frac": 0.75,
+    "day_trail_pct": 0.40,
+    "day_trail_after_first_step": True,
+    "allow_one_contract_over_cap": False,
+    "max_capital_per_trade_pct": 0.15,
+    "daily_kill_loss_usd": 3500,
+    "daily_warning_pct": 0.10,
+    "daily_entry_stop_pct": 0.12,
+    "daily_hard_stop_pct": 0.15,
+    "max_daily_loss_pct": 0.12,
+}
+
+# Active desk after this release (trading.toml). 10k_ils stays in trading_10k.toml. 100k recovers the old desk.
+OFFICIAL_POLICY = OFFICIAL_POLICY_20K
 
 
 def _policy_for(trading: TradingConfig) -> dict:
     profile = str(getattr(trading, "capital_profile", "100k") or "100k")
+    if profile == "20k_ils":
+        return OFFICIAL_POLICY_20K
     if profile == "10k_ils":
         return OFFICIAL_POLICY_10K
     return OFFICIAL_POLICY_100K

@@ -36,6 +36,10 @@ type Body = {
       tiers?: Tier[];
     };
     compare_100k?: Record<string, string>;
+    ladder?: { arm: string | null; floor: string | null }[];
+    kill_locked?: boolean;
+    kill_open_equity?: string | null;
+    call_block_dubai?: string;
   };
   trading_periods?: { current_id?: string; periods?: { id: string; label: string; is_current?: boolean }[] };
 };
@@ -101,13 +105,17 @@ export default function TradingRulesPage() {
             <b className="num">{active?.ils_per_usd || "3.14"} ILS / USD</b>
             <p className="muted">מקור: {active?.fx_source || "config"} · נפילה ל־3.14</p>
             <p className="muted">
-              הון עבודה: {active?.working_capital_ils || "10000"} ₪ ≈ {active?.working_capital_usd || "3184.71"}$
+              הון עבודה: {active?.working_capital_ils || "20000"} ₪ ≈ {active?.working_capital_usd || "6369.43"}$
             </p>
             {active?.equity_usd ? (
               <p className="muted">
                 הון חי: {active.equity_usd}$ {active.equity_ils ? `(${active.equity_ils} ₪)` : ""}
               </p>
             ) : null}
+            <p className="muted">
+              קייל נעול לפתיחה{active?.kill_open_equity ? `: ${active.kill_open_equity}$` : ""}
+              {active?.call_block_dubai ? ` · CALL עד ${active.call_block_dubai} דובאי` : ""}
+            </p>
           </div>
         </header>
 

@@ -26,7 +26,7 @@ const COPY: Record<string, Explain> = {
   scan_interval_seconds: { title: "מרווח סריקה", does: "המנוע נחשב פעיל אם גיל הדופק בתוך שלושה מרווחים.", formula: "פעיל אם גיל ≤ מרווח × 3" },
   holding_window_min_minutes: { title: "חלון מינימלי", does: "רצפת זמן ההחזקה בדקות.", formula: "חלון מינימלי = holding_window_min_minutes" },
   holding_window_max_minutes: { title: "חלון מקסימלי", does: "זמן ההחזקה נמדד מהמילוי. 0DTE ו-1DTE נסגרים לפי הדקות שבמדיניות.", formula: "0DTE ≤ 90 דקות\n1DTE ≤ 180 דקות" },
-  max_capital_per_trade: { title: "תקרת דולר ישנה", does: "השדה אינו קובע כמות. הכמות החיה באה ממדיניות AGGRESSIVE.", formula: "כמות = MIN(סיכון 2%, הון 7%, תקרה 10%, חשיפה 35%, סקטור 10%, סיכון מצטבר 15%, Buying Power)" },
+  max_capital_per_trade: { title: "תקרת דולר ישנה", does: "השדה אינו קובע כמות. הכמות החיה באה מפרופיל 20K ₪: 15% קשיח מההון.", formula: "כמות = MIN(סיכון 6%, הון 15% קשיח, חשיפה 100%, Buying Power). חוזה מעל 15% נדחה." },
 };
 
 export default function SettingsPage() {

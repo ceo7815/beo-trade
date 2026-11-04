@@ -126,17 +126,83 @@ def advance_trail(
     }
 
 
+def advance_ladder_trail(
+    prior: dict | None,
+    session_date: str,
+    pnl: Decimal | None,
+    steps: tuple,
+    trail_pct: Decimal,
+) -> dict:
+    """Scaled ladder, plus a giveback trail after the first step. The higher floor wins.
+
+    The floor only ratchets up. Touching it closes the day. Before the first step
+    neither protector is armed, so a loss is the kill's job, not the trail's.
+    """
+    ladder = _ladder(steps)
+    state = prior if prior and prior.get("session_date") == session_date else _blank(session_date)
+    if not ladder:
+        return _blank(session_date)
+    if state.get("closed"):
+        return state
+    if pnl is None:
+        return state
+    peak = _decimal(state.get("peak"))
+    if peak is None or pnl > peak:
+        peak = pnl
+    step_arm, ladder_floor = _level(peak, ladder)
+    first_arm = ladder[0][0]
+    trail_floor = None
+    if trail_pct > 0 and trail_pct < 1 and peak >= first_arm:
+        trail_floor = (peak * (Decimal("1") - trail_pct)).quantize(Decimal("0.01"))
+    floors = [item for item in (ladder_floor, trail_floor) if item is not None]
+    floor = max(floors) if floors else None
+    stored_floor = _decimal(state.get("floor"))
+    if stored_floor is not None and (floor is None or stored_floor > floor):
+        floor = stored_floor
+    armed = floor is not None
+    closed = bool(armed and floor is not None and pnl <= floor)
+    reason = ""
+    if closed:
+        trail_binds = trail_floor is not None and (ladder_floor is None or trail_floor > ladder_floor)
+        reason = "DAY_TRAIL" if trail_binds else "DAY_FLOOR"
+    return {
+        "session_date": session_date,
+        "armed": armed,
+        "closed": closed,
+        "peak": _text(peak),
+        "floor": None if floor is None else _text(floor),
+        "arm": _text(step_arm or first_arm),
+        "reason": reason,
+        "cleared": bool(state.get("cleared")),
+        "mode": "ladder_trail",
+    }
+
+
 def observe_day_floor(
     settings: Settings,
     pnl: Decimal | None,
     moment: datetime,
     session_open: bool,
     equity: Decimal | None = None,
+    open_equity: Decimal | None = None,
 ) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
-    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+    from app.capital import day_giveback_enabled, day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_giveback_enabled(trading):
+        if not session_open:
+            return _present(trading, prior, open_equity)
+        updated = advance_ladder_trail(
+            prior,
+            session_date,
+            pnl,
+            _scaled_steps(trading, open_equity),
+            Decimal(str(getattr(trading, "day_trail_pct", 0) or 0)),
+        )
+        stored = _commit(prior, updated)
+        return _present(trading, stored, open_equity)
 
     if day_trail_enabled(trading, equity):
         arm = day_trail_arm_usd(trading, equity)
@@ -167,13 +233,7 @@ def latch_hard_stop(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": "DAILY_HARD_STOP"}
     stored = _commit(prior, updated)
-    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
-
-    if day_trail_enabled(trading):
-        arm = day_trail_arm_usd(trading)
-        initial = day_trail_protect_usd(trading) if arm is not None else None
-        return _public_trail(stored, arm, initial)
-    return _public(stored, trading.day_floor_steps)
+    return _present(trading, stored)
 
 
 def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
@@ -184,13 +244,7 @@ def mark_kill_cleared(settings: Settings, moment: datetime) -> dict:
     base = prior or _blank(session_date)
     updated = {**base, "closed": True, "reason": str(base.get("reason") or "DAILY_HARD_STOP"), "cleared": True}
     stored = _commit(prior, updated)
-    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
-
-    if day_trail_enabled(trading):
-        arm = day_trail_arm_usd(trading)
-        initial = day_trail_protect_usd(trading) if arm is not None else None
-        return _public_trail(stored, arm, initial)
-    return _public(stored, trading.day_floor_steps)
+    return _present(trading, stored)
 
 
 # One-time: clear the false DAILY_HARD_STOP latch caused by excluded bug lots on this NY day.
@@ -255,7 +309,7 @@ def maybe_release_false_hard_stop(
     except Exception:
         pass
     _audit_latch_released(session_date, adjusted_pnl)
-    return _public(fresh, trading.day_floor_steps)
+    return _present(trading, fresh)
 
 
 def run_false_hard_stop_release_once(settings: Settings, moment: datetime | None = None) -> dict | None:
@@ -361,13 +415,7 @@ def public_from_store(settings: Settings, moment: datetime) -> dict:
     trading = settings.trading()
     session_date = _session_date(settings, moment)
     prior = _for_date(_read(), session_date)
-    from app.capital import day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
-
-    if day_trail_enabled(trading):
-        arm = day_trail_arm_usd(trading)
-        initial = day_trail_protect_usd(trading) if arm is not None else None
-        return _public_trail(prior, arm, initial)
-    return _public(prior, trading.day_floor_steps)
+    return _present(trading, prior)
 
 
 def day_is_closed(settings: Settings, moment: datetime) -> bool:
@@ -378,6 +426,61 @@ def _session_date(settings: Settings, moment: datetime) -> str:
     if moment.tzinfo is None:
         moment = moment.replace(tzinfo=ZoneInfo("UTC"))
     return moment.astimezone(ZoneInfo(settings.exchange_timezone)).date().isoformat()
+
+
+def _scaled_steps(trading, open_equity: Decimal | None) -> tuple:
+    from app.capital import ladder_basis_usd, scaled_day_floor_steps
+
+    return scaled_day_floor_steps(trading, ladder_basis_usd(trading, open_equity))
+
+
+def _present(trading, state: dict | None, open_equity: Decimal | None = None) -> dict:
+    from app.capital import day_giveback_enabled, day_trail_arm_usd, day_trail_enabled, day_trail_protect_usd
+
+    if day_giveback_enabled(trading):
+        trail = Decimal(str(getattr(trading, "day_trail_pct", 0) or 0))
+        return _public_scaled(state, _scaled_steps(trading, open_equity), trail)
+    if day_trail_enabled(trading):
+        arm = day_trail_arm_usd(trading)
+        initial = day_trail_protect_usd(trading) if arm is not None else None
+        return _public_trail(state, arm, initial)
+    return _public(state, trading.day_floor_steps)
+
+
+def _public_scaled(state: dict | None, steps: tuple, trail_pct: Decimal) -> dict:
+    ladder = _ladder(steps)
+    row = state or {}
+    peak = _decimal(row.get("peak"))
+    step_arm, ladder_floor = _level(peak, ladder)
+    first_arm, first_lock = ladder[0] if ladder else (Decimal("0"), Decimal("0"))
+    trail_floor = None
+    if trail_pct > 0 and trail_pct < 1 and peak is not None and peak >= first_arm:
+        trail_floor = (peak * (Decimal("1") - trail_pct)).quantize(Decimal("0.01"))
+    active = [item for item in (ladder_floor, trail_floor) if item is not None]
+    if row.get("armed"):
+        stored = _decimal(row.get("floor"))
+        if stored is not None:
+            active.append(stored)
+    floor = max(active) if active else None
+    armed = bool(row.get("armed")) and floor is not None
+    show_arm, show_floor = (step_arm or first_arm, floor) if armed else (first_arm, first_lock)
+    reason = str(row.get("reason") or "")
+    if row.get("closed") and not reason:
+        reason = "DAY_FLOOR"
+    return {
+        "armed": armed,
+        "closed": bool(row.get("closed")),
+        "arm": _text(show_arm) or "0.00",
+        "floor": _text(show_floor) or "0.00",
+        "peak": _text(peak),
+        "reason": reason,
+        "cleared": bool(row.get("cleared")),
+        "mode": "ladder_trail",
+        "ladder_floor": None if ladder_floor is None else _text(ladder_floor),
+        "trail_floor": None if trail_floor is None else _text(trail_floor),
+        "trail_armed": trail_floor is not None,
+        "steps": [{"arm": _text(arm), "floor": _text(lock)} for arm, lock in ladder],
+    }
 
 
 def _blank(session_date: str) -> dict:

@@ -486,7 +486,15 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
         try:
             from app.options.risk_limits import day_flatten_reason
 
-            flatten_reason = day_flatten_reason(equity_now, pnl if isinstance(pnl, Decimal) else Decimal(str(pnl)), settings.trading())
+            from app.capital.session_lock import open_equity_from_account
+
+            opened = open_equity_from_account(account, moment, persist=True)
+            flatten_reason = day_flatten_reason(
+                equity_now,
+                pnl if isinstance(pnl, Decimal) else Decimal(str(pnl)),
+                settings.trading(),
+                open_equity=opened,
+            )
         except Exception as exc:
             flatten_reason = f"error:{type(exc).__name__}"
     if session_open is True:
@@ -510,7 +518,12 @@ def _account_day_floor(settings: Settings, adapter, moment: datetime, session_op
         except Exception:
             pass
     try:
-        view = observe_day_floor(settings, pnl, moment, session_open is True)
+        opened_for_floor = None
+        if account is not None:
+            from app.capital.session_lock import open_equity_from_account
+
+            opened_for_floor = open_equity_from_account(account, moment, persist=session_open is True)
+        view = observe_day_floor(settings, pnl, moment, session_open is True, open_equity=opened_for_floor)
     except Exception:
         view = {"armed": False, "closed": False, "arm": "0.00", "floor": "0.00", "reason": "", "cleared": False}
     if session_open is True and account is not None and pnl is not None and not already_closed:
@@ -535,7 +548,10 @@ def _latch_kill(settings: Settings, account: dict, day_pnl: Decimal | None, mome
                 equity = capped
     except Exception:
         equity = None
-    if day_flatten_reason(equity, day_pnl, settings.trading()) != "DAILY_HARD_STOP":
+    from app.capital.session_lock import open_equity_from_account
+
+    opened = open_equity_from_account(account, moment, persist=True)
+    if day_flatten_reason(equity, day_pnl, settings.trading(), open_equity=opened) != "DAILY_HARD_STOP":
         return view
     try:
         return latch_hard_stop(settings, moment)

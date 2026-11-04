@@ -150,11 +150,18 @@ def _scan() -> dict:
     }
 
 
-def _hard_stop_state(trading, equity: Decimal | None, pnl: str | None, state: str | None, floor: dict | None) -> str | None:
+def _hard_stop_state(
+    trading,
+    equity: Decimal | None,
+    pnl: str | None,
+    state: str | None,
+    floor: dict | None,
+    open_equity: Decimal | None = None,
+) -> str | None:
     """Surface #3's DAILY_HARD_STOP from adjusted P&L only. Read only: no floor write."""
     from app.options.risk_limits import day_flatten_reason
 
-    if day_flatten_reason(equity, _dec(pnl), trading) == "DAILY_HARD_STOP":
+    if day_flatten_reason(equity, _dec(pnl), trading, open_equity=open_equity) == "DAILY_HARD_STOP":
         return "hard_stop"
     if isinstance(floor, dict) and floor.get("closed") and not floor.get("cleared") and floor.get("reason") == "DAILY_HARD_STOP":
         return "hard_stop"
@@ -228,7 +235,7 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     last_equity = _dec((account or {}).get("last_equity"))
     from app.analytics.kill_line import display_kill_usd
 
-    kill = display_kill_usd(trading, equity)
+    kill = display_kill_usd(trading, equity, open_equity=last_equity)
     # Diagnostic equity mark (open-lot adjust only). Never drive the card / hard-stop from this alone.
     raw_mark = None if equity is None or last_equity is None else (equity - last_equity)
     mark = None if raw_mark is None else str(raw_mark.quantize(Decimal("0.01")))
@@ -273,7 +280,7 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
     except Exception:
         floor = None
     # Hard-stop banner uses the same adjusted pnl as the card — never raw mark.
-    state = _hard_stop_state(trading, equity, pnl, state, floor)
+    state = _hard_stop_state(trading, equity, pnl, state, floor, open_equity=last_equity)
     if state is None and isinstance(risk_body, dict):
         state = risk_body.get("daily_loss_state")
     unknown = state == "unknown" or (pnl is None and state != "hard_stop")
@@ -295,6 +302,7 @@ def _day(settings: Settings, account: dict | None, risk: dict | None) -> dict:
         display,
         floor,
         unknown=display is None,
+        open_equity=last_equity,
     )
     from app.analytics.trades import cached_day_capital, day_return_fields
 

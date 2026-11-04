@@ -39,7 +39,7 @@ def _freeze_fx(monkeypatch):
 
 CONFIG = Path(__file__).resolve().parents[1] / "app" / "config"
 PERIODS = CONFIG / "periods.json"
-TOML_10K = CONFIG / "trading.toml"
+TOML_10K = CONFIG / "trading_10k.toml"
 TOML_100K = CONFIG / "trading_100k.toml"
 
 WC = Decimal("3184.71")  # 10000 / 3.14
@@ -62,16 +62,20 @@ def _cfg_100k() -> TradingConfig:
 
 def test_periods_split_at_2026_11_02():
     rows = load_periods(PERIODS)
-    assert [row.id for row in rows] == ["paper_100k", "paper_10k_ils"]
-    p1, p2 = rows
+    assert [row.id for row in rows] == ["paper_100k", "paper_10k_ils", "paper_20k_ils"]
+    p1, p2, p3 = rows
     assert p1.contains_day(date(2026, 11, 2))
     assert not p1.contains_day(date(2026, 11, 3))
     assert p2.contains_day(date(2026, 11, 3))
-    assert not p2.contains_day(date(2026, 11, 2))
-    assert public_periods(PERIODS)["current_id"] == "paper_10k_ils"
-    assert p2.trading is True
+    assert not p2.contains_day(date(2026, 11, 4))
+    assert p3.contains_day(date(2026, 11, 4))
+    assert not p3.contains_day(date(2026, 11, 3))
+    assert public_periods(PERIODS)["current_id"] == "paper_20k_ils"
+    assert p2.trading is False
+    assert p3.trading is True
     assert p1.read_only is True
     assert Decimal(str(p2.capital_basis_usd)) == WC
+    assert Decimal(str(p3.capital_basis_usd)) == (Decimal("20000") / Decimal("3.14")).quantize(Decimal("0.01"))
 
 
 def test_period_filter_keeps_history_untouched_for_period_1():
@@ -94,9 +98,9 @@ def test_period_matches_by_account_when_tagged():
     from dataclasses import replace
 
     pinned = replace(period, alpaca_account_number="PA123")
-    tagged = {"closed_at": datetime(2026, 11, 5, 15, 0, tzinfo=timezone.utc), "account_number": "PA123"}
-    other = {"closed_at": datetime(2026, 11, 5, 15, 0, tzinfo=timezone.utc), "account_number": "OTHER"}
-    legacy = {"closed_at": datetime(2026, 11, 5, 15, 0, tzinfo=timezone.utc)}
+    tagged = {"closed_at": datetime(2026, 11, 3, 15, 0, tzinfo=timezone.utc), "account_number": "PA123"}
+    other = {"closed_at": datetime(2026, 11, 3, 15, 0, tzinfo=timezone.utc), "account_number": "OTHER"}
+    legacy = {"closed_at": datetime(2026, 11, 3, 15, 0, tzinfo=timezone.utc)}
     assert trade_matches_period(tagged, pinned) is True
     assert trade_matches_period(other, pinned) is False
     assert trade_matches_period(legacy, pinned) is True

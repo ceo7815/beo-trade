@@ -154,6 +154,66 @@ def test_a_pending_replace_exit_order_is_still_not_resent():
     assert remote["internal_state"] == "PENDING_REPLACE"
 
 
+def test_a_local_exit_row_without_an_alpaca_order_does_not_block(tmp_path):
+    """3.11 NVDA: the log said an order already existed while Alpaca had none."""
+    from app.models.tables import BrokerOrderRecord
+
+    _settings(tmp_path)
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    with session_scope() as session:
+        session.add(
+            BrokerOrderRecord(
+                broker="alpaca",
+                environment="PAPER",
+                broker_order_id="gone",
+                client_order_id=first,
+                symbol=SYMBOL,
+                side="sell",
+                position_intent="sell_to_close",
+                status="SUBMITTED",
+            )
+        )
+        session.commit()
+    adapter = Mock()
+    adapter.get_order_by_client_id.return_value = None
+    adapter.get_orders.return_value = []
+    with session_scope() as session:
+        client_order_id, existing, remote = _resolve_client_order_id(session, adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == client_order_id_for(SYMBOL, "sell_to_close", 1)
+    assert client_order_id != first
+    assert existing is None and remote is None
+
+
+def test_a_live_lookup_still_blocks_when_the_open_snapshot_missed_it():
+    """An accepted order Alpaca still returns by client id is not sent again."""
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    adapter = Mock()
+    adapter.get_orders.return_value = []
+    adapter.get_order_by_client_id.side_effect = lambda cid: (
+        {"client_order_id": cid, "status": "accepted", "internal_state": "ACCEPTED"} if cid == first else None
+    )
+    client_order_id, _, remote = _resolve_client_order_id(_session_without_local_orders(), adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == first
+    assert remote is not None
+    assert remote["internal_state"] == "ACCEPTED"
+
+
+def test_an_order_alpaca_still_lists_as_open_is_not_resent():
+    first = client_order_id_for(SYMBOL, "sell_to_close")
+    adapter = Mock()
+    adapter.get_orders.return_value = [
+        {"client_order_id": first, "position_intent": "sell_to_close", "status": "accepted", "internal_state": "ACCEPTED"}
+    ]
+    adapter.get_order_by_client_id.return_value = {
+        "client_order_id": first,
+        "status": "accepted",
+        "internal_state": "ACCEPTED",
+    }
+    client_order_id, _, remote = _resolve_client_order_id(_session_without_local_orders(), adapter, SYMBOL, "sell_to_close")
+    assert client_order_id == first
+    assert remote is not None
+
+
 def test_replaced_internal_state_alone_counts_as_finished():
     """Local/remembered REPLACED without a raw status still frees the exit slot."""
     first = client_order_id_for(SYMBOL, "sell_to_close")

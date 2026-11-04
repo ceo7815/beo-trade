@@ -209,8 +209,16 @@ def admit_buy(
         return Admission(0, "LIQUIDITY")
     if option.mid > 0 and (option.ask - option.bid) / option.mid > Decimal(str(config.max_bid_ask_spread)):
         return Admission(0, "LIQUIDITY")
-    from app.capital import apply_tier
+    from app.capital import apply_tier, profile_is_20k
+
     config = apply_tier(config, equity)
+    if profile_is_20k(config) and not bool(getattr(config, "allow_one_contract_over_cap", False)):
+        one_contract = option.ask * Decimal(config.contract_multiplier)
+        per_trade_cap = equity * Decimal(str(config.normal_position_capital_pct))
+        hard_cap = equity * Decimal(str(config.hard_position_capital_pct))
+        limit = per_trade_cap if hard_cap <= 0 else min(per_trade_cap, hard_cap)
+        if one_contract > limit:
+            return Admission(0, "SIZE_TOO_SMALL")
     plan = size_position(
         option,
         equity,

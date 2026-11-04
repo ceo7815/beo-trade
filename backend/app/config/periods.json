@@ -1,5 +1,5 @@
 {
-  "current_id": "paper_10k_ils",
+  "current_id": "paper_20k_ils",
   "periods": [
     {
       "id": "paper_100k",
@@ -17,13 +17,25 @@
       "id": "paper_10k_ils",
       "label": "פייפר 10K ₪",
       "start": "2026-11-03",
-      "end": null,
+      "end": "2026-11-03",
       "capital_basis_usd": "3184.71",
+      "alpaca_account_id": "",
+      "alpaca_account_number": "PA3LU0NE5",
+      "trading": false,
+      "read_only": false,
+      "alpaca_account_name": "beo 10K ILS"
+    },
+    {
+      "id": "paper_20k_ils",
+      "label": "פייפר 20K ₪",
+      "start": "2026-11-04",
+      "end": null,
+      "capital_basis_usd": "6369.43",
       "alpaca_account_id": "",
       "alpaca_account_number": "PA3LU0NE5",
       "trading": true,
       "read_only": false,
-      "alpaca_account_name": "beo 10K ILS"
+      "alpaca_account_name": "beo 20K ILS"
     }
   ]
 }
