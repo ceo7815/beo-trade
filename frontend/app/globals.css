@@ -1229,7 +1229,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   align-items: center;
   gap: 10px;
   border-bottom: 1px solid rgba(228, 201, 150, 0.1);
-  border-inline-start: 3px solid transparent;
+  border-inline-start: 1px solid transparent;
   padding: 6px 10px;
   font-size: 12px;
   font-weight: 700;
@@ -1254,7 +1254,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
 
 .trade-story section {
   border: 1px solid var(--line);
-  border-inline-start: 3px solid rgba(120, 170, 255, 0.7);
+  border-inline-start: 1px solid rgba(120, 170, 255, 0.7);
   border-radius: 12px;
   padding: 8px 12px;
 }
@@ -1309,7 +1309,7 @@ button, a { -webkit-tap-highlight-color: transparent; touch-action: manipulation
   flex-direction: column;
   gap: 10px;
   border: 1px solid var(--line);
-  border-inline-start: 4px solid rgba(255, 120, 120, 0.65);
+  border-inline-start: 1px solid rgba(255, 120, 120, 0.65);
   border-radius: 16px;
   padding: 12px 14px;
   background: rgba(255, 255, 255, 0.02);
@@ -2502,7 +2502,7 @@ button.desk-day { background: transparent; color: inherit; font: inherit; text-a
   cursor: pointer;
 }
 .book-trigger[aria-expanded="true"] { border-color: rgba(231, 201, 138, 0.75); }
-.book-trigger span { display: grid; gap: 2px; font-size: 18px; font-weight: 800; }
+.book-trigger > .book-label { display: grid; gap: 2px; min-width: 0; flex: 1 1 auto; font-size: 18px; font-weight: 800; }
 .book-trigger small { color: var(--muted); font-size: 12px; font-weight: 700; }
 .book-trigger b { font-size: 22px; letter-spacing: -0.04em; }
 .book-trigger b::after { content: " ▾"; color: var(--gold); font-size: 14px; }

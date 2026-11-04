@@ -4,10 +4,12 @@ import { useEffect, useState } from "react";
 import { Shell, useDesk } from "@/components/Shell";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { holdScreen, loadCached, peekCached, poll, transportMode } from "@/lib/api";
+import { readStoredPeriod } from "@/lib/account";
+import { streamApplies } from "@/lib/liveFigures";
 import { copy } from "@/lib/copy";
 import { Num, Odometer, Sparkline, StaleNote, useTick } from "@/components/live-ui";
 import { signedPct as formatPct } from "@/lib/format";
-import { useLive } from "@/lib/live";
+import { useLive, useTradingPeriod } from "@/lib/live";
 import { exitLabel } from "@/lib/exits";
 import { money } from "@/lib/pnl";
 
@@ -175,6 +177,7 @@ function expiryLabel(dte: number | null | undefined) {
 export default function PositionsPage() {
   const { status } = useDesk();
   const live = useLive();
+  const period = useTradingPeriod();
   const [positions, setPositions] = useState<BrokerPosition[] | null>(() => peekCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions")?.items ?? null);
   const [report, setReport] = useState<Report | null>(() => peekCached<Report>("/api/v1/report/trades?period=today"));
   const [risk, setRisk] = useState<Risk | null>(() => peekCached<Risk>("/api/v1/risk"));
@@ -194,7 +197,7 @@ export default function PositionsPage() {
     const stopLive = poll(async () => {
       try {
         await loadCached<{ items?: BrokerPosition[] }>("/api/v1/broker/alpaca/positions", (body) => {
-          if (!alive || transportMode() === "sse") return;
+          if (!alive || (transportMode() === "sse" && streamApplies(readStoredPeriod()))) return;
           setPositions(body.items || []);
           setFailed(false);
           setUpdated(Date.now());
@@ -247,7 +250,7 @@ export default function PositionsPage() {
     return report?.open?.find((item) => item.symbol.replace(/\s/g, "") === key) ?? null;
   };
 
-  const fromLive = transportMode() === "sse" && live.snap?.positions;
+  const fromLive = streamApplies(period) && live.transport === "sse" && !live.stale && live.snap?.positions;
   const items = fromLive ? ((live.snap?.positions?.items as BrokerPosition[]) || []) : (positions ?? []);
   const ready = Boolean(fromLive) || positions !== null;
   const cost = items.reduce((sum, item) => sum + Math.abs(num(item.cost_basis) ?? 0), 0);
@@ -265,7 +268,9 @@ export default function PositionsPage() {
   const dayPnl = dayTrades.reduce((sum, trade) => sum + (num(trade.pnl) ?? 0), 0);
   const dayWins = dayTrades.filter((trade) => (num(trade.pnl) ?? 0) > 0).length;
   const sessionClose = status?.session_close ? new Date(status.session_close).getTime() : null;
-  const age = updated === null ? null : Math.max(0, Math.round((now - updated) / 1000));
+  const age = fromLive && live.updatedAt
+    ? Math.max(0, Math.round((now - live.updatedAt) / 1000))
+    : updated === null ? null : Math.max(0, Math.round((now - updated) / 1000));
 
   return (
     <Shell>

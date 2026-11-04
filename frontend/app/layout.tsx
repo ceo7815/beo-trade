@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import localFont from "next/font/local";
 import "./globals.css";
 import "./v2.css";
+import "./glass.css";
 
 const rubik = localFont({
   src: "../fonts/Rubik-latin.woff2",

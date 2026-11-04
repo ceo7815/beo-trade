@@ -11,9 +11,11 @@ import { ProtectionBar, type Protection } from "@/components/ProtectionBar";
 import { blockText, copy } from "@/lib/copy";
 import { money as usd, parseStamp, sessionStamp, signedMoney as usdSigned, signedPct } from "@/lib/format";
 import { regimeLine } from "@/lib/regime";
-import { Heartbeat, KillBanner, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
+import { Heartbeat, KillBanner, LiveMark, Num, Odometer, Radar, Sparkline, StaleNote, useReduced, useTick } from "@/components/live-ui";
 import { returnCaption, shownDayPnl } from "@/lib/protection";
-import { observeTrades, useLive } from "@/lib/live";
+import { observeTrades, useLive, useTradingPeriod } from "@/lib/live";
+import { pickHeadline, streamApplies } from "@/lib/liveFigures";
+import { readStoredPeriod } from "@/lib/account";
 
 type Desk = {
   autonomous: boolean;
@@ -191,6 +193,7 @@ export default function HomePage() {
 function Board() {
   const { status } = useDesk();
   const live = useLive();
+  const period = useTradingPeriod();
   const reduce = useReduced();
   const [desk, setDesk] = useState<Desk | null>(() => peekCached<Desk>("/api/v1/desk"));
   const [account, setAccount] = useState<BrokerAccount | null>(() => peekCached<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account")?.account ?? null);
@@ -224,7 +227,7 @@ function Board() {
     const stops = [
       feed<Desk>("/api/v1/desk", setDesk, 15000),
       feed<{ items?: Position[] }>("/api/v1/broker/alpaca/positions", (body) => {
-        if (transportMode() === "sse") return;
+        if (transportMode() === "sse" && streamApplies(readStoredPeriod())) return;
         setPositions(body.items || []);
       }, 12000),
       feed<Risk>("/api/v1/risk", setRisk, 15000),
@@ -232,7 +235,7 @@ function Board() {
       feed<{ items?: Order[] }>("/api/v1/broker/alpaca/orders?status=open", (body) => setOrders(body.items || []), 15000),
       feed<{ items: AuditRow[] }>("/api/v1/audit", (body) => setAudit(body.items || []), 30000),
       feed<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account", (body) => {
-        if (transportMode() === "sse") return;
+        if (transportMode() === "sse" && streamApplies(readStoredPeriod())) return;
         setAccount(body.account || null);
       }, 15000),
       feed<AgedReport>("/api/v1/report/trades?period=all", (body) => {
@@ -262,13 +265,22 @@ function Board() {
     observeTrades([...(today.closed ?? []), ...(today.open ?? [])]);
   }, [today]);
 
-  const ssePositions = transportMode() === "sse" ? (live.snap?.positions?.items as Position[] | undefined) : undefined;
-  const sseAccount = transportMode() === "sse" ? live.snap?.account : undefined;
+  const tape = streamApplies(period) && live.transport === "sse" && !live.stale;
+  const ssePositions = tape ? (live.snap?.positions?.items as Position[] | undefined) : undefined;
+  const head = pickHeadline({
+    period,
+    transport: live.transport,
+    stale: live.stale,
+    equity: live.snap?.account?.equity,
+    displayPnl: live.snap?.day?.display_pnl ?? live.snap?.day?.pnl,
+    polledEquity: account?.equity ?? (streamApplies(period) ? live.snap?.account?.equity : null),
+    polledPnl: risk?.display_pnl ?? (streamApplies(period) ? live.snap?.day?.display_pnl ?? live.snap?.day?.pnl : null),
+  });
   const viewPositions = ssePositions ?? positions;
-  const viewAccount = (sseAccount as BrokerAccount | null | undefined) ?? account;
-  const sse = transportMode() === "sse";
-  const dayNote = (sse ? live.snap?.day?.day_pnl_note : null) ?? risk?.day_pnl_note ?? live.snap?.day?.day_pnl_note ?? null;
-  const displayPnl = num(sse ? live.snap?.day?.display_pnl : undefined) ?? num(risk?.display_pnl) ?? num(live.snap?.day?.display_pnl);
+  const viewAccount = (tape && live.snap?.account ? live.snap.account : account) as BrokerAccount | null;
+  const sse = tape;
+  const dayNote = (sse ? live.snap?.day?.day_pnl_note : null) ?? risk?.day_pnl_note ?? (streamApplies(period) ? live.snap?.day?.day_pnl_note : null) ?? null;
+  const displayPnl = num(head.dayPnl);
   const dayPnl = num(live.snap?.day?.pnl) ?? num(risk?.today_pnl);
   const markPnl = num(live.snap?.day?.mark_pnl);
   const kill = num(live.snap?.day?.daily_kill_loss_usd) ?? num(risk?.daily_kill_loss_usd) ?? num(status?.daily_kill_loss_usd);
@@ -278,10 +290,10 @@ function Board() {
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
   const closed = status?.market_phase === "CLOSED" || status?.market_phase === "POST_MARKET" || status?.market_phase === "DAILY_REPORT";
   const narrative = narrativeOf(desk, scan, closed, phase);
-  const liveFloor = transportMode() === "sse" ? live.snap?.day?.day_floor : undefined;
-  const floor = liveFloor ?? risk?.day_floor ?? live.snap?.day?.day_floor ?? null;
-  const protection = (transportMode() === "sse" ? live.snap?.day?.protection : undefined) ?? risk?.protection ?? live.snap?.day?.protection ?? null;
-  const dayState = transportMode() === "sse" ? live.snap?.day?.daily_loss_state : risk?.daily_loss_state;
+  const liveFloor = tape ? live.snap?.day?.day_floor : undefined;
+  const floor = liveFloor ?? risk?.day_floor ?? (streamApplies(period) ? live.snap?.day?.day_floor : null) ?? null;
+  const protection = (tape ? live.snap?.day?.protection : undefined) ?? risk?.protection ?? (streamApplies(period) ? live.snap?.day?.protection : null) ?? null;
+  const dayState = tape ? live.snap?.day?.daily_loss_state : risk?.daily_loss_state;
   const lossUnknown = !dayNote && (dayState === "unknown" || (dayState !== "hard_stop" && protection?.status === "unknown"));
   const lossState = lossUnknown ? "unknown" : live.snap?.day?.daily_loss_state;
   const sync = syncOf(syncedAt, now);
@@ -298,7 +310,9 @@ function Board() {
   const showLast = dayView.showLast;
   const shownPnl = dayView.pnl;
 
-  const equityUp = (num(viewAccount?.equity) ?? 0) >= (num(viewAccount?.last_equity) ?? num(viewAccount?.equity) ?? 0);
+  const equityShown = head.equity ?? viewAccount?.equity;
+  const equityTick = useTick(equityShown);
+  const equityUp = (num(equityShown) ?? 0) >= (num(viewAccount?.last_equity) ?? num(equityShown) ?? 0);
 
   return (
     <section className="desk-home">
@@ -318,7 +332,7 @@ function Board() {
           </div>
           <div className="acct-equity">
             <span>{copy.dashboard.equity}</span>
-            <Num>{money(viewAccount?.equity)}</Num>
+            <Num className={equityTick === "up" ? "up-tick" : equityTick === "down" ? "down-tick" : ""}>{money(equityShown)}</Num>
             <Sparkline points={live.series.eq || []} up={equityUp} />
           </div>
           <div className="acct-pair">
@@ -328,10 +342,12 @@ function Board() {
         </article>
         <article className="ops-pane desk-hero">
           <div className="desk-hero-top">
-            <span>{phase}</span>
-            <span>{showLast ? copy.dashboard.closedNote : narrative.short}</span>
+            <span>{showLast && lastDay ? dayTitle(lastDay.day) : phase}</span>
+            <span className="hero-side">
+              <LiveMark live={head.live} />
+              <span>{showLast ? copy.dashboard.closedNote : narrative.short}</span>
+            </span>
           </div>
-          <p className="desk-hero-label">{showLast && lastDay ? dayTitle(lastDay.day) : copy.dashboard.today}</p>
           <div className="desk-hero-main">
             <div className="desk-hero-figure">
               <Odometer value={shownPnl} />

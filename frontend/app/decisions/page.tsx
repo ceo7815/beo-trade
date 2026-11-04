@@ -153,7 +153,7 @@ export default function DecisionsPage() {
 
         <div className="book-pick">
           <button type="button" className="book-trigger" aria-expanded={menu} aria-haspopup="listbox" onClick={() => setMenu((value) => !value)}>
-            <span>
+            <span className="book-label">
               <small>יום מסחר</small>
               {label}
             </span>

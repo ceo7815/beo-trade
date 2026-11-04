@@ -187,13 +187,17 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 
 .odo {
   display: inline-flex;
+  flex-wrap: nowrap;
   align-items: flex-end;
   direction: ltr;
   unicode-bidi: isolate;
+  white-space: nowrap;
+  width: max-content;
+  max-width: 100%;
   font-weight: 300;
   font-size: 76px;
   line-height: 1;
-  letter-spacing: -0.05em;
+  letter-spacing: -0.04em;
   color: var(--up);
   text-shadow: 0 0 28px rgba(34, 195, 142, 0.35);
 }
@@ -420,7 +424,7 @@ h1, h2, .ops-head h1, .brand b, .mobile-title b { font-weight: 500; letter-spaci
 @keyframes evin { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 
 .pipe-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.day-bars { display: flex; align-items: flex-end; gap: 4px; height: 72px; }
+.day-bars { display: flex; align-items: flex-end; gap: 4px; height: 72px; margin: 0 0 16px; overflow: hidden; }
 .day-bars i { flex: 1; min-width: 6px; border-radius: 4px 4px 0 0; background: var(--up); opacity: 0.85; }
 .day-bars i.down { background: var(--down); }
 

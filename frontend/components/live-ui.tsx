@@ -48,6 +48,46 @@ export function useReduced() {
   return reduced;
 }
 
+export function LineNum({ value, digits = 0, className = "sm" }: { value: number | null; digits?: number; className?: string }) {
+  const box = useRef<HTMLSpanElement>(null);
+  const reduced = useReduced();
+  useLayoutEffect(() => {
+    const node = box.current;
+    const odo = node?.querySelector<HTMLElement>(".odo");
+    if (!node || !odo) return;
+    const fit = () => {
+      odo.style.fontSize = "";
+      const available = node.clientWidth;
+      const needed = odo.scrollWidth;
+      if (available > 8 && needed > available) {
+        const current = parseFloat(getComputedStyle(odo).fontSize) || 22;
+        const next = Math.max(13, (current * available) / needed);
+        odo.style.fontSize = `${next}px`;
+      }
+    };
+    fit();
+    if (reduced) return;
+    const observer = new ResizeObserver(fit);
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [value, digits, reduced, className]);
+  return (
+    <span ref={box} className="line-num">
+      <Odometer value={value} digits={digits} className={className} />
+    </span>
+  );
+}
+
+export function LiveMark({ live }: { live: boolean }) {
+  if (!live) return null;
+  return (
+    <span className="tape-pip on" role="status">
+      <i />
+      חי
+    </span>
+  );
+}
+
 export function Odometer({ value, digits = 0, className = "" }: { value: number | null; digits?: number; className?: string }) {
   const ref = useRef<HTMLSpanElement>(null);
   const reduced = useReduced();
