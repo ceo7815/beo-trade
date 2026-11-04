@@ -159,7 +159,7 @@ export default function FinancePage() {
       <section className="engine book" onClick={() => setMenu(null)}>
         <header className="finance-hero">
           <p className="hero-side">
-            {windowName === "day" ? <LiveMark live={accountLive.live} stale={live.stale || live.transport !== "sse"} /> : null}
+            {windowName === "day" ? <LiveMark live={accountLive.live} /> : null}
             <span>{failed && !body ? "אין נתונים" : periodLabel}</span>
             <StaleNote stale={body?.stale} asOf={body?.as_of} now={now} />
           </p>

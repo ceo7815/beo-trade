@@ -367,8 +367,8 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             <span className={`conn ${link}`}>
               <Heartbeat live={link === "up" && live.transport === "sse" && !live.stale} />
               {link === "up" ? copy.shell.connected : link === "down" ? copy.shell.disconnected : copy.common.connecting}
+              <LiveMark live={live.transport === "sse" && !live.stale} />
             </span>
-            <LiveMark live={live.transport === "sse" && !live.stale} stale={live.stale || live.transport === "connecting"} />
             <span className="paper-flag">PAPER TRADING</span>
             <Link href="/versions" className="version-link">
               {release?.current ? `גרסה ${release.current}` : "גרסאות"}
@@ -410,7 +410,6 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 <i className={`dot ${link}`} />
                 {phase}
                 <MobileClock />
-                <LiveMark live={live.transport === "sse" && !live.stale} stale={live.stale || live.transport === "connecting"} />
               </span>
               <AccountSwitcher />
             </div>

@@ -344,7 +344,7 @@ function Board() {
           <div className="desk-hero-top">
             <span>{showLast && lastDay ? dayTitle(lastDay.day) : phase}</span>
             <span className="hero-side">
-              <LiveMark live={head.live} stale={live.stale || live.transport === "connecting"} />
+              <LiveMark live={head.live} />
               <span>{showLast ? copy.dashboard.closedNote : narrative.short}</span>
             </span>
           </div>

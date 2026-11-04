@@ -78,12 +78,12 @@ export function LineNum({ value, digits = 0, className = "sm" }: { value: number
   );
 }
 
-export function LiveMark({ live, stale = false }: { live: boolean; stale?: boolean }) {
-  const label = live ? "חי" : stale ? "ממתין" : "רענון";
+export function LiveMark({ live }: { live: boolean }) {
+  if (!live) return null;
   return (
-    <span className={`live-mark${live ? " on" : ""}`} role="status">
+    <span className="tape-pip on" role="status">
       <i />
-      {label}
+      חי
     </span>
   );
 }
