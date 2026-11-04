@@ -76,10 +76,22 @@ def trading_day_pnl(equity: object, last_equity: object, activities: list[dict] 
     """Trading P&L since the prior equity mark, after same-day deposits, withdrawals, and transfers.
 
     A missing activity amount on a funding row makes the baseline unusable.
+
+    Same-day funding is subtracted only when ``last_equity`` is still the prior
+    close (deposit landed on top of that mark). A brand-new paper account is
+    different: Alpaca sets ``last_equity`` to the funded balance and also emits
+    a JNLC/CSD for the same dollars. Subtracting again invents a full-account
+    loss. Detect that by reversing today's net deposits out of ``last_equity``:
+    if the implied prior book is ~0 or negative while ``last_equity`` itself is
+    positive, the deposit is already inside the mark — return the raw movement
+    (real day-1 trading still shows). A normal book has prior close >> 0 after
+    reversing the deposit, so same-day top-ups keep subtracting and cannot hide
+    a real loss.
     """
     if equity in {None, ""} or last_equity in {None, ""} or activities is None:
         return None
-    movement = Decimal(str(equity)) - Decimal(str(last_equity))
+    last = Decimal(str(last_equity))
+    movement = Decimal(str(equity)) - last
     funding = Decimal("0")
     for row in activities:
         kind = str(row.get("activity_type") or "").upper()
@@ -94,6 +106,9 @@ def trading_day_pnl(equity: object, last_equity: object, activities: list[dict] 
         if net in {None, ""}:
             return None
         funding += Decimal(str(net))
+    # New-account / post-fund mark: last_equity already includes today's deposits.
+    if funding > 0 and last > 0 and (last - funding) <= Decimal("0.01"):
+        return movement
     return movement - funding
 
 
