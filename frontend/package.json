@@ -5,7 +5,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test lib/proxyAccess.test.ts lib/holdScreen.test.ts lib/format.test.ts lib/protection.test.ts lib/account.test.ts"
+    "test": "node --experimental-strip-types --test lib/proxyAccess.test.ts lib/holdScreen.test.ts lib/format.test.ts lib/protection.test.ts lib/account.test.ts lib/accountMenu.test.ts lib/liveFigures.test.ts"
   },
   "dependencies": {
     "framer-motion": "^14.6.0",

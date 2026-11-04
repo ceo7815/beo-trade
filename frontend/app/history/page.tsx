@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { copy } from "@/lib/copy";
-import { Num, Odometer, StaleNote } from "@/components/live-ui";
+import { LineNum, Num, StaleNote } from "@/components/live-ui";
 import { signedPct } from "@/lib/format";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { apiGet, holdScreen, poll } from "@/lib/api";
@@ -319,11 +319,12 @@ export default function HistoryPage() {
 
         <div className="book-pick">
           <button type="button" className="book-trigger" aria-expanded={menu} aria-haspopup="listbox" onClick={() => setMenu((value) => !value)}>
-            <span>
+            <span className="book-label">
               <small>יום מסחר</small>
               {selectedLabel}
             </span>
-            <Odometer value={report ? selectedPnl : null} digits={0} className="sm" />
+            <LineNum value={report ? selectedPnl : null} digits={0} className="sm" />
+            <i className="book-caret" aria-hidden="true" />
           </button>
           {menu ? (
             <div className="book-menu lux-scroll" role="listbox" aria-label="ימי מסחר">

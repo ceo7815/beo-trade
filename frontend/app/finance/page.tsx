@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { StaleNote } from "@/components/live-ui";
+import { LiveMark, Odometer, StaleNote } from "@/components/live-ui";
 import { apiGet, holdScreen, poll } from "@/lib/api";
+import { useLive } from "@/lib/live";
+import { pickHeadline } from "@/lib/liveFigures";
 
 type Summary = { enough?: boolean; note?: string | null; count?: number; net?: string | null; gross?: string | null; fees_note?: string | null; win_rate?: string | null; win_rate_pct?: string | null; profit_factor?: string | null; average_win?: string | null; average_loss?: string | null };
 
@@ -82,6 +84,7 @@ export default function FinancePage() {
   const [maxPositions, setMaxPositions] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
+  const live = useLive();
   useEffect(() => {
     let alive = true;
     const load = () => {
@@ -126,12 +129,22 @@ export default function FinancePage() {
   const account = body?.account;
   const periods = body?.periods;
   const positions = body?.open_positions;
-  const headline = windowName === "day" ? body?.today_pnl
-    : windowName === "week" ? periods?.week
-      : windowName === "month" ? periods?.month
-        : windowName === "quarter" ? periods?.quarter
-          : windowName === "year" || windowName === "half" ? periods?.year
-            : periods?.cumulative;
+  const accountLive = pickHeadline({
+    period: tradingPeriod,
+    transport: live.transport,
+    stale: live.stale,
+    equity: live.snap?.account?.equity,
+    displayPnl: live.snap?.day?.display_pnl ?? live.snap?.day?.pnl,
+    polledEquity: account?.equity,
+    polledPnl: body?.today_pnl,
+  });
+  const cashShown = accountLive.live && live.snap?.account?.cash ? live.snap.account.cash : account?.cash;
+  const windowPnl = windowName === "week" ? periods?.week
+    : windowName === "month" ? periods?.month
+      : windowName === "quarter" ? periods?.quarter
+        : windowName === "year" || windowName === "half" ? periods?.year
+          : periods?.cumulative;
+  const headline = windowName === "day" ? accountLive.dayPnl : windowPnl;
   const periodLabel = WINDOWS.find((item) => item.id === windowName)?.label || "החודש";
   const splits = [
     ["CALL", body?.by_side.CALL],
@@ -145,13 +158,22 @@ export default function FinancePage() {
     <Shell>
       <section className="engine book" onClick={() => setMenu(null)}>
         <header className="finance-hero">
-          <p>{failed && !body ? "אין נתונים" : periodLabel} <StaleNote stale={body?.stale} asOf={body?.as_of} now={now} /></p>
-          <p className={`num ${ink(headline)}`}>{body ? money(headline) : failed ? "אין נתונים" : "טוען"}</p>
+          <p className="hero-side">
+            {windowName === "day" ? <LiveMark live={accountLive.live} stale={live.stale || live.transport !== "sse"} /> : null}
+            <span>{failed && !body ? "אין נתונים" : periodLabel}</span>
+            <StaleNote stale={body?.stale} asOf={body?.as_of} now={now} />
+          </p>
+          {windowName === "day" ? (
+            <Odometer value={headline == null || headline === "" || !Number.isFinite(Number(headline)) ? null : Number(headline)} />
+          ) : (
+            <p className={`num ${ink(headline)}`}>{body ? money(headline) : failed ? "אין נתונים" : "טוען"}</p>
+          )}
         </header>
         <div className="period-row" onClick={(event) => event.stopPropagation()}>
           {(body?.trading_periods?.periods || [
             { id: "paper_100k", label: "פייפר 100K" },
             { id: "paper_10k_ils", label: "פייפר 10K ₪" },
+            { id: "paper_20k_ils", label: "פייפר 20K ₪" },
             { id: "all", label: "הכל" },
           ]).concat([{ id: "all", label: "הכל" }]).filter((item, index, arr) => arr.findIndex((row) => row.id === item.id) === index).map((item) => (
             <button
@@ -224,7 +246,7 @@ export default function FinancePage() {
             <div className="plain-row"><b>פוזיציות</b><strong className="num">{positions == null ? "אין נתונים" : maxPositions == null ? String(positions) : `${positions} / ${maxPositions}`}</strong></div>
             <div className="plain-row"><b>חשיפה</b><strong className="num">{money(body?.exposure)}</strong></div>
             <div className="plain-row"><b>ניצול</b><strong className="num">{percent(body?.utilization)}</strong></div>
-            <div className="plain-row"><b>מזומן</b><strong className="num">{money(account?.cash)}</strong></div>
+            <div className="plain-row"><b>מזומן</b><strong className="num">{money(cashShown)}</strong></div>
             <div className="plain-row"><b>משיכת שיא</b><strong className="num">{body?.drawdown.enough ? money(body.drawdown.maximum) : "אין נתונים"}</strong></div>
           </div>
         </details>

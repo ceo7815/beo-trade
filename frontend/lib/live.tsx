@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useSyncExternalStore, type ReactNode } from "react";
+import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
 import { seedCache, setTransportMode, type LiveMode } from "@/lib/api";
+import { readStoredPeriod } from "@/lib/account";
+import { streamUrl } from "@/lib/liveFigures";
 import { copy, exitLabel } from "@/lib/copy";
 import { num, signedMoney } from "@/lib/format";
 
@@ -208,6 +210,14 @@ export function observeTrades(rows: { symbol?: string | null; underlying?: strin
   }
 }
 
+export function useTradingPeriod() {
+  const [period, setPeriod] = useState("current");
+  useEffect(() => {
+    setPeriod(readStoredPeriod());
+  }, []);
+  return period;
+}
+
 export function LiveProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let source: EventSource | null = null;
@@ -219,7 +229,7 @@ export function LiveProvider({ children }: { children: ReactNode }) {
     }, 1000);
     const connect = () => {
       if (stopped) return;
-      source = new EventSource("/backend/api/v1/stream");
+      source = new EventSource(streamUrl(readStoredPeriod()));
       source.addEventListener("snapshot", (event) => {
         retry = 0;
         applySnap(JSON.parse((event as MessageEvent).data) as LiveSnap, "snapshot");

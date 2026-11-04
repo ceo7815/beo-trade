@@ -10,7 +10,7 @@ import { copy } from "@/lib/copy";
 import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
 import { AccountSwitcher } from "@/components/AccountSwitcher";
-import { Heartbeat, Ticker, Toasts } from "@/components/live-ui";
+import { Heartbeat, LiveMark, Ticker, Toasts } from "@/components/live-ui";
 import { LiveProvider, useLive } from "@/lib/live";
 
 type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
@@ -102,11 +102,8 @@ function MobileClock() {
 function Clock({ timeZone, label }: { timeZone: string; label: string }) {
   const clock = useClock(timeZone);
   return (
-    <div className="bar-item">
-      <div>
-        <div className="kicker">{label}</div>
-        <div className="bar-date num">{clock.date}</div>
-      </div>
+    <div className="bar-item clock-line">
+      <span className="clock-city">{label}</span>
       <div className="clock primary">
         <span>{clock.hour}</span>
         <span>:</span>
@@ -114,6 +111,7 @@ function Clock({ timeZone, label }: { timeZone: string; label: string }) {
         <span className="dim">:</span>
         <span className="dim">{clock.second}</span>
       </div>
+      <span className="bar-date num">{clock.date}</span>
     </div>
   );
 }
@@ -367,9 +365,10 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <div className="brand-block">
             <LogoLockup />
             <span className={`conn ${link}`}>
-              <Heartbeat live={link === "up"} />
+              <Heartbeat live={link === "up" && live.transport === "sse" && !live.stale} />
               {link === "up" ? copy.shell.connected : link === "down" ? copy.shell.disconnected : copy.common.connecting}
             </span>
+            <LiveMark live={live.transport === "sse" && !live.stale} stale={live.stale || live.transport === "connecting"} />
             <span className="paper-flag">PAPER TRADING</span>
             <Link href="/versions" className="version-link">
               {release?.current ? `גרסה ${release.current}` : "גרסאות"}
@@ -411,6 +410,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 <i className={`dot ${link}`} />
                 {phase}
                 <MobileClock />
+                <LiveMark live={live.transport === "sse" && !live.stale} stale={live.stale || live.transport === "connecting"} />
               </span>
               <AccountSwitcher />
             </div>
@@ -425,11 +425,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             </button>
           </header>
           <header className="instrument">
-            <div className="bar-item">
-              <div>
-                <div className="kicker">{copy.shell.market}</div>
-                <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>
-              </div>
+            <div className="bar-item clock-line">
+              <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>
+              <span className="clock-city">{copy.shell.market}</span>
               <div className="session-track" aria-hidden>
                 <div className="session-fill" style={{ width: `${progress}%` }} />
               </div>
@@ -483,9 +481,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <motion.div
             className="stage-body"
             key={path}
-            initial={reduce ? false : { opacity: 0, y: 8 }}
+            initial={reduce ? false : { opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={reduce ? { duration: 0 } : { duration: 0.22 }}
+            transition={reduce ? { duration: 0 } : { duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
           >
             {children}
           </motion.div>
