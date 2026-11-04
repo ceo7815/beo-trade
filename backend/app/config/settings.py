@@ -140,6 +140,16 @@ class TradingConfig:
     day_trail_protect_pct: float = 0.045
     day_trail_initial_floor_frac: float = 0.75  # legacy; prefer day_trail_protect_pct
     day_trail_pct: float = 0.30
+    # 20k profile: after the first scaled ladder step, also trail this fraction off the day peak.
+    day_trail_after_first_step: bool = False
+    # 100K ladder dollars × (locked session-open equity / this reference). 30,000 is the
+    # deployed-capital base of the $3,500 kill (3500/30000 ≈ 11.67%).
+    day_floor_deploy_reference_usd: float = 30000
+    # Exact kill fraction for profiles that set both. 0 means "use daily_kill_pct".
+    daily_kill_ratio_loss_usd: int = 0
+    daily_kill_ratio_deploy_usd: int = 0
+    # When false, one contract that costs more than the per-trade cap is skipped.
+    allow_one_contract_over_cap: bool = False
     # Equity-ILS size tiers (auto). Tier-2 arm/protect are provisional (scaled by kill 6/8).
     capital_tier1_max_ils: float = 25000
     capital_tier2_max_ils: float = 100000

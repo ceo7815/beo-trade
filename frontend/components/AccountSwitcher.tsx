@@ -10,7 +10,7 @@ type PeriodsBody = { current_id?: string; periods?: TradingPeriodRow[] };
 export function AccountSwitcher() {
   const [period, setPeriod] = useState("current");
   const [rows, setRows] = useState<TradingPeriodRow[]>([]);
-  const [currentId, setCurrentId] = useState("paper_10k_ils");
+  const [currentId, setCurrentId] = useState("paper_20k_ils");
 
   useEffect(() => {
     setPeriod(readStoredPeriod());
@@ -19,7 +19,7 @@ export function AccountSwitcher() {
       .then((body) => {
         if (!alive) return;
         setRows(body.periods || []);
-        setCurrentId(body.current_id || "paper_10k_ils");
+        setCurrentId(body.current_id || "paper_20k_ils");
       })
       .catch(() => undefined);
     return () => {
@@ -44,7 +44,8 @@ export function AccountSwitcher() {
       <div className="account-switch-row">
         {(rows.length ? rows : [
           { id: "paper_100k", label: "פייפר 100K", read_only: true },
-          { id: "paper_10k_ils", label: "פייפר 10K ₪", trading: true },
+          { id: "paper_10k_ils", label: "פייפר 10K ₪", trading: false },
+          { id: "paper_20k_ils", label: "פייפר 20K ₪", trading: true },
         ]).map((row) => {
           const on = row.id === activeId || (period === "current" && row.id === currentId);
           return (

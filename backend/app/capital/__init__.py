@@ -1,15 +1,14 @@
-"""Capital profile helpers for the 10K ₪ paper desk and the recovered 100K desk.
+"""Capital profile helpers.
 
-Day brakes and sizing on ``10k_ils`` use **percent of live account equity**
-(morning mark / current equity). ILS appears only for display and for
-equity-tier thresholds. ``ils_per_usd`` defaults to 3.14 (frankfurter /
-er-api live read 2026-11-02); a daily Frankfurter fetch overrides it when
-available, with 3.14 as fallback.
+``20k_ils`` is the active small book: 15% hard per trade, 100% exposure, a kill
+locked to session-open equity at 3500/30000, and the 100K day-floor ladder
+scaled by that same equity over $30,000. After the first ladder step a 40%
+giveback trail also protects; the higher floor wins.
 
-Tiers (by equity × ils_per_usd):
-- ≤25K ₪: per-trade 15%, kill 8%, arm 6% / protect 4.5%, exposure 100%, DAY_TRAIL
-- 25K–100K ₪: per-trade 10%, kill 6%, arm/protect scaled (provisional), DAY_TRAIL
-- >100K ₪: 100K rules (7% / 35% / 3.5% kill / ladder, no trail)
+``10k_ils`` stays available (percent of equity, equity DAY_TRAIL, size tiers).
+``100k`` is the unscaled ladder and the fixed $3,500 kill.
+
+ILS is display plus the 10K tier thresholds. ``ils_per_usd`` defaults to 3.14.
 """
 
 from __future__ import annotations
@@ -20,6 +19,7 @@ from decimal import Decimal
 from app.config.settings import TradingConfig
 
 PROFILE_10K = "10k_ils"
+PROFILE_20K = "20k_ils"
 PROFILE_100K = "100k"
 
 # Fallback FX when Frankfurter is unreachable. Live-read 2026-11-02:
@@ -40,8 +40,20 @@ class CapitalTier:
     provisional: bool = False
 
 
+def profile_name(config: TradingConfig) -> str:
+    return str(getattr(config, "capital_profile", PROFILE_100K) or PROFILE_100K)
+
+
 def profile_is_10k(config: TradingConfig) -> bool:
-    return str(getattr(config, "capital_profile", PROFILE_100K) or PROFILE_100K) == PROFILE_10K
+    return profile_name(config) == PROFILE_10K
+
+
+def profile_is_20k(config: TradingConfig) -> bool:
+    return profile_name(config) == PROFILE_20K
+
+
+def profile_uses_working_capital(config: TradingConfig) -> bool:
+    return profile_is_10k(config) or profile_is_20k(config)
 
 
 def ils_per_usd(config: TradingConfig) -> Decimal:
@@ -62,8 +74,8 @@ def ils_per_usd(config: TradingConfig) -> Decimal:
 
 
 def working_capital_usd(config: TradingConfig) -> Decimal | None:
-    """USD basis for the 10K profile (display / fallback), or None on 100K."""
-    if not profile_is_10k(config):
+    """USD basis for a ₪ profile (display / fallback), or None on 100K."""
+    if not profile_uses_working_capital(config):
         return None
     ils = Decimal(str(getattr(config, "working_capital_ils", 0) or 0))
     if ils <= 0:
@@ -171,8 +183,84 @@ def apply_tier(config: TradingConfig, account_equity: Decimal | None = None) -> 
     )
 
 
-def effective_kill_usd(config: TradingConfig, account_equity: Decimal | None = None) -> Decimal:
-    """Dollar kill line. 10K: kill_pct × live equity (fallback: × WC). 100K: fixed dollars or 3.5%."""
+def configured_kill_pct(config: TradingConfig) -> Decimal:
+    """Kill fraction. 20K uses loss/deploy when both are set, else ``daily_kill_pct``."""
+    numerator = Decimal(str(getattr(config, "daily_kill_ratio_loss_usd", 0) or 0))
+    denominator = Decimal(str(getattr(config, "daily_kill_ratio_deploy_usd", 0) or 0))
+    if numerator > 0 and denominator > 0:
+        return numerator / denominator
+    return Decimal(str(getattr(config, "daily_kill_pct", 0) or 0))
+
+
+def floor_scale(config: TradingConfig, basis: Decimal | None) -> Decimal:
+    """20K ladder multiplier. 1 on every other profile."""
+    if not profile_is_20k(config):
+        return Decimal("1")
+    reference = Decimal(str(getattr(config, "day_floor_deploy_reference_usd", 0) or 0))
+    if basis is None or basis <= 0 or reference <= 0:
+        return Decimal("0")
+    return Decimal(str(basis)) / reference
+
+
+def scaled_day_floor_steps(config: TradingConfig, basis: Decimal | None) -> tuple[tuple[Decimal, Decimal], ...]:
+    """100K ladder on the 100K profile. On 20K, each step × equity / $30,000."""
+    steps = tuple(getattr(config, "day_floor_steps", ()) or ())
+    if not profile_is_20k(config):
+        return tuple((Decimal(str(arm)), Decimal(str(lock))) for arm, lock in steps)
+    scale = floor_scale(config, basis)
+    if scale <= 0:
+        return tuple((Decimal(str(arm)), Decimal(str(lock))) for arm, lock in steps)
+    scaled: list[tuple[Decimal, Decimal]] = []
+    for arm, lock in steps:
+        scaled.append(
+            (
+                (Decimal(str(arm)) * scale).quantize(Decimal("0.01")),
+                (Decimal(str(lock)) * scale).quantize(Decimal("0.01")),
+            )
+        )
+    return tuple(scaled)
+
+
+def ladder_basis_usd(config: TradingConfig, open_equity: Decimal | None = None) -> Decimal | None:
+    """Dollars the 20K ladder and kill scale from: locked open, else working capital."""
+    if open_equity is not None and open_equity > 0:
+        return Decimal(str(open_equity)).quantize(Decimal("0.01"))
+    try:
+        from app.capital.session_lock import read_locked_open_equity
+
+        locked = read_locked_open_equity()
+        if locked is not None and locked > 0:
+            return locked
+    except Exception:
+        pass
+    return working_capital_usd(config)
+
+
+def effective_kill_usd(
+    config: TradingConfig,
+    account_equity: Decimal | None = None,
+    open_equity: Decimal | None = None,
+) -> Decimal:
+    """Dollar kill line.
+
+    20K: ``configured_kill_pct`` × session-open equity (fallback: working capital).
+    10K: tier kill percent × session-open equity when ``open_equity`` is passed,
+    otherwise × the equity argument (fallback: working capital).
+    100K: fixed ``daily_kill_loss_usd``.
+    """
+    if open_equity is not None:
+        try:
+            opened = Decimal(str(open_equity))
+        except Exception:
+            opened = Decimal("0")
+        if opened > 0:
+            account_equity = opened
+    if profile_is_20k(config):
+        pct = configured_kill_pct(config)
+        basis = account_equity if account_equity is not None else working_capital_usd(config)
+        if basis is None or pct <= 0:
+            return Decimal("0")
+        return (Decimal(str(basis)) * pct).quantize(Decimal("0.01"))
     if profile_is_10k(config):
         tier = resolve_tier(config, account_equity)
         if not tier.day_trail and tier.name == "large_100k_rules":
@@ -199,8 +287,18 @@ def effective_kill_usd(config: TradingConfig, account_equity: Decimal | None = N
     return Decimal("0")
 
 
+def day_giveback_enabled(config: TradingConfig) -> bool:
+    """20K only: 40% off the day peak, armed once the first ladder step is reached."""
+    if not profile_is_20k(config):
+        return False
+    if not bool(getattr(config, "day_trail_enabled", False)):
+        return False
+    return bool(getattr(config, "day_trail_after_first_step", False))
+
+
 def day_trail_enabled(config: TradingConfig, account_equity: Decimal | None = None) -> bool:
-    if not profile_is_10k(config):
+    """Legacy 10K equity trail. The 20K giveback trail is a different mode."""
+    if profile_is_20k(config) or not profile_is_10k(config):
         return False
     if not bool(getattr(config, "day_trail_enabled", False)):
         return False

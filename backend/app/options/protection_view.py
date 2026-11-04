@@ -100,14 +100,39 @@ def protection_progress(
     return view
 
 
-def build_protection(settings, pnl: Decimal | None, latch: dict | None, *, unknown: bool) -> dict:
+def build_protection(
+    settings,
+    pnl: Decimal | None,
+    latch: dict | None,
+    *,
+    unknown: bool,
+    open_equity: Decimal | None = None,
+) -> dict:
     trading = settings.trading()
-    from app.capital import day_trail_enabled, effective_kill_usd
+    from app.capital import day_giveback_enabled, day_trail_enabled, effective_kill_usd, ladder_basis_usd, scaled_day_floor_steps
+    from app.capital.session_lock import read_locked_open_equity
 
-    kill = effective_kill_usd(trading)
+    opened = open_equity if open_equity is not None else read_locked_open_equity()
+    kill = effective_kill_usd(trading, open_equity=opened)
     if unknown or pnl is None:
         return _unknown(abs(kill) if kill > 0 else Decimal("0"))
     row = latch if isinstance(latch, dict) else {}
+    if day_giveback_enabled(trading) or str(row.get("mode") or "") == "ladder_trail":
+        steps = scaled_day_floor_steps(trading, ladder_basis_usd(trading, opened))
+        armed = bool(row.get("armed"))
+        peak = _decimal(row.get("peak")) or (_stored_peak(settings, datetime.now(timezone.utc)) if armed else None)
+        view = protection_progress(pnl, peak, steps, kill, armed=armed)
+        trail_floor = _decimal(row.get("trail_floor"))
+        ladder_floor = _decimal(row.get("ladder_floor"))
+        active = _decimal(row.get("floor")) if armed else None
+        if active is not None:
+            view["floor"] = _money(active)
+            view["armed"] = True
+            view["protection_kind"] = "floor"
+        if trail_floor is not None and ladder_floor is not None and active is not None:
+            binder = "טרייל 40%" if trail_floor >= ladder_floor else "מדרגה"
+            view["line"] = f"{view['line']} · הגנה גבוהה יותר: {binder}"
+        return view
     if day_trail_enabled(trading) or str(row.get("mode") or "") == "trail":
         return _trail_protection(pnl, row, kill)
     armed = bool(row.get("armed"))

@@ -53,13 +53,18 @@ def supported_reason_codes(
 
 
 def direction_matches(underlying: UnderlyingSnapshot, option: OptionSnapshot, events: set[str]) -> bool:
-    if "REVERSAL" in events:
-        return True
-    if underlying.change_percent > 0 and option.right.value == "PUT":
-        return False
-    if underlying.change_percent < 0 and option.right.value == "CALL":
-        return False
-    return True
+    """CALL only on an up move, PUT only on a down move.
+
+    REVERSAL used to return True for both sides. That bought a CALL while the
+    quant thesis still said the stock moved down (FIG 22C, 3.11, −3.26%).
+    The event can still be a reason code. It does not flip the side.
+    """
+    del events
+    if underlying.change_percent > 0:
+        return option.right.value == "CALL"
+    if underlying.change_percent < 0:
+        return option.right.value == "PUT"
+    return False
 
 
 def scenario_sane(option: OptionSnapshot, scenarios: list[ScenarioResult]) -> bool:

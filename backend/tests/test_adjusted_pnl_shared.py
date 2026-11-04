@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from app.config.settings import Settings
 from app.trades.exclusion import SEEDS, compute_adjusted_day_pnl
@@ -168,6 +169,8 @@ def test_real_loss_still_latches_via_worker_and_entry_gate(tmp_path, monkeypatch
         database_url="sqlite:///" + (tmp_path / "real.db").as_posix(),
         auth_required=False,
         trading_mode="PAPER",
+        # Fixed $3,500 kill. The active 20K profile would scale this loss and not latch here.
+        trading_config_path=str(Path(__file__).resolve().parents[1] / "app" / "config" / "trading_100k.toml"),
     )
     moment = datetime(2026, 10, 30, 15, 5, tzinfo=timezone.utc)
     # After stripping seeds (-4150), a further -3600 real loss remains → still hard stop.

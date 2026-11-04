@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 from sqlalchemy import select
@@ -20,7 +21,7 @@ def _isolate(monkeypatch, tmp_path):
     monkeypatch.setattr("app.options.day_floor.store_path", lambda: tmp_path / "day_floor.json")
 
 
-def _desk(tmp_path, monkeypatch, name: str):
+def _desk(tmp_path, monkeypatch, name: str, config: str | None = None):
     from app.models.db import configure_database, init_db
 
     _isolate(monkeypatch, tmp_path)
@@ -32,6 +33,7 @@ def _desk(tmp_path, monkeypatch, name: str):
         trading_mode="PAPER",
         openai_price_input_per_million=Decimal("0"),
         openai_price_output_per_million=Decimal("0"),
+        trading_config_path=config or "",
     )
     configure_database(settings)
     init_db(settings)
@@ -163,7 +165,9 @@ def test_the_first_good_read_after_a_blind_streak_kills_a_3500_loss(tmp_path, mo
     from app.options.day_floor import day_close_reason
     from app.workers.loops import monitor_once
 
-    settings = _desk(tmp_path, monkeypatch, "recover.db")
+    # The fixed $3,500 kill is the 100K profile. The active 20K book scales it.
+    hundred = str(Path(__file__).resolve().parents[1] / "app" / "config" / "trading_100k.toml")
+    settings = _desk(tmp_path, monkeypatch, "recover.db", hundred)
     blind = _Blind()
     for minute in range(3):
         monitor_once(settings, {}, blind, NOW + timedelta(minutes=minute), submit=False)

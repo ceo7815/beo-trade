@@ -1,5 +1,6 @@
-# Active profile: 10k_ils. To recover the 100K desk, set capital_profile = "100k"
-# (or copy values from trading_100k.toml) and restart. One switch.
+# Active profile: 20k_ils (20,000 ₪ paper book, same strategy as the 100K desk, scaled).
+# The preserved 10K profile is trading_10k.toml — copy it over this file to select 10k_ils.
+# To recover the 100K desk, set capital_profile = "100k" (or copy trading_100k.toml) and restart.
 
 # All scan, risk, and session thresholds. Change this file, then restart.
 # Fractions are 0–1 unless the name says percent (those are also 0–1 here).
@@ -48,9 +49,13 @@ risk_policy_version = "aggressive-1"
 exit_policy_version = "aggressive-exit-3"
 risk_per_trade_pct = 0.06
 normal_position_capital_pct = 0.15
-hard_position_capital_pct = 0.20
+# Hard cap equals the 15% per-trade cap. One contract over that cap is skipped.
+hard_position_capital_pct = 0.15
+allow_one_contract_over_cap = false
 max_aggregate_planned_risk_pct = 1.0
-# Kill (8%) must fire first: raise warning / entry / hard above it.
+# Kill (~11.67% of locked session-open equity) flattens first.
+# Warning is informational. Entry brake is 12% of equity. The 15% hard stop
+# sits above the kill so it does not flatten the day before the kill.
 daily_warning_pct = 0.10
 daily_entry_stop_pct = 0.12
 daily_hard_stop_pct = 0.15
@@ -59,21 +64,27 @@ daily_hard_stop_pct = 0.15
 # The 5% hard stop still flattens first on a smaller account. 0 disables the dollar line.
 daily_kill_loss_usd = 3500
 # --- capital profile (single switch) ---
-# "10k_ils" = working capital 10,000 ₪ + day trail + % equity brakes. "100k" = prior 100K desk.
-capital_profile = "10k_ils"
-# 10,000 ₪ / 3.14 ≈ 3,184.71 USD (docs: $3,185). FX live-read 2026-11-02:
+# "20k_ils" = 20,000 ₪ book, scaled 100K ladder + 40% day trail.
+# "10k_ils" = preserved percent-of-equity trail (see trading_10k.toml). "100k" = prior desk.
+capital_profile = "20k_ils"
+# 20,000 ₪ / 3.14 ≈ 6,369.43 USD. FX live-read 2026-11-02:
 # frankfurter 3.1393, er-api 3.1405. Daily Frankfurter fetch overrides; 3.14 is fallback.
-working_capital_ils = 10000
+working_capital_ils = 20000
 ils_per_usd = 3.14
-# Display/legacy ILS kill (= 8% of 10K ₪). Brakes use daily_kill_pct × live equity.
-daily_kill_ils = 800
-daily_kill_pct = 0.08
+# Legacy ILS figure (≈11.67% of 20,000 ₪). The live kill is the ratio below, locked at the open.
+daily_kill_ils = 2333
+# Display twin of 3500/30000. The dollars use daily_kill_ratio_loss_usd / daily_kill_ratio_deploy_usd.
+daily_kill_pct = 0.11666666666666667
+daily_kill_ratio_loss_usd = 3500
+daily_kill_ratio_deploy_usd = 30000
+day_floor_deploy_reference_usd = 30000
 day_trail_enabled = true
-# DAY_TRAIL: arm +6% of equity, first floor 4.5%, then trail 30% under day peak.
-day_trail_arm_pct = 0.06
-day_trail_protect_pct = 0.045
+# Not the 10K equity trail. Armed only after the first scaled ladder step; give back 40% of the day peak.
+day_trail_arm_pct = 0
+day_trail_protect_pct = 0
 day_trail_initial_floor_frac = 0.75
-day_trail_pct = 0.30
+day_trail_pct = 0.40
+day_trail_after_first_step = true
 # Size tiers by equity×ils_per_usd (auto). Tier-2 arm/protect provisional (×6/8 from tier-1).
 capital_tier1_max_ils = 25000
 capital_tier2_max_ils = 100000
@@ -87,7 +98,8 @@ capital_tier2_kill_pct = 0.06
 capital_tier2_arm_pct = 0.045
 capital_tier2_protect_pct = 0.03375
 capital_tier2_exposure_pct = 1.0
-# Per-trade 15% of live equity; aggregate exposure up to 100%. Sector kept at 40%.
+# Per-trade 15% of live equity, hard. Aggregate exposure up to 100%. Sector kept at 40%
+# so one name (its own bucket when no sector feed exists) can still be a 15% trade.
 max_capital_per_trade_pct = 0.15
 max_total_open_exposure_pct = 1.0
 max_concurrent_positions = 10
@@ -124,9 +136,9 @@ entry_pace_window_minutes = 5
 entry_pace_max_entries = 2
 entry_pace_opposite_block_minutes = 30
 entry_rules_version = "v10.29-pacing"
-# Account day P&L, including open marks. 4,000 arms a floor of 2,000 and that floor holds through 6,999.
-# From 7,000 each extra 1,000 of peak lifts the floor by 1,000, through 15,000 which locks 11,000.
-# The floor never falls. Touching it sells everything and blocks new buys.
+# Unscaled 100K ladder. On 20k_ils each step is multiplied by
+# (locked session-open equity / day_floor_deploy_reference_usd). The floor never falls.
+# Touching the active floor (the higher of this ladder and the 40% day trail) sells everything.
 day_floor_arm = 4000
 day_floor_lock = 2000
 day_floor_steps = [[4000, 2000], [7000, 3000], [8000, 4000], [9000, 5000], [10000, 6000], [11000, 7000], [12000, 8000], [13000, 9000], [14000, 10000], [15000, 11000]]

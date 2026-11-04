@@ -399,7 +399,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             cached = _risk_body(settings, trading_period=period_key)
             # Only cache the active trading account on the legacy ("risk",) key too.
             read_cache.set(cache_key, cached, RISK_TTL_SECONDS)
-            if period_key in {"current", current_period_id(), "paper_10k_ils", ""}:
+            if period_key in {"current", current_period_id(), ""}:
                 read_cache.set(("risk",), cached, RISK_TTL_SECONDS)
         try:
             from app.options.day_floor import public_from_store
@@ -441,6 +441,9 @@ def register(app: FastAPI, settings: Settings) -> None:
                 account = adapter.get_account()
                 if isinstance(account, dict) and account.get("equity") not in {None, ""}:
                     equity = Decimal(str(account["equity"]))
+                    from app.capital.session_lock import open_equity_from_account
+
+                    open_equity_from_account(account, persist=True)
             finally:
                 adapter.close()
         except Exception:
@@ -556,7 +559,11 @@ def register(app: FastAPI, settings: Settings) -> None:
         from app.options.risk_limits import day_flatten_reason
 
         level = "unknown" if no_account else daily_loss_state(equity, counted, trading)
-        if not no_account and day_flatten_reason(equity, measured, trading) == "DAILY_HARD_STOP":
+        from app.capital.session_lock import open_equity_from_account
+
+        moment = datetime.now(timezone.utc)
+        opened = None if account is None else open_equity_from_account(account, moment, persist=not no_account)
+        if not no_account and day_flatten_reason(equity, measured, trading, open_equity=opened) == "DAILY_HARD_STOP":
             level = "hard_stop"
         if level in {"entry_stop", "hard_stop"}:
             stopped = True
@@ -576,9 +583,8 @@ def register(app: FastAPI, settings: Settings) -> None:
             state = "בתוך המגבלה"
         from app.options.day_floor import observe_day_floor, public_from_store
 
-        moment = datetime.now(timezone.utc)
         try:
-            day_floor = observe_day_floor(settings, measured, moment, session_open) if account is not None and measured is not None else public_from_store(settings, moment)
+            day_floor = observe_day_floor(settings, measured, moment, session_open, open_equity=opened) if account is not None and measured is not None else public_from_store(settings, moment)
         except Exception:
             day_floor = {"armed": False, "closed": False, "arm": None, "floor": None}
         if isinstance(day_floor, dict) and day_floor.get("closed") and not day_floor.get("cleared") and day_floor.get("reason") == "DAILY_HARD_STOP":
@@ -599,6 +605,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             None if no_account or level == "unknown" else display,
             day_floor,
             unknown=no_account or level == "unknown",
+            open_equity=opened,
         )
         from app.analytics.trades import cached_day_capital, day_return_fields
 
@@ -613,7 +620,10 @@ def register(app: FastAPI, settings: Settings) -> None:
             "per_trade_limit": None if equity is None else str((equity * Decimal(str(trading.max_capital_per_trade_pct))).quantize(Decimal("0.01"))),
             "exposure_limit": None if equity is None else str((equity * Decimal(str(trading.max_total_open_exposure_pct))).quantize(Decimal("0.01"))),
             "daily_loss_limit": None if equity is None else str((equity * Decimal(str(trading.daily_entry_stop_pct))).quantize(Decimal("0.01"))),
-            "daily_kill_loss_usd": display_kill_usd(trading, equity),
+            "daily_kill_loss_usd": display_kill_usd(trading, equity, open_equity=opened),
+            "daily_kill_locked": opened is not None,
+            "daily_kill_open_equity": None if opened is None else str(opened.quantize(Decimal("0.01"))),
+            "daily_kill_basis": "session_open" if opened is not None else "equity",
             "working_capital_usd": None if working_capital_usd(trading) is None else str(working_capital_usd(trading)),
             "risk_equity_usd": None if equity is None else str(Decimal(equity).quantize(Decimal("0.01"))),
             "broker_equity_usd": None if broker_equity is None else str(Decimal(broker_equity).quantize(Decimal("0.01"))),

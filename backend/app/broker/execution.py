@@ -52,10 +52,45 @@ def _order_is_live(existing: BrokerOrderRecord | None, remote: dict | None) -> b
     return state in OPEN_ORDER_STATES or state == "PENDING_REPLACE"
 
 
+def _open_sell_client_ids(adapter) -> set[str] | None:
+    """Client ids Alpaca currently lists as open sells. None when that list cannot be read.
+
+    A non-list (a test double, a failed parse) is treated as unreadable so a lookup
+    error does not look like "no open orders".
+    """
+    getter = getattr(adapter, "get_orders", None)
+    if not callable(getter):
+        return None
+    try:
+        rows = getter("open")
+    except Exception:
+        return None
+    if not isinstance(rows, list):
+        return None
+    found: set[str] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        intent = str(row.get("position_intent") or "")
+        side = str(row.get("side") or "").lower()
+        if intent not in {"", "sell_to_close"} and side != "sell":
+            continue
+        if intent and intent != "sell_to_close":
+            continue
+        client_id = str(row.get("client_order_id") or "")
+        if client_id:
+            found.add(client_id)
+    return found
+
+
 def _resolve_client_order_id(session: Session, adapter, trade_id: str, intent: str):
-    """An exit id is reused only while its order is live. A trade id can be a contract
-    symbol that was bought and sold before, so a finished sell must not block the next one."""
+    """An exit id is reused only while Alpaca still has that order open.
+
+    A local SUBMITTED/ACCEPTED row whose order is gone, cancelled, rejected, or
+    expired must not block the exit. Buys stay idempotent on the first id.
+    """
     attempts = MAX_EXIT_ATTEMPTS if intent == "sell_to_close" else 1
+    open_ids = _open_sell_client_ids(adapter) if intent == "sell_to_close" else None
     for attempt in range(attempts):
         client_order_id = client_order_id_for(trade_id, intent, attempt)
         existing = order_by_client(session, client_order_id)
@@ -65,10 +100,24 @@ def _resolve_client_order_id(session: Session, adapter, trade_id: str, intent: s
             raise PaperOnlyError("מצב הפקודה לא ידוע. לא נשלחת פקודה נוספת.") from exc
         if not isinstance(remote, dict):
             remote = None
+        if intent != "sell_to_close":
+            if existing is None and remote is None:
+                return client_order_id, None, None
+            return client_order_id, existing, remote
+        # Listed in Alpaca's open orders, or the per-id lookup still says the
+        # order is live: do not send a second sell. A stale open-order snapshot
+        # must not double-sell an order the lookup still returns as accepted.
+        if open_ids is not None and client_order_id in open_ids:
+            return client_order_id, existing, remote
+        if remote is not None and _order_is_live(None, remote):
+            return client_order_id, existing, remote
+        if remote is not None and not _finished(existing, remote):
+            return client_order_id, existing, remote
+        # Finished, cancelled, rejected, or no broker order at all. A local
+        # SUBMITTED row is not enough to block the exit.
         if existing is None and remote is None:
             return client_order_id, None, None
-        if intent != "sell_to_close" or not _finished(existing, remote):
-            return client_order_id, existing, remote
+        continue
     raise PaperOnlyError("יותר מדי ניסיונות יציאה לאותה עסקה")
 
 
@@ -144,7 +193,9 @@ def validate_order(
             approval = session.scalar(select(ApprovalRecord).where(ApprovalRecord.recommendation_id == recommendation_id)) if recommendation_id else None
             if approval is None or approval.status != "APPROVED":
                 reasons.append("אין אישור שמור")
-    if open_order_for_symbol(session, body_symbol, intent) is not None:
+    # Exits reconcile against Alpaca in _resolve_client_order_id. A local row that
+    # still says SUBMITTED after the broker order is gone must not block the sell.
+    if intent != "sell_to_close" and open_order_for_symbol(session, body_symbol, intent) is not None:
         reasons.append("כבר קיימת פקודה פתוחה לחוזה הזה")
     return reasons
 
@@ -221,7 +272,9 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
     trade_id = str(request.get("trade_id") or (stored.trade_id if stored is not None else "") or uuid.uuid4())
     client_order_id, existing, remote = _resolve_client_order_id(session, adapter, trade_id, intent)
     if existing is not None or remote is not None:
-        if intent == "sell_to_close" and not _order_is_live(existing, remote):
+        live = _order_is_live(existing, remote)
+        if intent == "sell_to_close" and not live and remote is None:
+            # The id was never accepted by Alpaca. Submit it instead of freezing the exit.
             from app.ops.failure import log_failure
 
             log_failure(
@@ -232,16 +285,9 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
                 trade_id=trade_id,
                 client_order_id=client_order_id,
             )
-            record_trade_event(
-                session,
-                trade_id,
-                "BLOCKED",
-                "beo-trade",
-                "EXIT_DUPLICATE_WITHOUT_LIVE_ORDER",
-                str(request.get("recommendation_id") or ""),
-            )
-        record_trade_event(session, trade_id, "ENTRY_SUBMITTED" if intent == "buy_to_open" else "EXIT_SUBMITTED", "beo-trade", "פקודה קיימת לא נשלחה שוב", str(request.get("recommendation_id") or ""))
-        return {"duplicate": True, "order": remote or {"client_order_id": client_order_id, "status": existing.status}, "trade_id": trade_id}
+        else:
+            record_trade_event(session, trade_id, "ENTRY_SUBMITTED" if intent == "buy_to_open" else "EXIT_SUBMITTED", "beo-trade", "פקודה קיימת לא נשלחה שוב", str(request.get("recommendation_id") or ""))
+            return {"duplicate": True, "order": remote or {"client_order_id": client_order_id, "status": existing.status if existing is not None else ""}, "trade_id": trade_id}
     account = adapter.get_account()
     clock = adapter.get_market_clock()
     symbol = str(request["symbol"]).replace(" ", "").upper()
@@ -352,7 +398,10 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
         activities=activities,
     )
     equity = _decimal(account.get("equity"))
-    if day_flatten_reason(equity, pnl, settings.trading()) != "DAILY_HARD_STOP":
+    from app.capital.session_lock import open_equity_from_account
+
+    opened = open_equity_from_account(account, moment, persist=True)
+    if day_flatten_reason(equity, pnl, settings.trading(), open_equity=opened) != "DAILY_HARD_STOP":
         return None
     try:
         latch_hard_stop(settings, moment)

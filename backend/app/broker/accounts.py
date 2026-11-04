@@ -57,7 +57,7 @@ def has_view_keys(settings, period_id: str | None) -> bool:
 def _keys_for_period(period_id: str | None) -> tuple[str, str]:
     current = current_period_id()
     key = (period_id or "").strip() or current
-    if key in {"", "current", current, "paper_10k_ils"}:
+    if key in {"", "current", current, "paper_10k_ils", "paper_20k_ils"}:
         return "alpaca_api_key", "alpaca_api_secret"
     period = resolve_period(key)
     if period is not None and (period.read_only or period.id == "paper_100k"):
