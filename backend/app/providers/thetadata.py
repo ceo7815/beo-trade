@@ -425,8 +425,10 @@ class ThetaFeed:
                 UnderlyingSnapshot(
                     symbol=symbol,
                     price=price,
-                    open=_dec((bar or {}).get("open")) or price,
-                    high=_dec((bar or {}).get("high")) or price,
+                    # A missing open or day high stays 0 so the stretch gate can fail open.
+                    # Copying the last trade would look like a 0% move sitting on the high.
+                    open=_dec((bar or {}).get("open")) or Decimal("0"),
+                    high=_dec((bar or {}).get("high")) or Decimal("0"),
                     low=_dec((bar or {}).get("low")) or price,
                     close=_dec((bar or {}).get("close")) or price,
                     volume=_int((bar or {}).get("volume")) or 0,

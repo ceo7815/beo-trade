@@ -59,6 +59,7 @@ export const blockReasons: Record<string, string> = {
   ENTRY_RATE_CAP: "תקרת קצב כניסות בחלון",
   SIDE_MIX_BLOCK: "אין ערבוב CALL ו-PUT בחלון",
   POST_LOSS_OPPOSITE_BLOCK: "צד הפוך חסום אחרי הפסד",
+  CALL_EXTENDED_AT_HIGH: "CALL מתוח על השיא",
 };
 
 export const copy = {
@@ -308,7 +309,9 @@ export const copy = {
 
 export function blockLabel(reason: string | null | undefined) {
   if (!reason) return copy.common.noData;
-  return blockReasons[reason] || reason;
+  const trimmed = reason.trim();
+  const code = trimmed.split(/\s+/)[0];
+  return blockReasons[code] || blockReasons[trimmed] || trimmed;
 }
 
 export function blockText(reason: string | null | undefined) {

@@ -16,11 +16,16 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal, InvalidOperation
 from zoneinfo import ZoneInfo
 
+import structlog
+
 from app.config.settings import TradingConfig
 
 ENTRY_RATE_CAP = "ENTRY_RATE_CAP"
 SIDE_MIX_BLOCK = "SIDE_MIX_BLOCK"
 POST_LOSS_OPPOSITE_BLOCK = "POST_LOSS_OPPOSITE_BLOCK"
+CALL_EXTENDED_AT_HIGH = "CALL_EXTENDED_AT_HIGH"
+
+log = structlog.get_logger()
 
 SIDES = frozenset({"CALL", "PUT"})
 # A replaced order is a finished one: the replacement, if it was sent, is its own row.
@@ -99,6 +104,73 @@ def opening_call_blocked(side: str, moment: datetime, until_minutes: int) -> boo
         return False
     local = _aware(moment).astimezone(_NY)
     return local.hour * 60 + local.minute < int(until_minutes)
+
+
+def call_extended_at_high_reason(
+    side: str,
+    open_price: object,
+    day_high: object,
+    last_price: object,
+    config: TradingConfig,
+    *,
+    symbol: str = "",
+) -> str | None:
+    """Skip code when a CALL is extended and still sitting on the day high.
+
+    Both conditions are required: move from today's open is at least
+    `call_extended_min_move_from_open`, and distance from the day high is
+    strictly under `call_extended_max_dist_from_high`. PUT is never blocked.
+    A missing open, day high, or last price fails open and is logged.
+    The returned text starts with CALL_EXTENDED_AT_HIGH and includes both percents.
+    """
+    if not config.call_extended_at_high_enabled:
+        return None
+    if str(side or "").upper() != "CALL":
+        return None
+    opened = _price(open_price)
+    high = _price(day_high)
+    last = _price(last_price)
+    if opened is None or high is None or last is None:
+        log.info(
+            "entry.call_extended_data_missing",
+            service="worker",
+            symbol=symbol,
+            open=None if opened is None else str(opened),
+            day_high=None if high is None else str(high),
+            last=None if last is None else str(last),
+        )
+        return None
+    move = (last - opened) / opened
+    distance = (high - last) / high
+    min_move = Decimal(str(config.call_extended_min_move_from_open))
+    max_distance = Decimal(str(config.call_extended_max_dist_from_high))
+    if move < min_move or distance >= max_distance:
+        return None
+    return f"{CALL_EXTENDED_AT_HIGH} move={_percent(move)} dist={_percent(distance)}"
+
+
+def _price(value: object) -> Decimal | None:
+    if isinstance(value, Decimal):
+        number = value
+    else:
+        text = str(value if value is not None else "").strip()
+        if not text:
+            return None
+        try:
+            number = Decimal(text)
+        except (InvalidOperation, ValueError):
+            return None
+    if not number.is_finite() or number <= 0:
+        return None
+    return number
+
+
+def _percent(value: Decimal) -> str:
+    shown = (value * Decimal("100")).quantize(Decimal("0.01"))
+    if shown.copy_abs() >= Decimal("10000"):
+        return f"{shown:.2e}%"
+    return f"{shown}%"
+
 
 def losses_from_closed(rows: list[dict], moment: datetime, minutes: int) -> list[LossStamp]:
     """Losing closes inside the window. A flat or winning close does not start a block."""

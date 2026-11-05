@@ -689,6 +689,14 @@ def _held_underlyings(positions: list[dict]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(held))
 
 
+class _SpotQuotes(list):
+    """Option quotes for submit, with the stock spots loaded in the same read."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.spots: dict = {}
+
+
 def _revalidation_quotes(settings: Settings, live: datetime, buys) -> list:
     """Fresh enriched quotes for BUY rows only. Does not reload full option chains."""
     from app.quant.scenarios import enrich_option
@@ -718,13 +726,14 @@ def _revalidation_quotes(settings: Settings, live: datetime, buys) -> list:
         ]
     by_key = {item.option_symbol.replace(" ", ""): item for item in loaded}
     trading = settings.trading()
-    quotes = []
+    quotes = _SpotQuotes()
     for row in buys:
         key = row.option_symbol.replace(" ", "")
         option = by_key.get(key)
         underlying = underlyings.get(row.underlying)
         if option is None or underlying is None:
             raise ProviderUnavailable(f"אין ציטוט מחדש ל-{key}")
+        quotes.spots[row.underlying] = underlying
         quotes.append(enrich_option(option, underlying, trading, live))
     return quotes
 
@@ -1117,6 +1126,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         # Revalidate only the BUY contracts, not the full scan chain.
         live = datetime.now(timezone.utc)
         quotes = _revalidation_quotes(settings, live, buys)
+        spots = getattr(quotes, "spots", {})
         _submit_step(log, "_revalidation_quotes", quotes=len(quotes))
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
         _submit_step(log, "news", articles=len(news))
@@ -1277,7 +1287,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         trading = settings.trading()
         same_side = recent_entries_by_right(moment, trading.same_direction_window_minutes)
         opening_taken = opening_entries_taken(moment, trading.opening_entry_until_minutes)
-        from app.positions.entry_pace import entry_pace_reason, load_pace_book, opening_call_blocked
+        from app.positions.entry_pace import call_extended_at_high_reason, entry_pace_reason, load_pace_book, opening_call_blocked
 
         pace_book = load_pace_book(moment, trading) if trading.entry_pace_enabled else None
         _submit_step(
@@ -1307,6 +1317,24 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CALL_BLOCK"})
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CALL_BLOCK")
+                continue
+            spot = spots.get(row.underlying) if isinstance(spots, dict) else None
+            stretch = call_extended_at_high_reason(
+                side,
+                None if spot is None else spot.open,
+                None if spot is None else spot.high,
+                None if spot is None else spot.price,
+                trading,
+                symbol=row.underlying,
+            )
+            if stretch:
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", stretch, row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": stretch})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=stretch)
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:

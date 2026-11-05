@@ -113,6 +113,13 @@ opening_entry_until_minutes = 600
 # CALL buys blocked before 10:00 New York. PUT and the 2-buy opening cap are unchanged. 0 disables.
 # Research 2.11 (191 trades / 18 days): CALL before 10:00 n=23, -$11.2k; green days 50%→61%.
 opening_call_block_until_minutes = 600
+# CALL only. Block when the move from today's open is at least 3% AND the last price
+# is still within 0.25% of the day high. PUT is unchanged. A missing open or day high
+# does not block. Set call_extended_at_high_enabled = false to turn this off.
+# Report 2: week of 26.10 +$20,087 → +$22,215, PF 1.19 → 1.23; 4.11 would end about -$214 without the kill.
+call_extended_at_high_enabled = true
+call_extended_min_move_from_open = 0.03
+call_extended_max_dist_from_high = 0.0025
 # New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
 # mix inside that window, and after a losing close the opposite side waits 30 minutes.
 # The same side stays eligible. Pending buys count; a canceled buy does not.

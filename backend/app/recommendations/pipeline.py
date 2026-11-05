@@ -11,7 +11,7 @@ from app.ai.budget import BudgetLedger
 from app.ai.fingerprint import decision_fingerprint
 from app.market.regime_policy import regime_trade_policy
 from app.options.risk_limits import daily_loss_reason, sector_exposure_reason, sector_key
-from app.positions.entry_pace import opening_call_blocked
+from app.positions.entry_pace import call_extended_at_high_reason, opening_call_blocked
 from app.config.settings import TradingConfig
 from app.news.confirm import fresh_news, news_confirmed
 from app.options.selector import rank_contracts, risk_plan
@@ -400,6 +400,19 @@ def run_scan(
         ):
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = "OPENING_CALL_BLOCK"
+        if recommendation.decision is DecisionKind.BUY:
+            stretch = call_extended_at_high_reason(
+                recommendation.call_put.value,
+                underlying.open,
+                underlying.high,
+                underlying.price,
+                config,
+                symbol=underlying.symbol,
+            )
+            if stretch:
+                recommendation.decision = DecisionKind.SUPPRESS
+                recommendation.suppress_reason = stretch
+                recommendation.policy_trace = {**recommendation.policy_trace, "call_extended_at_high": stretch}
         if recommendation.decision is DecisionKind.BUY:
             if buys >= config.max_buys_per_scan:
                 recommendation.decision = DecisionKind.SUPPRESS
