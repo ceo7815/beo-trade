@@ -229,3 +229,184 @@ def test_premium_band_uses_half_to_eight_dollars():
     assert reject_option(option("0.50", "0.54"), underlying, config, now, date(2026, 11, 2)) is None
     assert reject_option(option("8.00", "8.10"), underlying, config, now, date(2026, 11, 2)) == "premium_band"
     assert reject_option(option("7.80", "7.90"), underlying, config, now, date(2026, 11, 2)) is None
+
+
+def _stretch_prices(move: str, dist: str, open_px: str = "100") -> tuple[Decimal, Decimal, Decimal]:
+    opened = Decimal(open_px)
+    last = opened * (Decimal("1") + Decimal(move))
+    gap = Decimal(dist)
+    high = last if gap == 0 else last / (Decimal("1") - gap)
+    return opened, high, last
+
+
+def test_stretch_rule_blocks_an_extended_call_at_the_high_and_leaves_the_rest():
+    from structlog.testing import capture_logs
+
+    from app.positions.entry_pace import CALL_EXTENDED_AT_HIGH, call_extended_at_high_reason
+
+    config = _settings().trading()
+    opened, high, last = _stretch_prices("0.035", "0.001")
+    blocked = call_extended_at_high_reason("CALL", opened, high, last, config, symbol="AMZN")
+    assert blocked is not None
+    assert blocked.startswith(CALL_EXTENDED_AT_HIGH)
+    assert "move=3.50%" in blocked
+    assert "dist=0.10%" in blocked
+    assert len(blocked) <= 80
+
+    room_open, room_high, room_last = _stretch_prices("0.035", "0.004")
+    assert call_extended_at_high_reason("CALL", room_open, room_high, room_last, config) is None
+
+    small_open, small_high, small_last = _stretch_prices("0.025", "0.001")
+    assert call_extended_at_high_reason("CALL", small_open, small_high, small_last, config) is None
+
+    assert call_extended_at_high_reason("PUT", opened, high, last, config) is None
+    assert call_extended_at_high_reason("put", opened, high, last, config) is None
+
+    edge_open, edge_high, edge_last = _stretch_prices("0.03", "0.0025")
+    assert call_extended_at_high_reason("CALL", edge_open, edge_high, edge_last, config) is None
+    under_open, under_high, under_last = _stretch_prices("0.03", "0.0024")
+    under = call_extended_at_high_reason("CALL", under_open, under_high, under_last, config)
+    assert under is not None and under.startswith(CALL_EXTENDED_AT_HIGH) and "move=3.00%" in under and "dist=0.24%" in under
+    shy_open, shy_high, shy_last = _stretch_prices("0.0299", "0.001")
+    assert call_extended_at_high_reason("CALL", shy_open, shy_high, shy_last, config) is None
+    on_open, on_high, on_last = _stretch_prices("0.03", "0")
+    on_high_reason = call_extended_at_high_reason("CALL", on_open, on_high, on_last, config)
+    assert on_high_reason is not None and "move=3.00%" in on_high_reason and "dist=0.00%" in on_high_reason
+
+    disabled = TradingConfig(call_extended_at_high_enabled=False)
+    assert call_extended_at_high_reason("CALL", opened, high, last, disabled) is None
+
+    with capture_logs() as logs:
+        assert call_extended_at_high_reason("CALL", None, high, last, config, symbol="AAPL") is None
+        assert call_extended_at_high_reason("CALL", opened, 0, last, config, symbol="AAPL") is None
+        assert call_extended_at_high_reason("CALL", Decimal("0"), high, last, config, symbol="AAPL") is None
+        assert call_extended_at_high_reason("PUT", None, None, last, config, symbol="AAPL") is None
+    missing = [row for row in logs if row.get("event") == "entry.call_extended_data_missing"]
+    assert len(missing) == 3
+    assert {row.get("symbol") for row in missing} == {"AAPL"}
+
+
+def test_stretch_rule_is_configured_on_every_capital_profile():
+    from pathlib import Path
+
+    from app.config.settings import CONFIG_DIR, load_trading_config
+
+    paths = (
+        CONFIG_DIR / "trading.toml",
+        CONFIG_DIR / "trading_100k.toml",
+        CONFIG_DIR / "trading_10k.toml",
+    )
+    assert {path.name for path in paths} == {"trading.toml", "trading_100k.toml", "trading_10k.toml"}
+    profiles = {load_trading_config(path).capital_profile for path in paths}
+    assert profiles == {"20k_ils", "100k", "10k_ils"}
+    for path in paths:
+        config = load_trading_config(path)
+        assert config.call_extended_at_high_enabled is True
+        assert config.call_extended_min_move_from_open == 0.03
+        assert config.call_extended_max_dist_from_high == 0.0025
+    defaults = TradingConfig()
+    assert defaults.call_extended_at_high_enabled is True
+    assert defaults.call_extended_min_move_from_open == 0.03
+    assert defaults.call_extended_max_dist_from_high == 0.0025
+    assert Path(paths[0]).exists()
+
+
+def test_rules_book_lists_the_stretch_rule():
+    from app.analytics.trading_rules import build_trading_rules
+
+    entry = build_trading_rules(_settings())["active"]["sections"]["entry"]
+    row = next(item for item in entry if item["id"] == "call_extended_at_high")
+    assert "3.00%" in row["value"]
+    assert "0.25%" in row["value"]
+    assert "CALL_EXTENDED_AT_HIGH" in row["explain"]
+    assert "PUT" in row["explain"]
+
+
+def test_scan_records_call_extended_at_high_and_a_put_is_not_this_block():
+    from dataclasses import replace
+
+    from app.recommendations.pipeline import run_scan
+    from app.schemas.domain import DecisionKind, OptionRight
+    from tests.test_engine import AS_OF, StubAI, ledger, loose_config, sample_market
+
+    underlying, option, news = sample_market()
+    opened, high, last = _stretch_prices("0.035", "0.001")
+    stretched = replace(underlying, price=last, open=opened, high=high, change_percent=Decimal("3.5"))
+    config = loose_config()
+    counts: dict = {}
+    rows = run_scan(
+        [stretched],
+        [option],
+        news,
+        config,
+        StubAI(),
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("100000"),
+        set(),
+        counts=counts,
+    )
+    assert rows
+    assert rows[0].decision is DecisionKind.SUPPRESS
+    assert rows[0].suppress_reason.startswith("CALL_EXTENDED_AT_HIGH")
+    assert "move=3.50%" in rows[0].suppress_reason
+    assert "dist=0.10%" in rows[0].suppress_reason
+    assert rows[0].policy_trace["call_extended_at_high"] == rows[0].suppress_reason
+    assert counts["suppress_reasons"][rows[0].suppress_reason] == 1
+
+    room_open, room_high, room_last = _stretch_prices("0.035", "0.004")
+    room = replace(underlying, price=room_last, open=room_open, high=room_high, change_percent=Decimal("3.5"))
+    allowed = run_scan([room], [option], news, config, StubAI(), ledger(), AS_OF, AS_OF.date(), Decimal("100000"), set())
+    assert allowed[0].decision is DecisionKind.BUY
+    assert allowed[0].suppress_reason == ""
+
+    quiet = run_scan(
+        [stretched],
+        [option],
+        news,
+        replace(config, call_extended_at_high_enabled=False),
+        StubAI(),
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("100000"),
+        set(),
+    )
+    assert quiet[0].decision is DecisionKind.BUY
+    assert "CALL_EXTENDED_AT_HIGH" not in quiet[0].suppress_reason
+
+    put = replace(option, right=OptionRight.PUT, delta=-abs(option.delta))
+    down = replace(stretched, change_percent=Decimal("-3.5"))
+    puts = run_scan([down], [put], news, config, StubAI(), ledger(), AS_OF, AS_OF.date(), Decimal("100000"), set())
+    assert puts
+    assert "CALL_EXTENDED_AT_HIGH" not in (puts[0].suppress_reason or "")
+
+
+def test_a_missing_day_high_on_the_revalidation_spot_does_not_block():
+    import httpx
+
+    from app.positions.entry_pace import call_extended_at_high_reason
+    from app.providers.thetadata import ThetaFeed, reset_theta_state
+
+    reset_theta_state()
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/trade"):
+            return httpx.Response(200, json=[{"symbol": "NVDA", "timestamp": "2026-10-01T15:00:00.000", "price": 103.5}])
+        if request.url.path.endswith("/ohlc"):
+            return httpx.Response(
+                200,
+                json=[{"symbol": "NVDA", "timestamp": "2026-10-01T15:00:00.000", "open": 100, "close": 103.5, "low": 99, "volume": 1000}],
+            )
+        return httpx.Response(200, json=[])
+
+    feed = ThetaFeed(_settings(), transport=httpx.MockTransport(handle))
+    # The snapshot stamp is exchange-local. 20:00 UTC is after 15:00 New York, so the quote is not in the future.
+    rows = feed.load_spots(("NVDA",), datetime(2026, 10, 1, 20, 0, tzinfo=timezone.utc))
+    assert len(rows) == 1
+    assert rows[0].open == Decimal("100")
+    assert rows[0].price == Decimal("103.5")
+    assert rows[0].high == 0
+    assert call_extended_at_high_reason("CALL", rows[0].open, rows[0].high, rows[0].price, _settings().trading(), symbol="NVDA") is None
+    reset_theta_state()

@@ -86,6 +86,12 @@ class TradingConfig:
     opening_entry_until_minutes: int = 600
     # Before this New York clock (minutes from midnight), CALL buys are blocked. PUT stays open. 0 disables.
     opening_call_block_until_minutes: int = 600
+    # CALL only. Block when the stock is already up at least this fraction from today's open
+    # AND the last price is still inside this fraction of the day high. PUT is unchanged.
+    # Missing open or day high does not block. False turns the gate off.
+    call_extended_at_high_enabled: bool = True
+    call_extended_min_move_from_open: float = 0.03
+    call_extended_max_dist_from_high: float = 0.0025
     # New buys only. A third submit inside the window is skipped, an opposite side
     # inside that window is skipped, and a losing close blocks the other side for a while.
     entry_pace_enabled: bool = True

@@ -61,3 +61,5 @@ curl -s -o /dev/null -w "%{http_code}\n" https://beo-trade.1wp.site/backend/api/
 ספי הסריקה יושבים ב-`backend/app/config/trading.toml`. שעות הבורסה והחגים יושבים ב-`backend/app/config/market_calendar.json`.
 
 קצב כניסות (`entry_pace_enabled`, ברירת מחדל דולק, גרסה `v10.29-pacing`): לכל היותר 2 כניסות חדשות בחלון של 5 דקות, בלי ערבוב CALL ו-PUT באותו חלון, ואחרי סגירה בהפסד הצד ההפוך חסום ל-30 דקות. כיבוי: `entry_pace_enabled = false` ב-`trading.toml` ואז Restart. לא נוגע בסטופ, בטרייל, במתג, ברצפת היום, או בגודל.
+
+רדיפת CALL מתוח (`call_extended_at_high_enabled`, ברירת מחדל דולק): CALL נחסם כשהמניה כבר עלתה לפחות 3% ממחיר הפתיחה (`call_extended_min_move_from_open`) והמחיר האחרון עדיין בתוך 0.25% משיא היום (`call_extended_max_dist_from_high`). הסיבה `CALL_EXTENDED_AT_HIGH` נשמרת עם אחוז התנועה ואחוז המרחק. PUT לא נחסם. אם חסרים פתיחה או שיא היום, אין חסימה. כיבוי: `call_extended_at_high_enabled = false` ואז Restart. לא נוגע במספר העסקאות מעבר לחסימה הזו, בחשיפה, בגודל, בסטופ, בטרייל, ב-DTE, או בקייל.

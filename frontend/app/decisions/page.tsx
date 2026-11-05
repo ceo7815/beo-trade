@@ -30,7 +30,12 @@ const REASONS = blockReasons;
 function why(item: Decision) {
   if (item.decision === "BUY") return "עבר את השערים";
   const key = item.suppress_reason || "";
-  return REASONS[key] || key || "נדחה";
+  if (!key) return "נדחה";
+  const code = key.trim().split(/\s+/)[0];
+  const label = REASONS[code] || REASONS[key];
+  if (!label) return key;
+  const detail = key.trim().slice(code.length).trim();
+  return detail ? `${label} · ${detail}` : label;
 }
 
 function strike(value: string) {

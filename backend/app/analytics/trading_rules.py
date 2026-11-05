@@ -232,6 +232,16 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
             "entry": [
                 _rule("premium", "רצועת פרמיה", f"{trading.min_option_price:.2f}–{trading.max_option_price:.2f}$", "רק אופציות בטווח המחיר הזה נכנסות."),
                 _rule("opening_call", "חסימת CALL בפתיחה", call_value, call_explain),
+                _rule(
+                    "call_extended_at_high",
+                    "בלי רדיפת CALL מתוח על השיא",
+                    (
+                        f"{'פעיל' if trading.call_extended_at_high_enabled else 'כבוי'}"
+                        f" · תנועה ≥ {_pct(trading.call_extended_min_move_from_open)} מהפתיחה"
+                        f" ומרחק < {_pct(trading.call_extended_max_dist_from_high)} מהשיא"
+                    ),
+                    "CALL נחסם רק כששני התנאים מתקיימים יחד (CALL_EXTENDED_AT_HIGH), עם אחוז התנועה ואחוז המרחק בפירוט. PUT לא נחסם. בלי מחיר פתיחה או בלי שיא היום אין חסימה. כיבוי: call_extended_at_high_enabled = false.",
+                ),
                 _rule("dte", "DTE", f"מועדף {trading.preferred_dte}, מקס׳ מועדף {trading.preferred_max_dte}, תקרה {trading.max_expiration_days}", "דירוג לפי ימי פקיעה; מעבר לתקרה נחסם."),
                 _rule("pace", "קצב כניסות", f"עד {trading.entry_pace_max_entries} ב־{trading.entry_pace_window_minutes} דק׳", "בלי מיקס צדדים בחלון; אחרי הפסד הצד ההפוך מחכה."),
                 _rule("regime", "משטר שוק", "פעיל במערכת", "כניסות מסוננות גם לפי מצב המשטר (regime) כשהוא זמין."),
