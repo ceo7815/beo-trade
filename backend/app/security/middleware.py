@@ -48,6 +48,12 @@ READ_PATHS = (
     "/api/v1/broker/alpaca/fills",
     "/api/v1/broker/alpaca/clock",
     re.compile(r"^/api/v1/spy(?:/.*)?$"),
+    "/api/v1/systems",
+    "/api/v1/archive/paper_100k/summary",
+    "/api/v1/archive/paper_100k/orders",
+    "/api/v1/archive/paper_100k/equity",
+    "/api/v1/archive/paper_100k/activities",
+    "/api/v1/archive/paper_100k/trades",
 )
 
 

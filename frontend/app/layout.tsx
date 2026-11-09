@@ -3,6 +3,7 @@ import localFont from "next/font/local";
 import "./globals.css";
 import "./v2.css";
 import "./glass.css";
+import "./phone.css";
 
 const rubik = localFont({
   src: "../fonts/Rubik-latin.woff2",

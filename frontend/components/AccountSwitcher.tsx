@@ -136,7 +136,7 @@ export function AccountSwitcher() {
   }
 
   const badge = active ? badgeOf(active) : "live";
-  const badgeLabel = badge === "gone" ? "לא זמין" : badge === "read" ? "קריאה" : "פעיל";
+  const badgeLabel = badge === "gone" ? "לא זמין" : badge === "archive" ? "ארכיון" : badge === "read" ? "קריאה" : "פעיל";
   const menu = open && box && mounted ? (
     <div
       className={`acct-pop${reduced ? " still" : ""}`}
@@ -146,7 +146,7 @@ export function AccountSwitcher() {
         {list.map((row, index) => {
           const on = row.id === activeId;
           const kind = badgeOf(row);
-          const label = kind === "gone" ? "לא זמין" : kind === "read" ? "קריאה" : "פעיל";
+          const label = kind === "gone" ? "לא זמין" : kind === "archive" ? "ארכיון" : kind === "read" ? "קריאה" : "פעיל";
           return (
             <button
               key={row.id}

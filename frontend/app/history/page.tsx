@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { readStoredPeriod } from "@/lib/account";
+import { useTradingPeriod } from "@/lib/live";
 import { copy } from "@/lib/copy";
 import { LineNum, Num, StaleNote } from "@/components/live-ui";
 import { signedPct } from "@/lib/format";
@@ -239,7 +242,10 @@ export default function HistoryPage() {
   const [choice, setChoice] = useState<string | null>(null);
   const [menu, setMenu] = useState(false);
 
+  const period = useTradingPeriod();
+
   useEffect(() => {
+    if (readStoredPeriod() === "paper_100k") return;
     let alive = true;
     const load = () => {
       return apiGet<Report>("/api/v1/report/trades?period=all", 30000)
@@ -290,6 +296,14 @@ export default function HistoryPage() {
     setChoice(next);
     setMenu(false);
   };
+
+  if (period === "paper_100k") {
+    return (
+      <Shell>
+        <ArchiveBoard />
+      </Shell>
+    );
+  }
 
   return (
     <Shell>

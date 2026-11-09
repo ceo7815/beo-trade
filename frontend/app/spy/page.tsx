@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { DailyBars, EquityCurve, StrategyBars } from "@/components/charts";
 import { apiGet, poll } from "@/lib/api";
 
 type Point = { t: string; price: string | null; upper: string | null; lower: string | null; vwap: string | null };
@@ -92,28 +93,6 @@ function ZoneChart({ series, markers }: { series: Point[]; markers: Marker[] }) 
   );
 }
 
-function EquityCurve({ days }: { days: Day[] }) {
-  const values = days.map((day) => Number(day.cumulative_pnl)).filter((value) => Number.isFinite(value));
-  if (values.length < 2) return <p className="spy-empty">עקומת ההון תופיע אחרי יום מסחר סגור.</p>;
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 0);
-  const span = max - min || 1;
-  const width = 760;
-  const height = 140;
-  const points = values
-    .map((value, index) => {
-      const x = (index * width) / Math.max(1, values.length - 1);
-      const y = 12 + (1 - (value - min) / span) * (height - 24);
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    })
-    .join(" ");
-  return (
-    <svg className="spy-curve" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="עקומת רווח יומי מצטבר">
-      <polyline points={points} />
-    </svg>
-  );
-}
-
 function SpyScreen() {
   const [status, setStatus] = useState<Status | null>(null);
   const [trades, setTrades] = useState<Trade[]>([]);
@@ -153,12 +132,12 @@ function SpyScreen() {
   const modeLabel = sample ? "דוגמה" : mode === "running" ? "פעיל" : mode === "disabled" ? "כבוי" : mode === "refused" ? "נחסם" : "ממתין";
 
   return (
-    <div className="spy-desk">
+    <div className="spy-desk" id="board">
       {sample ? <p className="spy-sample">נתוני דוגמה — לא מסחר אמיתי ולא פקודות</p> : null}
       <header className="spy-head">
         <div>
-          <p className="spy-kicker">{sample ? "SAMPLE · נתוני דוגמה" : "PAPER · לונג · כמה סימולים"}</p>
-          <h1>מומנטום תוך-יומי</h1>
+          <p className="spy-kicker">{sample ? "SAMPLE · נתוני דוגמה" : "PAPER · QQQ · חשבון אלי"}</p>
+          <h1>מסחר יומי אלי</h1>
         </div>
         <span className={`spy-mode ${sample ? "sample" : mode}`}>{modeLabel}</span>
       </header>
@@ -183,7 +162,7 @@ function SpyScreen() {
         </article>
       </section>
       {(status?.symbols || []).length ? (
-        <section className="spy-symbols">
+        <section className="spy-symbols" id="positions">
           {(status?.symbols || []).map((card) => (
             <article key={card.symbol}>
               <b>{card.symbol}</b>
@@ -217,13 +196,16 @@ function SpyScreen() {
         </aside>
         ) : null}
       </section>
-      <section className="spy-meta">
-        <p>חשבון ••••{status?.account_last4 || "—"} {status?.account_match === false ? "· לא תואם" : ""}</p>
-        <p>כניסות {brakes?.entries_today ?? 0}/{brakes?.entries_max ?? 4}</p>
-        <p>{brakes?.kill ? "Kill פעיל" : brakes?.daily_loss ? "בלם הפסד יומי" : brakes?.drawdown ? "בלם ירידה" : brakes?.pdt_blocked ? "PDT חסם כניסה" : "בלמים פתוחים"}</p>
-        <p>{status?.pdt_guard === false ? "שומר PDT כבוי" : `מונה PDT ${status?.daytrade_count ?? "—"}`}</p>
+      <section className="spy-panel" id="brakes">
+        <h2>בלמים</h2>
+        <div className="spy-meta">
+          <p>חשבון ••••{status?.account_last4 || "—"} {status?.account_match === false ? "· לא תואם" : ""}</p>
+          <p>כניסות {brakes?.entries_today ?? 0}/{brakes?.entries_max ?? 4}</p>
+          <p>{brakes?.kill ? "Kill פעיל" : brakes?.daily_loss ? "בלם הפסד יומי" : brakes?.drawdown ? "בלם ירידה" : brakes?.pdt_blocked ? "PDT חסם כניסה" : "בלמים פתוחים"}</p>
+          <p>{status?.pdt_guard === false ? "שומר PDT כבוי" : `מונה PDT ${status?.daytrade_count ?? "—"}`}</p>
+        </div>
       </section>
-      <section className="spy-panel">
+      <section className="spy-panel" id="trades">
         <h2>עסקאות</h2>
         {trades.length ? (
           <div className="spy-table-wrap">
@@ -260,9 +242,22 @@ function SpyScreen() {
           <p className="spy-empty">עדיין אין עסקאות SPY.</p>
         )}
       </section>
-      <section className="spy-panel">
+      <section className="spy-panel" id="history">
         <h2>הון יומי</h2>
-        <EquityCurve days={days} />
+        <EquityCurve points={days.map((day) => ({ label: day.session_date, value: Number(day.cumulative_pnl) })).filter((point) => Number.isFinite(point.value))} label="עקומת רווח מצטבר" />
+        <DailyBars rows={days.map((day) => ({ label: day.session_date || "", value: Number(day.pnl) })).filter((row) => Number.isFinite(row.value))} />
+        <StrategyBars
+          rows={Object.entries(
+            trades.reduce<Record<string, number>>((acc, trade) => {
+              const pnl = Number(trade.pnl);
+              if (!Number.isFinite(pnl)) return acc;
+              const key = trade.symbol || "אחר";
+              acc[key] = (acc[key] || 0) + pnl;
+              return acc;
+            }, {}),
+          ).map(([label, value]) => ({ label, value }))}
+          label="לפי סימול"
+        />
       </section>
     </div>
   );

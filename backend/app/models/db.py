@@ -50,6 +50,8 @@ def database_ready() -> bool:
 def init_db(settings: Settings) -> None:
     if _engine is None or SessionLocal is None:
         configure_database(settings)
+    import app.archive.tables  # noqa: F401  # register archive tables before create_all
+
     if settings.auto_create_tables:
         Base.metadata.create_all(_engine)
     from app.models.indexes import ensure_read_indexes
