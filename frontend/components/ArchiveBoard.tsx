@@ -85,9 +85,22 @@ export function ArchiveBoard() {
     setRunning(true);
     setNote("");
     try {
-      const body = await apiPost<Summary>("/api/v1/archive/paper_100k/run");
-      const counts = body.counts;
-      setNote(`נשמר. פקודות ${counts?.orders ?? 0}, פעולות ${counts?.activities ?? 0}, ימים ${counts?.days ?? 0}.`);
+      const started = await apiPost<{ detail?: string; run?: { id?: string; finished_at?: string | null } }>("/api/v1/archive/paper_100k/run");
+      const id = started.run?.id;
+      if (started.detail) setNote(started.detail);
+      let done = Boolean(started.run?.finished_at);
+      for (let attempt = 0; attempt < 30 && id && !done; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const next = await apiGet<Summary>("/api/v1/archive/paper_100k/summary");
+        setSummary(next);
+        const last = next.last_run;
+        if (last?.id === id && last.finished_at) {
+          const counts = next.counts;
+          setNote(`נשמר. פקודות ${counts?.orders ?? 0}, פעולות ${counts?.activities ?? 0}, ימים ${counts?.days ?? 0}.`);
+          done = true;
+        }
+      }
+      if (!done) setNote("השמירה רצה ברקע. הרענון יראה את הספירה.");
     } catch (error) {
       setNote(error instanceof Error ? error.message : "השמירה לא הושלמה");
     } finally {

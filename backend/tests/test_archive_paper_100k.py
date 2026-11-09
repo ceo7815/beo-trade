@@ -1,5 +1,6 @@
 """Paper 100K archive: read-only Alpaca copy, idempotent, admin trigger, read key."""
 
+import time
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
@@ -170,8 +171,9 @@ def test_archive_copies_pages_and_is_idempotent(tmp_path, monkeypatch):
         assert fake.activity_calls >= 2
 
         posted = client.post("/api/v1/archive/paper_100k/run", headers=headers)
-        assert posted.status_code == 200, posted.text
-        again = posted.json()["counts"]
+        assert posted.status_code == 202, posted.text
+        assert posted.json()["run"]["id"]
+        again = _wait_archive(client, headers, posted.json()["run"]["id"])["counts"]
         assert again["orders"] == 3
         assert again["activities"] == 3
         assert again["days"] == 3
@@ -237,12 +239,23 @@ def test_missing_keys_archive_local_only_and_do_not_call_alpaca(tmp_path, monkey
     with TestClient(create_app(settings)) as client:
         _seed_journal()
         response = client.post("/api/v1/archive/paper_100k/run", headers={"X-Beo-Key": ADMIN})
-        assert response.status_code == 409
-        body = response.json()
+        assert response.status_code == 202, response.text
+        assert "ALPACA_100K" in response.json()["detail"]
+        body = _wait_archive(client, {"X-Beo-Key": ADMIN}, response.json()["run"]["id"])
         assert body["counts"]["orders"] == 0
         assert body["counts"]["local_rows"] == 2
-        assert body["run"]["status"] == "local_only"
-        assert "ALPACA_100K" in body["detail"]
+        assert body["last_run"]["status"] == "local_only"
+
+
+def _wait_archive(client: TestClient, headers: dict, run_id: str) -> dict:
+    last = {}
+    for _ in range(50):
+        last = client.get("/api/v1/archive/paper_100k/summary", headers=headers).json()
+        row = last.get("last_run") or {}
+        if row.get("id") == run_id and row.get("finished_at"):
+            return last
+        time.sleep(0.05)
+    raise AssertionError(last)
 
 
 def test_reader_refuses_writes():
