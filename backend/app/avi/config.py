@@ -114,6 +114,8 @@ class AviConfig:
     max_contracts: int
     max_debit_pct: Decimal
     db: Path
+    weekend_enabled: bool = False
+    weekend_max_loss_pct: Decimal = Decimal("0.16")
 
     def public(self) -> dict:
         """Safe to log and to return from the API. No key material."""
@@ -127,6 +129,8 @@ class AviConfig:
             "risk_pct": str(self.risk_pct),
             "max_contracts": self.max_contracts,
             "max_debit_pct": str(self.max_debit_pct),
+            "weekend_enabled": self.weekend_enabled,
+            "weekend_max_loss_pct": str(self.weekend_max_loss_pct),
             "paper_only": True,
             "symbol": SYMBOL,
         }
@@ -148,6 +152,8 @@ def load_config() -> AviConfig:
         max_contracts=_count("AVI_MAX_CONTRACTS", 10, 1, 50),
         max_debit_pct=_pct("AVI_MAX_DEBIT_PCT", "0.08"),
         db=db_path(),
+        weekend_enabled=_flag("AVI_WEEKEND_ENABLED", False),
+        weekend_max_loss_pct=_pct("AVI_WEEKEND_MAX_LOSS_PCT", "0.16"),
     )
 
 

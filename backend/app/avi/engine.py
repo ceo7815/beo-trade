@@ -12,6 +12,23 @@ import structlog
 from app.avi.calendar import macro_reason
 from app.avi.config import SYMBOL, AviConfig, account_matches
 from app.avi.store import Store
+from app.avi.weekend import (
+    CANCEL_MINUTE,
+    ENTRY_MINUTE,
+    UNDERLYINGS,
+    WIDTH,
+    close_cost,
+    credit_prices,
+    credit_put_order,
+    hold_action,
+    long_put_strike,
+    pick_short_put,
+    session_facts,
+    strike_window,
+    weekend_contracts,
+    weekend_entry_reason,
+    weekend_limit,
+)
 from app.avi.strategy import (
     WIDTHS,
     Bar,
@@ -117,7 +134,17 @@ class Engine:
         self.broker = broker
         self._vix_source = ""
 
-    def cycle(self, now: datetime, bars: list[Bar], vix: Decimal | None, clock: dict | None, account: dict | None, vix_source: str = "") -> None:
+    def cycle(
+        self,
+        now: datetime,
+        bars: list[Bar],
+        vix: Decimal | None,
+        clock: dict | None,
+        account: dict | None,
+        vix_source: str = "",
+        spots: dict | None = None,
+        calendar: list | None = None,
+    ) -> None:
         self._vix_source = vix_source or ""
         session = as_ny(now).date()
         session_date = session.isoformat()
@@ -136,15 +163,19 @@ class Engine:
             elif not hard_block:
                 self._refresh("entry", now)
                 self._refresh("exit", now)
+                self._refresh("weekend_entry", now)
+                self._refresh("weekend_exit", now)
                 self._latch_week(session, bankroll)
-                if self.store.open_trade() is not None:
+                if self.store.open_trade("trend") is not None:
                     self._manage_exit(now, bars, session)
                 elif self.store.working("entry") is not None:
                     self._chase_entry(now, session_date)
                 else:
                     self._resume_entry(now, session_date)
-                    if matched and self.store.working("entry") is None and self.store.open_trade() is None:
+                    if matched and self.store.working("entry") is None and self.store.open_trade("trend") is None:
                         self._maybe_enter(now, bars, vix, clock, session, bankroll)
+                if self.cfg.weekend_enabled:
+                    self._manage_weekend(now, session, equity if equity is not None else bankroll, spots or {}, calendar or [], matched)
         except Exception as exc:
             log.warning("avi.cycle_failed", error=type(exc).__name__)
         self._write_status(now, session, bankroll, equity, matched, bars, vix)
@@ -193,13 +224,16 @@ class Engine:
         filled = str(live.get("filled_avg_price") or "") or None
         self.store.save_order({**_row(row), "status": status, "filled_avg_price": filled, "broker_order_id": live.get("id") or row["broker_order_id"]})
         if status == "filled":
-            if purpose == "entry":
+            if purpose in {"entry", "weekend_entry"}:
                 self._open_from_fill(row, live, now)
-            else:
+            elif purpose in {"exit", "weekend_exit"}:
                 self._close_from_fill(row, live, now)
 
     def _open_from_fill(self, row, live: dict, now: datetime) -> None:
-        if self.store.open_trade() is not None:
+        mode = "weekend" if str(row["purpose"]).startswith("weekend") else "trend"
+        if mode == "trend" and self.store.open_trade("trend") is not None:
+            return
+        if any(item["long_symbol"] == row["long_symbol"] for item in self.store.open_trades(mode)):
             return
         detail = _detail(row)
         fallback = _dec(row["limit_price"]) or Decimal(0)
@@ -207,7 +241,7 @@ class Engine:
         self.store.insert_trade(
             {
                 "session_date": row["session_date"],
-                "side": row["side"],
+                "side": "credit" if mode == "weekend" else row["side"],
                 "qty": int(row["qty"]),
                 "long_symbol": row["long_symbol"],
                 "short_symbol": row["short_symbol"],
@@ -217,17 +251,28 @@ class Engine:
                 "width": detail.get("width"),
                 "debit": str(debit),
                 "entry_at": now.astimezone(timezone.utc).isoformat(),
+                "mode": mode,
             }
         )
         self.store.set_meta("replace_entry", "")
 
     def _close_from_fill(self, row, live: dict, now: datetime) -> None:
-        trade = self.store.open_trade()
+        mode = "weekend" if str(row["purpose"]).startswith("weekend") else "trend"
+        trade = None
+        for item in self.store.open_trades(mode):
+            if item["long_symbol"] == row["long_symbol"] and item["short_symbol"] == row["short_symbol"]:
+                trade = item
+                break
+        if trade is None:
+            trade = self.store.open_trade(mode)
         if trade is None:
             return
         debit = _dec(trade["debit"]) or Decimal(0)
         credit = abs(_dec(live.get("filled_avg_price")) or _dec(row["limit_price"]) or Decimal(0))
-        pnl = spread_pnl(debit, credit, int(trade["qty"]))
+        if mode == "weekend":
+            pnl = (debit - credit) * Decimal(100) * Decimal(int(trade["qty"]))
+        else:
+            pnl = spread_pnl(debit, credit, int(trade["qty"]))
         reason = _detail(row).get("exit_reason") or "EXIT"
         self.store.close_trade(int(trade["id"]), now.astimezone(timezone.utc).isoformat(), str(credit), str(reason), _text(pnl) or "0")
 
@@ -326,11 +371,15 @@ class Engine:
         self._cancel(row)
 
     def _flatten(self, now: datetime, reason: str) -> None:
-        if self.store.working("entry") is not None:
-            self._cancel(self.store.working("entry"))
-        trade = self.store.open_trade()
-        if trade is not None and self.store.working("exit") is None:
-            self._submit_exit(now, trade, reason, force_natural=True)
+        for purpose in ("entry", "weekend_entry"):
+            for row in self.store.working_all(purpose):
+                self._cancel(row)
+        for mode, purpose in (("trend", "exit"), ("weekend", "weekend_exit")):
+            busy = {(row["long_symbol"], row["short_symbol"]) for row in self.store.working_all(purpose)}
+            for trade in self.store.open_trades(mode):
+                if (trade["long_symbol"], trade["short_symbol"]) in busy:
+                    continue
+                self._submit_exit(now, trade, reason, force_natural=True, purpose=purpose)
 
     def _maybe_enter(self, now: datetime, bars: list[Bar], vix: Decimal | None, clock: dict | None, session, bankroll: Decimal | None) -> None:
         session_date = session.isoformat()
@@ -508,19 +557,21 @@ class Engine:
             }
         )
 
-    def _submit_exit(self, now: datetime, trade, reason: str, force_natural: bool) -> None:
+    def _submit_exit(self, now: datetime, trade, reason: str, force_natural: bool, purpose: str = "exit") -> None:
         quotes = {}
         try:
             quotes = self.broker.quotes([str(trade["long_symbol"]), str(trade["short_symbol"])])
         except Exception as exc:
             log.warning("avi.exit_quote_failed", error=type(exc).__name__)
-        prices = close_prices(quotes.get(str(trade["long_symbol"])), quotes.get(str(trade["short_symbol"])))
+        long_q = quotes.get(str(trade["long_symbol"]))
+        short_q = quotes.get(str(trade["short_symbol"]))
+        prices = close_cost(long_q, short_q) if purpose == "weekend_exit" else close_prices(long_q, short_q)
         if prices is None:
             credit = natural = Decimal("0.01")
         else:
             mid, natural = prices
             credit = natural if force_natural else mid
-        self._place_exit(now, trade, reason, credit, natural, now)
+        self._place_exit(now, trade, reason, credit, natural, now, purpose)
 
     def _resume_exit(self, now: datetime, trade) -> bool:
         raw = self.store.meta("replace_exit") or ""
@@ -541,11 +592,15 @@ class Engine:
         self._place_exit(now, trade, str(payload.get("exit_reason") or "EXIT"), limit, natural, started)
         return True
 
-    def _place_exit(self, now: datetime, trade, reason: str, credit: Decimal, natural: Decimal, started: datetime) -> None:
+    def _place_exit(self, now: datetime, trade, reason: str, credit: Decimal, natural: Decimal, started: datetime, purpose: str = "exit") -> None:
         del now
         attempt = int(self.store.meta("exit_attempt") or "0") + 1
         self.store.set_meta("exit_attempt", str(attempt))
-        client_order_id = f"avi-{str(trade['session_date']).replace('-', '')}-x{attempt}"[:48]
+        stamp = str(trade["session_date"]).replace("-", "")
+        if purpose == "weekend_exit":
+            client_order_id = f"avi-w-{stamp}-{str(trade['long_symbol'])[:3].lower()}-x{attempt}"[:48]
+        else:
+            client_order_id = f"avi-{stamp}-x{attempt}"[:48]
         body = exit_order(str(trade["long_symbol"]), str(trade["short_symbol"]), int(trade["qty"]), credit, client_order_id)
         detail = {"started_at": started.astimezone(timezone.utc).isoformat(), "mid": str(credit), "exit_reason": reason, "attempt": attempt}
         try:
@@ -556,7 +611,7 @@ class Engine:
         self.store.save_order(
             {
                 "client_order_id": client_order_id,
-                "purpose": "exit",
+                "purpose": purpose,
                 "side": trade["side"],
                 "qty": int(trade["qty"]),
                 "limit_price": str(credit),
@@ -631,6 +686,190 @@ class Engine:
                 total += Decimal(str(row["pnl"]))
         return total + unreal
 
+    def _manage_weekend(self, now: datetime, session, equity: Decimal | None, spots: dict, calendar: list, can_enter: bool) -> None:
+        self._chase_weekend(now, session)
+        self._weekend_exits(now, session, spots)
+        minute = as_ny(now).hour * 60 + as_ny(now).minute
+        if not can_enter or self._week_halted(session) or self._kill_requested():
+            return
+        if minute < ENTRY_MINUTE or minute >= CANCEL_MINUTE:
+            return
+        nxt, half, listed = session_facts(session, calendar)
+        reason = weekend_entry_reason(session, nxt, half, listed)
+        if reason:
+            self.store.set_meta(f"weekend_state:{session.isoformat()}", reason)
+            return
+        if equity is None or equity <= 0 or nxt is None:
+            return
+        for symbol in UNDERLYINGS:
+            self._weekend_enter(now, session, nxt, symbol, equity, spots.get(symbol))
+
+    def _chase_weekend(self, now: datetime, session) -> None:
+        minute = as_ny(now).hour * 60 + as_ny(now).minute
+        for row in self.store.working_all("weekend_entry"):
+            detail = _detail(row)
+            started = _parse_time(str(detail.get("started_at") or row["submitted_at"])) or now
+            elapsed = (now - started).total_seconds()
+            mid = _dec(detail.get("mid")) or _dec(row["limit_price"]) or Decimal("0.01")
+            natural = _dec(row["natural_price"]) or mid
+            desired = None if minute >= CANCEL_MINUTE else weekend_limit(mid, natural, elapsed)
+            if desired is None:
+                self._cancel(row)
+                self.store.set_meta(f"weekend_done:{session.isoformat()}:{detail.get('underlying')}", "unfilled")
+                continue
+            current = _dec(row["limit_price"]) or mid
+            if desired >= current or detail.get("canceling"):
+                continue
+            detail["canceling"] = True
+            detail["replace_limit"] = str(desired)
+            self.store.save_order({**_row(row), "detail": json.dumps(detail)})
+            self.store.set_meta(f"weekend_reprice:{detail.get('underlying')}", json.dumps({**detail, "session_date": row["session_date"], "qty": int(row["qty"]), "long_symbol": row["long_symbol"], "short_symbol": row["short_symbol"], "natural": str(natural), "started_at": started.astimezone(timezone.utc).isoformat()}))
+            self._cancel(row)
+        if minute >= CANCEL_MINUTE:
+            return
+        for symbol in UNDERLYINGS:
+            raw = self.store.meta(f"weekend_reprice:{symbol}") or ""
+            if not raw or any(_detail(row).get("underlying") == symbol for row in self.store.working_all("weekend_entry")):
+                continue
+            try:
+                payload = json.loads(raw)
+            except json.JSONDecodeError:
+                self.store.set_meta(f"weekend_reprice:{symbol}", "")
+                continue
+            limit = _dec(payload.get("replace_limit"))
+            natural = _dec(payload.get("natural")) or limit
+            if limit is None or natural is None:
+                self.store.set_meta(f"weekend_reprice:{symbol}", "")
+                continue
+            self.store.set_meta(f"weekend_reprice:{symbol}", "")
+            self._submit_weekend(session.isoformat() if hasattr(session, "isoformat") else str(session), payload, limit, natural, _parse_time(str(payload.get("started_at") or "")) or now, int(payload.get("attempt") or 1) + 1)
+
+    def _weekend_exits(self, now: datetime, session, spots: dict) -> None:
+        minute = as_ny(now).hour * 60 + as_ny(now).minute
+        busy = {(row["long_symbol"], row["short_symbol"]) for row in self.store.working_all("weekend_exit")}
+        for trade in self.store.open_trades("weekend"):
+            if (trade["long_symbol"], trade["short_symbol"]) in busy:
+                continue
+            try:
+                expiry = datetime.fromisoformat(str(trade["expiry"])[:10]).date()
+            except ValueError:
+                continue
+            spot = _dec(spots.get(str(trade["long_symbol"])[:3]))
+            action = hold_action(session, expiry, minute, spot, _dec(trade["short_strike"]) or Decimal(0), _dec(trade["debit"]) or Decimal(0))
+            if action:
+                self._submit_exit(now, trade, action, force_natural=True, purpose="weekend_exit")
+
+    def _weekend_enter(self, now: datetime, session, expiry: date, symbol: str, equity: Decimal, spot: Decimal | None) -> None:
+        if spot is None or self.store.meta(f"weekend_done:{session.isoformat()}:{symbol}"):
+            return
+        if any(str(row["long_symbol"]).startswith(symbol) for row in self.store.open_trades("weekend")):
+            return
+        if any(_detail(row).get("underlying") == symbol for row in self.store.working_all("weekend_entry")):
+            return
+        try:
+            rows = self.broker.contracts("put", expiry.isoformat(), underlying=symbol, expiration_lte=expiry.isoformat())
+        except Exception as exc:
+            log.warning("avi.weekend_chain_failed", error=type(exc).__name__)
+            return
+        book: dict[Decimal, str] = {}
+        for row in rows:
+            try:
+                if str(row.get("expiration_date"))[:10] != expiry.isoformat():
+                    continue
+                book[Decimal(str(row.get("strike_price")))] = str(row.get("symbol") or "")
+            except Exception:
+                continue
+        window = strike_window(spot if isinstance(spot, Decimal) else Decimal(str(spot)), list(book))
+        if not window:
+            self.store.set_meta(f"weekend_done:{session.isoformat()}:{symbol}", "no_strike")
+            return
+        try:
+            quotes = self.broker.quotes([book[strike] for strike in window if book.get(strike)])
+        except Exception as exc:
+            log.warning("avi.weekend_quote_failed", error=type(exc).__name__)
+            return
+        candidates = []
+        for strike in window:
+            quote = quotes.get(book[strike]) or {}
+            delta = _dec(quote.get("delta"))
+            if delta is not None:
+                candidates.append((strike, delta))
+        short = pick_short_put(candidates)
+        wing = None if short is None else long_put_strike(short, list(book))
+        if short is None or wing is None:
+            self.store.set_meta(f"weekend_done:{session.isoformat()}:{symbol}", "no_strike")
+            return
+        if wing not in window:
+            try:
+                extra = self.broker.quotes([book[wing]])
+            except Exception:
+                extra = {}
+            quotes.update(extra)
+        prices = credit_prices(quotes.get(book[short]), quotes.get(book[wing]))
+        if prices is None:
+            self.store.set_meta(f"weekend_done:{session.isoformat()}:{symbol}", "no_quote")
+            return
+        mid, natural = prices
+        qty = weekend_contracts(equity, mid, WIDTH, self.cfg.weekend_max_loss_pct)
+        if qty < 1:
+            log.info("avi.weekend_skip", symbol=symbol, reason="loss_cap")
+            self.store.set_meta(f"weekend_done:{session.isoformat()}:{symbol}", "loss_cap")
+            return
+        payload = {
+            "underlying": symbol,
+            "long_symbol": book[wing],
+            "short_symbol": book[short],
+            "long_strike": str(wing),
+            "short_strike": str(short),
+            "expiry": expiry.isoformat(),
+            "width": str(WIDTH),
+            "qty": qty,
+            "mid": str(mid),
+            "side": "credit",
+        }
+        if self._submit_weekend(session.isoformat(), payload, mid, natural, now, 1):
+            self.store.set_meta(f"weekend_state:{session.isoformat()}", "entered")
+            self.store.set_meta(f"weekend_done:{session.isoformat()}:{symbol}", "entered")
+
+    def _submit_weekend(self, session_date: str, payload: dict, limit: Decimal, natural: Decimal, started: datetime, attempt: int) -> None:
+        symbol = str(payload.get("underlying") or "qqq").lower()
+        client_order_id = f"avi-w-{session_date.replace('-', '')}-{symbol}-e{attempt}"[:48]
+        body = credit_put_order(str(payload["short_symbol"]), str(payload["long_symbol"]), int(payload["qty"]), limit, client_order_id)
+        detail = {
+            "started_at": started.astimezone(timezone.utc).isoformat(),
+            "mid": str(payload.get("mid") or limit),
+            "width": payload.get("width"),
+            "expiry": payload.get("expiry"),
+            "long_strike": payload.get("long_strike"),
+            "short_strike": payload.get("short_strike"),
+            "underlying": payload.get("underlying"),
+            "attempt": attempt,
+        }
+        try:
+            live = self.broker.submit(body)
+        except Exception as exc:
+            log.warning("avi.weekend_rejected", error=type(exc).__name__)
+            self.store.set_meta(f"weekend_done:{session_date}:{payload.get('underlying')}", "rejected")
+            return False
+        self.store.save_order(
+            {
+                "client_order_id": client_order_id,
+                "purpose": "weekend_entry",
+                "side": "credit",
+                "qty": int(payload["qty"]),
+                "limit_price": str(limit),
+                "natural_price": str(natural),
+                "status": str(live.get("status") or "new"),
+                "broker_order_id": live.get("id"),
+                "long_symbol": payload["long_symbol"],
+                "short_symbol": payload["short_symbol"],
+                "session_date": session_date,
+                "submitted_at": started.astimezone(timezone.utc).isoformat(),
+                "detail": json.dumps(detail),
+            }
+        )
+        return True
+
     def _write_status(self, now: datetime, session, bankroll: Decimal | None, equity: Decimal | None, matched: bool, bars: list[Bar], vix: Decimal | None) -> None:
         session_date = session.isoformat()
         signal = self.store.latest_signal(session_date)
@@ -685,6 +924,23 @@ class Engine:
             "equity": _text(equity),
             "vix": _text(vix, "0.01"),
             "vix_source": self._vix_source or None,
+            "weekend": {
+                "enabled": self.cfg.weekend_enabled,
+                "max_loss_pct": str(self.cfg.weekend_max_loss_pct),
+                "state": self.store.meta(f"weekend_state:{session_date}") or "none",
+                "positions": [
+                    {
+                        "symbol": str(trade["long_symbol"])[:3],
+                        "qty": int(trade["qty"]),
+                        "credit": trade["debit"],
+                        "short_strike": trade["short_strike"],
+                        "long_strike": trade["long_strike"],
+                        "expiry": trade["expiry"],
+                        "mode": "weekend",
+                    }
+                    for trade in self.store.open_trades("weekend")
+                ],
+            },
             "brakes": {
                 "kill": killed,
                 "weekly": self._week_halted(session),

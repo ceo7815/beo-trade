@@ -94,8 +94,8 @@ class AviBroker:
         raise BrokerError(redact(str(payload.get("message") or response.status_code), self.cfg))
 
     def minute_bars(self, symbol: str, start: str, end: str) -> list[dict]:
-        if symbol != SYMBOL:
-            raise BrokerError("bars are QQQ only")
+        if symbol not in {"QQQ", "SPY"}:
+            raise BrokerError("bars are QQQ or SPY only")
         for feed in ("iex", "sip"):
             rows: list[dict] = []
             token = ""
@@ -125,17 +125,25 @@ class AviBroker:
                 return rows
         return []
 
-    def contracts(self, right: str, expiration_gte: str) -> list[dict]:
-        if right not in {"call", "put"}:
+    def calendar(self, start: str, end: str) -> list[dict]:
+        response = self._trade.get("/v2/calendar", params={"start": start, "end": end})
+        self._note(response, "/v2/calendar")
+        if response.status_code >= 400:
+            raise BrokerError(f"calendar {response.status_code}")
+        body = response.json()
+        return [row for row in body if isinstance(row, dict)] if isinstance(body, list) else []
+
+    def contracts(self, right: str, expiration_gte: str, underlying: str = SYMBOL, expiration_lte: str | None = None) -> list[dict]:
+        if right not in {"call", "put"} or underlying not in {"QQQ", "SPY"}:
             raise BrokerError("right refused")
         rows: list[dict] = []
         token = ""
         for _ in range(6):
             params = {
-                "underlying_symbols": SYMBOL,
+                "underlying_symbols": underlying,
                 "status": "active",
                 "expiration_date_gte": expiration_gte,
-                "expiration_date_lte": _window_end(expiration_gte),
+                "expiration_date_lte": expiration_lte or _window_end(expiration_gte),
                 "type": right,
                 "limit": 1000,
             }
@@ -147,7 +155,7 @@ class AviBroker:
                 raise BrokerError(f"contracts {response.status_code}")
             body = response.json()
             for row in body.get("option_contracts") or []:
-                if isinstance(row, dict) and str(row.get("underlying_symbol") or SYMBOL) == SYMBOL:
+                if isinstance(row, dict) and str(row.get("underlying_symbol") or underlying) == underlying:
                     rows.append(row)
             token = str(body.get("next_page_token") or "")
             if not token:
@@ -219,12 +227,16 @@ class AviBroker:
             raise BrokerError("width refused")
         if long[0] == "C" and not (short[1] > long[1]):
             raise BrokerError("call wing refused")
-        if long[0] == "P" and not (short[1] < long[1]):
+        if long[0] == "P" and short[1] < long[1]:
+            return
+        if long[0] == "P" and short[1] - long[1] == Decimal("5"):
+            return
+        if long[0] == "P":
             raise BrokerError("put wing refused")
 
 
 def _parse_occ(symbol: str) -> tuple[str, Decimal] | None:
-    if not symbol.startswith(SYMBOL) or len(symbol) != 18:
+    if symbol[:3] not in {"QQQ", "SPY"} or len(symbol) != 18:
         return None
     right = symbol[9]
     if right not in {"C", "P"}:
@@ -246,7 +258,11 @@ def _option_quote(snap: object) -> dict | None:
     ask = quote.get("ap", quote.get("ask"))
     if bid in {None, ""} or ask in {None, ""}:
         return None
-    return {"bid": str(bid), "ask": str(ask)}
+    quote = {"bid": str(bid), "ask": str(ask)}
+    greeks = snap.get("greeks") or {}
+    if isinstance(greeks, dict) and greeks.get("delta") not in {None, ""}:
+        quote["delta"] = str(greeks["delta"])
+    return quote
 
 
 def _window_end(expiration_gte: str) -> str:
