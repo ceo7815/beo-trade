@@ -17,6 +17,7 @@ type Position = {
   expiry?: string | null;
   legs?: Leg[];
 };
+type WeekendPos = { symbol?: string; qty?: number; credit?: string | null; short_strike?: string | null; long_strike?: string | null; expiry?: string | null };
 type Status = {
   enabled?: boolean;
   mode?: string;
@@ -31,11 +32,13 @@ type Status = {
   day_pnl?: string | null;
   week_pnl?: string | null;
   bankroll?: string | null;
+  weekend?: { enabled?: boolean; state?: string; max_loss_pct?: string; positions?: WeekendPos[] };
   brakes?: { kill?: boolean; weekly?: boolean; daily?: boolean; entries_today?: number; entries_max?: number; account?: boolean };
 };
 type Trade = {
   session_date?: string;
   side?: string;
+  mode?: string;
   qty?: number;
   long_symbol?: string;
   short_symbol?: string;
@@ -139,6 +142,17 @@ function AviScreen() {
             <span key={`${leg.side}-${leg.symbol}`}>{leg.side === "short" ? "שורט" : "לונג"} {leg.symbol}</span>
           ))}
         </article>
+        <article id="weekend">
+          <b>סוף שבוע</b>
+          <span>{status?.weekend?.enabled ? "פעיל" : "כבוי"} · {status?.weekend?.state || "אין"}</span>
+          {(status?.weekend?.positions || []).length ? (
+            (status?.weekend?.positions || []).map((item) => (
+              <span key={item.symbol}>{item.symbol} {item.qty} · אשראי {item.credit || "—"} · {item.short_strike}/{item.long_strike}</span>
+            ))
+          ) : (
+            <span>אין ספרד אשראי פתוח</span>
+          )}
+        </article>
         <article id="brakes">
           <b>בלמים</b>
           <span>בנק {cash(status?.bankroll)}</span>
@@ -155,6 +169,7 @@ function AviScreen() {
               <thead>
                 <tr>
                   <th>יום</th>
+                  <th>מצב</th>
                   <th>כיוון</th>
                   <th>כמות</th>
                   <th>רגליים</th>
@@ -168,7 +183,8 @@ function AviScreen() {
                 {trades.slice(0, 30).map((trade, index) => (
                   <tr key={`${trade.session_date}-${index}`}>
                     <td>{trade.session_date}</td>
-                    <td>{trade.side === "down" ? "ירידה" : "עלייה"}</td>
+                    <td>{trade.mode === "weekend" ? "סופ״ש" : "מגמה"}</td>
+                    <td>{trade.mode === "weekend" ? "אשראי" : trade.side === "down" ? "ירידה" : "עלייה"}</td>
                     <td>{trade.qty}</td>
                     <td>{trade.long_symbol} / {trade.short_symbol}</td>
                     <td>{trade.debit || "—"}</td>

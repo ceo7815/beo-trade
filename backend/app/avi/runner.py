@@ -11,6 +11,7 @@ import structlog
 
 from app.avi.broker import AviBroker
 from app.avi.config import SYMBOL, AviConfig, load_config, startup_mode
+from app.spy.clock import NY
 from app.avi.engine import Engine, bars_from_rows, write_idle_status
 from app.avi.store import Store
 from app.avi.vix import read_vix
@@ -36,19 +37,19 @@ def _lock(path):
     return handle
 
 
-def _sync(broker: AviBroker, store: Store, now: datetime) -> list:
-    latest = store.latest_bar_start(SYMBOL)
+def _sync(broker: AviBroker, store: Store, now: datetime, symbol: str = SYMBOL) -> list:
+    latest = store.latest_bar_start(symbol)
     start = latest or (now - timedelta(days=40)).astimezone(timezone.utc).isoformat()
     try:
-        rows = broker.minute_bars(SYMBOL, start, now.astimezone(timezone.utc).isoformat())
+        rows = broker.minute_bars(symbol, start, now.astimezone(timezone.utc).isoformat())
     except Exception as exc:
         log.warning("avi.bars_failed", error=type(exc).__name__)
         rows = []
     if rows:
         store.upsert_bars(
             [
-                (
-                    SYMBOL,
+                    (
+                    symbol,
                     str(row.get("t")),
                     str(row.get("o")),
                     str(row.get("h")),
@@ -62,7 +63,7 @@ def _sync(broker: AviBroker, store: Store, now: datetime) -> list:
         )
     stored = [
         {"t": row["start"], "o": row["open"], "h": row["high"], "l": row["low"], "c": row["close"], "v": row["volume"]}
-        for row in store.bars(SYMBOL)
+        for row in store.bars(symbol)
     ]
     return bars_from_rows(stored)
 
@@ -96,7 +97,18 @@ def run(cfg: AviConfig | None = None) -> None:
                 except Exception:
                     vix, vix_source = None, ""
                 bars = _sync(broker, store, now)
-                engine.cycle(now, bars, vix, clock, account, vix_source=vix_source)
+                spots = {"QQQ": bars[-1].close} if bars else {}
+                schedule: list = []
+                if current.weekend_enabled:
+                    spy_bars = _sync(broker, store, now, "SPY")
+                    if spy_bars:
+                        spots["SPY"] = spy_bars[-1].close
+                    local = now.astimezone(NY).date()
+                    try:
+                        schedule = broker.calendar((local - timedelta(days=1)).isoformat(), (local + timedelta(days=10)).isoformat())
+                    except Exception as exc:
+                        log.warning("avi.calendar_failed", error=type(exc).__name__)
+                engine.cycle(now, bars, vix, clock, account, vix_source=vix_source, spots=spots, calendar=schedule)
             except Exception as exc:
                 log.warning("avi.cycle_failed", error=type(exc).__name__)
                 try:

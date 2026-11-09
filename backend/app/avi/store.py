@@ -75,7 +75,8 @@ CREATE TABLE IF NOT EXISTS avi_trades (
   exit_reason TEXT,
   pnl TEXT,
   current_value TEXT,
-  status TEXT NOT NULL
+  status TEXT NOT NULL,
+  mode TEXT NOT NULL DEFAULT 'trend'
 );
 """
 
@@ -107,6 +108,9 @@ class Store:
         columns = {row[1] for row in self._conn.execute("PRAGMA table_info(avi_signals)")}
         if "vix_source" not in columns:
             self._conn.execute("ALTER TABLE avi_signals ADD COLUMN vix_source TEXT")
+        trade_columns = {row[1] for row in self._conn.execute("PRAGMA table_info(avi_trades)")}
+        if "mode" not in trade_columns:
+            self._conn.execute("ALTER TABLE avi_trades ADD COLUMN mode TEXT NOT NULL DEFAULT 'trend'")
 
     def close(self) -> None:
         self._conn.close()
@@ -232,16 +236,27 @@ class Store:
             (purpose, *WORKING),
         ).fetchone()
 
-    def open_trade(self) -> sqlite3.Row | None:
-        return self._conn.execute("SELECT * FROM avi_trades WHERE status = 'open' ORDER BY id DESC LIMIT 1").fetchone()
+    def open_trade(self, mode: str = "trend") -> sqlite3.Row | None:
+        return self._conn.execute(
+            "SELECT * FROM avi_trades WHERE status = 'open' AND COALESCE(mode, 'trend') = ? ORDER BY id DESC LIMIT 1",
+            (mode,),
+        ).fetchone()
+
+    def open_trades(self, mode: str) -> list[sqlite3.Row]:
+        return list(
+            self._conn.execute(
+                "SELECT * FROM avi_trades WHERE status = 'open' AND COALESCE(mode, 'trend') = ? ORDER BY id",
+                (mode,),
+            )
+        )
 
     def insert_trade(self, row: dict) -> int:
         cur = self._conn.execute(
             """
             INSERT INTO avi_trades(
               session_date, side, qty, long_symbol, short_symbol, long_strike, short_strike,
-              expiry, width, debit, entry_at, current_value, status
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open')
+              expiry, width, debit, entry_at, current_value, status, mode
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'open', ?)
             """,
             (
                 row["session_date"],
@@ -256,6 +271,7 @@ class Store:
                 row.get("debit"),
                 row.get("entry_at"),
                 row.get("current_value"),
+                row.get("mode") or "trend",
             ),
         )
         return int(cur.lastrowid)
@@ -273,9 +289,21 @@ class Store:
     def update_mark(self, trade_id: int, value: str) -> None:
         self._conn.execute("UPDATE avi_trades SET current_value = ? WHERE id = ?", (value, trade_id))
 
-    def trade_count(self, session_date: str) -> int:
-        row = self._conn.execute("SELECT COUNT(*) AS n FROM avi_trades WHERE session_date = ?", (session_date,)).fetchone()
+    def trade_count(self, session_date: str, mode: str = "trend") -> int:
+        row = self._conn.execute(
+            "SELECT COUNT(*) AS n FROM avi_trades WHERE session_date = ? AND COALESCE(mode, 'trend') = ?",
+            (session_date, mode),
+        ).fetchone()
         return int(row["n"] if row else 0)
+
+    def working_all(self, purpose: str) -> list[sqlite3.Row]:
+        marks = ",".join("?" for _ in WORKING)
+        return list(
+            self._conn.execute(
+                f"SELECT * FROM avi_orders WHERE purpose = ? AND status IN ({marks}) ORDER BY id",
+                (purpose, *WORKING),
+            )
+        )
 
     def trades(self, limit: int = 200) -> list[sqlite3.Row]:
         return list(self._conn.execute("SELECT * FROM avi_trades ORDER BY id DESC LIMIT ?", (limit,)))
