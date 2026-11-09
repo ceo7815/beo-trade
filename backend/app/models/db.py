@@ -52,6 +52,13 @@ def init_db(settings: Settings) -> None:
         configure_database(settings)
     if settings.auto_create_tables:
         Base.metadata.create_all(_engine)
+    # The shadow log is additive. Create it even when the rest of the schema is managed outside create_all.
+    try:
+        from app.models.tables import ShadowRuleEval
+
+        ShadowRuleEval.__table__.create(_engine, checkfirst=True)
+    except Exception:
+        pass
     from app.models.indexes import ensure_read_indexes
 
     ensure_read_indexes(_engine)

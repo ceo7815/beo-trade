@@ -99,6 +99,9 @@ class TradingConfig:
     entry_pace_max_entries: int = 2
     entry_pace_opposite_block_minutes: int = 30
     entry_rules_version: str = "v10.29-pacing"
+    # Log-only. Candidate entry filters are recorded and never applied.
+    # Set false to stop the shadow rows. Entries, exits, brakes, and size stay the same either way.
+    shadow_entry_rules_enabled: bool = True
     # Account day P&L, including open marks. The first step arms 2,000 at 4,000.
     # From 7,000 the floor rises 1,000 per extra 1,000 of peak, through 15,000 / 11,000.
     day_floor_arm: int = 4000

@@ -36,6 +36,7 @@ READ_PATHS = (
     "/api/v1/learning/trades",
     "/api/v1/learning/path",
     "/api/v1/learning/lab",
+    "/api/v1/shadow/entry-rules",
     "/api/v1/ai/summary",
     "/api/v1/audit",
     "/api/v1/policy",
