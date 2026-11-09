@@ -17,7 +17,8 @@ export function activePeriodId(stored: string, currentId: string): string {
   return !stored || stored === "current" ? currentId : stored;
 }
 
-export function badgeOf(row: { read_only?: boolean; trading?: boolean }): "read" | "live" {
+export function badgeOf(row: { read_only?: boolean; trading?: boolean; retired?: boolean; view_mode?: string }): "read" | "live" | "gone" {
+  if (row.retired || row.view_mode === "unavailable") return "gone";
   if (row.read_only || row.trading === false) return "read";
   return "live";
 }

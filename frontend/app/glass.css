@@ -74,14 +74,25 @@ body {
   padding: 0 12px;
   font-size: 13px;
 }
+.header-picks {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 10px;
+}
 .instrument .account-switch {
   flex: none;
   width: 210px;
   min-width: 180px;
   align-self: center;
-  margin-inline: 8px;
+  margin-inline: 0;
+}
+.instrument .account-switch.desk-account {
+  width: 248px;
 }
 .clock-line { gap: 8px; }
+.clock-line b { white-space: nowrap; }
 .clock-city { color: var(--silver); font-size: 13px; font-weight: 600; white-space: nowrap; }
 
 .ops-pane,
@@ -255,6 +266,80 @@ body {
   border-color: transparent;
   background: linear-gradient(180deg, #f3d7a4, #d7b36a);
   color: #1c1508;
+}
+.acct-badge.gone {
+  border-color: rgba(255, 93, 108, 0.45);
+  color: #ffb4bc;
+}
+
+.spy-desk { display: flex; flex-direction: column; gap: 16px; }
+.spy-head, .spy-stats, .spy-layout, .spy-meta { display: flex; gap: 12px; align-items: center; }
+.spy-head { justify-content: space-between; }
+.spy-head h1 { margin: 0; font-size: 28px; }
+.spy-kicker { margin: 0 0 4px; color: var(--silver); font-size: 12px; letter-spacing: 0.08em; }
+.spy-mode, .spy-panel, .spy-shadow, .spy-stats article {
+  border: 1px solid rgba(228, 194, 122, 0.38);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03) 36%, rgba(255, 255, 255, 0.015)), var(--glass);
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.34);
+  backdrop-filter: blur(16px);
+}
+.spy-mode { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }
+.spy-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.spy-stats article, .spy-shadow { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 18px; }
+.spy-stats span, .spy-shadow span, .spy-shadow p { color: var(--silver); font-size: 12px; }
+.spy-stats b, .spy-shadow strong { font-size: 22px; font-variant-numeric: tabular-nums; }
+.spy-layout { align-items: stretch; }
+.spy-panel { flex: 1; min-width: 0; padding: 14px; border-radius: 22px; }
+.spy-panel h2 { margin: 0 0 10px; font-size: 16px; }
+.spy-shadow { width: 220px; flex: none; justify-content: center; }
+.spy-shadow b { color: var(--gold); letter-spacing: 0.04em; }
+.spy-chart, .spy-curve { width: 100%; height: auto; }
+.spy-chart .price { fill: none; stroke: #f7f2e8; stroke-width: 2; }
+.spy-chart .band { fill: none; stroke: #e4c27a; stroke-width: 1.4; stroke-dasharray: 4 4; }
+.spy-chart .vwap { fill: none; stroke: #d5d8e0; stroke-width: 1.4; }
+.spy-chart .entry { fill: #3ddc84; }
+.spy-chart .exit { fill: #ff5d6c; }
+.spy-curve polyline { fill: none; stroke: #e4c27a; stroke-width: 2; }
+.spy-legend { display: flex; flex-wrap: wrap; gap: 10px 14px; margin-bottom: 8px; color: var(--silver); font-size: 12px; }
+.spy-legend i { display: inline-block; width: 14px; height: 3px; margin-inline-end: 6px; vertical-align: middle; border-radius: 99px; }
+.spy-legend .price { background: #f7f2e8; }
+.spy-legend .band { background: #e4c27a; }
+.spy-legend .vwap { background: #d5d8e0; }
+.spy-legend .entry { background: #3ddc84; height: 8px; width: 8px; border-radius: 50%; }
+.spy-legend .exit { background: #ff5d6c; height: 8px; width: 8px; border-radius: 50%; }
+.spy-meta { flex-wrap: wrap; color: var(--silver); font-size: 13px; }
+.spy-meta p { margin: 0; }
+.spy-note, .spy-empty { color: var(--silver); }
+.spy-sample {
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid rgba(228, 194, 122, 0.7);
+  border-radius: 14px;
+  background: rgba(228, 194, 122, 0.16);
+  color: #f3d7a4;
+  font-weight: 700;
+}
+.spy-mode.sample { color: #1c1508; background: linear-gradient(180deg, #f3d7a4, #d7b36a); }
+.spy-table-wrap { overflow-x: auto; }
+.spy-desk table { width: 100%; border-collapse: collapse; }
+.spy-desk th, .spy-desk td {
+  padding: 8px 10px;
+  text-align: start;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.spy-desk .up { color: #3ddc84; }
+.spy-desk .down { color: #ff5d6c; }
+@media (max-width: 980px) {
+  .header-picks, .mobile-title .account-switch { width: 100%; }
+  .spy-stats, .spy-layout { display: grid; grid-template-columns: 1fr 1fr; }
+  .spy-layout { grid-template-columns: 1fr; }
+  .spy-shadow { width: auto; }
+  .spy-head h1 { font-size: 20px; margin: 0; }
+  .spy-stats article { padding: 10px 12px; }
+  .spy-stats b { font-size: 18px; }
+  .spy-chart { height: 132px; }
+  .spy-shadow { padding: 10px 12px; }
 }
 .acct-chevron { flex: none; color: var(--silver); transition: transform 0.2s ease; }
 .account-switch.open .acct-chevron { transform: rotate(180deg); }

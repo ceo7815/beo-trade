@@ -413,13 +413,32 @@ def register(app: FastAPI, settings: Settings) -> None:
     def trading_periods(authorization: str | None = Header(default=None)):
         from app.main import user_id_from_header
         from app.analytics.periods import public_periods
-        from app.broker.accounts import has_view_keys
+        from app.broker.accounts import has_view_keys, is_retired, view_broker_reachable
+        from app.analytics.periods import resolve_period
 
         user_id_from_header(settings, authorization)
         body = {"environment": "PAPER", **public_periods()}
         for row in body.get("periods") or []:
-            row["has_view_keys"] = has_view_keys(settings, row.get("id"))
-            row["view_mode"] = "broker" if row["has_view_keys"] else "db_history"
+            period = resolve_period(row.get("id"))
+            retired = is_retired(period)
+            row["retired"] = retired
+            row["has_view_keys"] = False if retired else has_view_keys(settings, row.get("id"))
+            if retired:
+                row["broker_available"] = False
+                row["view_mode"] = "unavailable"
+                row["unavailable_reason"] = "account_deleted"
+            elif row.get("trading") and not row.get("read_only"):
+                row["broker_available"] = True
+                row["view_mode"] = "broker"
+            elif row["has_view_keys"]:
+                reachable = view_broker_reachable(settings, row.get("id"))
+                row["broker_available"] = reachable
+                row["view_mode"] = "broker" if reachable else "unavailable"
+                if not reachable:
+                    row["unavailable_reason"] = "credentials"
+            else:
+                row["broker_available"] = False
+                row["view_mode"] = "db_history"
         return body
 
     @app.get("/api/v1/trading-rules")
@@ -468,18 +487,19 @@ def register(app: FastAPI, settings: Settings) -> None:
         session_open = False
         broker_source = "trading"
         try:
-            from app.broker.accounts import open_view_broker, has_view_keys, period_is_trading
+            from app.broker.accounts import open_view_broker, period_read_source
             from app.broker.runtime import open_paper_broker as _open_trading
 
-            if period_is_trading(trading_period):
+            source = period_read_source(settings, trading_period)
+            if source == "trading":
                 adapter = _open_trading(settings)
                 broker_source = "trading"
-            elif has_view_keys(settings, trading_period):
+            elif source == "view":
                 adapter = open_view_broker(settings, trading_period)
-                broker_source = "view_100k"
+                broker_source = "view"
             else:
                 adapter = None
-                broker_source = "db_fallback"
+                broker_source = "unavailable"
             if adapter is None:
                 raise RuntimeError("no view broker")
             try:

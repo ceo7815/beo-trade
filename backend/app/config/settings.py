@@ -283,8 +283,8 @@ class Settings(BaseSettings):
     alpaca_api_key: str = ""
     alpaca_api_secret: str = ""
     alpaca_base_url: str = ""
-    # Read-only keys for viewing the legacy 100K paper account while the 10K account trades.
-    # Env: ALPACA_100K_API_KEY / ALPACA_100K_API_SECRET. Never required for trading.
+    # Optional read-only keys for the legacy 100K view. Never used to submit orders.
+    # A failure here does not stop the options worker. Env: ALPACA_100K_API_KEY / ALPACA_100K_API_SECRET.
     alpaca_100k_api_key: str = ""
     alpaca_100k_api_secret: str = ""
     # Shared account/positions/orders/clock snapshot. broker_snapshot_ttl() clamps this to 5–10s.

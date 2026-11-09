@@ -768,6 +768,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
     from app.analytics.routes import register as register_analytics
 
     register_analytics(app, current)
+    try:
+        from app.spy.api import register as register_spy
+
+        register_spy(app)
+    except Exception as exc:
+        log.warning("spy.routes_unavailable", error=type(exc).__name__)
     return app
 
 

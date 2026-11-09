@@ -114,6 +114,51 @@ services:
       retries: 8
       start_period: 40s
 
+  spy:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.spy.runner"]
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+      PYTHONUNBUFFERED: "1"
+      SPY_ENGINE_ENABLED: ${SPY_ENGINE_ENABLED:-false}
+      SPY_ALPACA_KEY_ID: ${SPY_ALPACA_KEY_ID:-}
+      SPY_ALPACA_SECRET_KEY: ${SPY_ALPACA_SECRET_KEY:-}
+      SPY_ALPACA_ACCOUNT: ${SPY_ALPACA_ACCOUNT:-PA3YUE43D}
+      SPY_ALPACA_BASE_URL: ${SPY_ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      SPY_DATA_URL: ${SPY_DATA_URL:-https://data.alpaca.markets}
+      SPY_PDT_GUARD: ${SPY_PDT_GUARD:-true}
+      SPY_ALLOW_SHORT: ${SPY_ALLOW_SHORT:-false}
+      SPY_SHADOW_SYMBOLS: ${SPY_SHADOW_SYMBOLS:-QQQ}
+    volumes:
+      - beo_data:/app/data
+    networks:
+      - beo
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    memswap_limit: 512m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; p=Path('/app/data/spy_heartbeat.txt'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
   theta:
     image: beo-trade-theta
     build:

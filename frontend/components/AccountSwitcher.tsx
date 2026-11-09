@@ -12,7 +12,7 @@ type PeriodsBody = { current_id?: string; periods?: TradingPeriodRow[] };
 
 const FALLBACK: TradingPeriodRow[] = [
   { id: "paper_100k", label: "פייפר 100K", read_only: true, trading: false },
-  { id: "paper_10k_ils", label: "פייפר 10K ₪", read_only: true, trading: false },
+  { id: "paper_10k_ils", label: "פייפר 10K ₪", read_only: true, trading: false, retired: true, view_mode: "unavailable" },
   { id: "paper_20k_ils", label: "פייפר 20K ₪", trading: true, read_only: false },
 ];
 
@@ -135,6 +135,7 @@ export function AccountSwitcher() {
   }
 
   const badge = active ? badgeOf(active) : "live";
+  const badgeLabel = badge === "gone" ? "לא זמין" : badge === "read" ? "קריאה" : "פעיל";
   const menu = open && box && mounted ? (
     <div
       className={`acct-pop${reduced ? " still" : ""}`}
@@ -144,6 +145,7 @@ export function AccountSwitcher() {
         {list.map((row, index) => {
           const on = row.id === activeId;
           const kind = badgeOf(row);
+          const label = kind === "gone" ? "לא זמין" : kind === "read" ? "קריאה" : "פעיל";
           return (
             <button
               key={row.id}
@@ -157,11 +159,12 @@ export function AccountSwitcher() {
               onMouseEnter={() => setCursor(index)}
             >
               <span>{row.label}</span>
-              <i className={`acct-badge ${kind}`}>{kind === "read" ? "קריאה" : "פעיל"}</i>
+              <i className={`acct-badge ${kind}`}>{label}</i>
             </button>
           );
         })}
       </div>
+      {badge === "gone" ? <p className="acct-hint">החשבון לא זמין בברוקר. היסטוריה שמורה בלבד, בלי קריאה חיה.</p> : null}
       {badge === "read" ? <p className="acct-hint">תצוגת קריאה — בלי פקודות</p> : null}
       <Link href="/settings/rules" className="acct-rules" onClick={() => setOpen(false)}>
         חוקי מסחר
@@ -182,7 +185,7 @@ export function AccountSwitcher() {
         onKeyDown={onButtonKey}
       >
         <span className="acct-name">{active?.label || "חשבון"}</span>
-        <i className={`acct-badge ${badge}`}>{badge === "read" ? "קריאה" : "פעיל"}</i>
+        <i className={`acct-badge ${badge}`}>{badgeLabel}</i>
         <svg className="acct-chevron" viewBox="0 0 12 12" width="12" height="12" aria-hidden="true">
           <path d="M2.5 4.5 6 8l3.5-3.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
         </svg>

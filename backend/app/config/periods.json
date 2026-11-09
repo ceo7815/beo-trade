@@ -22,7 +22,8 @@
       "alpaca_account_id": "",
       "alpaca_account_number": "PA3LU0NE5",
       "trading": false,
-      "read_only": false,
+      "read_only": true,
+      "retired": true,
       "alpaca_account_name": "beo 10K ILS"
     },
     {

@@ -25,6 +25,8 @@ test("read-only views badge as קריאה and the trading account as פעיל", 
   assert.equal(badgeOf({ read_only: true, trading: false }), "read");
   assert.equal(badgeOf({ read_only: false, trading: false }), "read");
   assert.equal(badgeOf({ read_only: false, trading: true }), "live");
+  assert.equal(badgeOf({ retired: true, trading: false }), "gone");
+  assert.equal(badgeOf({ view_mode: "unavailable", trading: false }), "gone");
 });
 
 test("the history day figure is one line, not a grid of characters", () => {

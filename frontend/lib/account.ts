@@ -11,6 +11,9 @@ export type TradingPeriodRow = {
   read_only?: boolean;
   has_view_keys?: boolean;
   view_mode?: string;
+  broker_available?: boolean;
+  retired?: boolean;
+  unavailable_reason?: string;
   alpaca_account_name?: string | null;
 };
 
