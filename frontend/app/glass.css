@@ -74,14 +74,25 @@ body {
   padding: 0 12px;
   font-size: 13px;
 }
+.header-picks {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding-inline: 10px;
+}
 .instrument .account-switch {
   flex: none;
   width: 210px;
   min-width: 180px;
   align-self: center;
-  margin-inline: 8px;
+  margin-inline: 0;
+}
+.instrument .account-switch.desk-account {
+  width: 248px;
 }
 .clock-line { gap: 8px; }
+.clock-line b { white-space: nowrap; }
 .clock-city { color: var(--silver); font-size: 13px; font-weight: 600; white-space: nowrap; }
 
 .ops-pane,
@@ -261,33 +272,6 @@ body {
   color: #ffb4bc;
 }
 
-.desk-switch {
-  display: inline-flex;
-  gap: 4px;
-  align-self: center;
-  padding: 4px;
-  border: 1px solid var(--glass-line);
-  border-radius: 999px;
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.12), rgba(255, 255, 255, 0.03));
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22);
-}
-.desk-switch a {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 36px;
-  padding: 0 12px;
-  border-radius: 999px;
-  color: var(--silver);
-  font-size: 13px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.desk-switch a.on {
-  color: #1c1508;
-  background: linear-gradient(180deg, #f3d7a4, #d7b36a);
-}
-
 .spy-desk { display: flex; flex-direction: column; gap: 16px; }
 .spy-head, .spy-stats, .spy-layout, .spy-meta { display: flex; gap: 12px; align-items: center; }
 .spy-head { justify-content: space-between; }
@@ -347,8 +331,7 @@ body {
 .spy-desk .up { color: #3ddc84; }
 .spy-desk .down { color: #ff5d6c; }
 @media (max-width: 980px) {
-  .desk-switch { width: 100%; }
-  .desk-switch a { flex: 1; }
+  .header-picks, .mobile-title .account-switch { width: 100%; }
   .spy-stats, .spy-layout { display: grid; grid-template-columns: 1fr 1fr; }
   .spy-layout { grid-template-columns: 1fr; }
   .spy-shadow { width: auto; }

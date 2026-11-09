@@ -416,13 +416,13 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
         <div className="stage">
           <header className="mobile-bar">
             <div className="mobile-title">
+              <DeskSwitcher />
               <b>{title}</b>
               <span>
                 <i className={`dot ${link}`} />
                 {phase}
                 <MobileClock />
               </span>
-              <DeskSwitcher />
               {spyDesk ? null : <AccountSwitcher />}
             </div>
             {spyDesk ? null : (
@@ -438,6 +438,10 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             )}
           </header>
           <header className="instrument">
+            <div className="header-picks">
+              <DeskSwitcher />
+              {spyDesk ? null : <AccountSwitcher />}
+            </div>
             <div className="bar-item clock-line">
               <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>
               <span className="clock-city">{copy.shell.market}</span>
@@ -447,8 +451,6 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             </div>
             <Clock timeZone="America/New_York" label={copy.shell.ny} />
             <Clock timeZone="Asia/Dubai" label={copy.shell.dubai} />
-            <DeskSwitcher />
-            {spyDesk ? null : <AccountSwitcher />}
             <div className="bar-actions">
               {spyDesk ? null : (
               <button
