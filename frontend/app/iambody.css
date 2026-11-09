@@ -1,240 +1,119 @@
-/* Signed-in canvas from the i-am-body console.
-   Warm gray, white floating sheets, forest actions.
-   The gold/silver logo stays. Red is only a loss or an alert.
-   Login keeps the previous dark sheet. */
-
-body:has(.desk) {
-  color-scheme: light;
-  background:
-    linear-gradient(rgba(29, 67, 51, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(29, 67, 51, 0.045) 1px, transparent 1px),
-    #f4f4f2;
-  background-size: 28px 28px, 28px 28px, auto;
-  color: #1a1a1a;
-}
-
-body:has(.desk) .aura {
-  height: 520px;
-  opacity: 0.9;
-  background: radial-gradient(42% 60% at 88% -10%, rgba(29, 67, 51, 0.18), transparent 70%);
-  animation: forest-wash 18s ease-in-out infinite alternate;
-}
-
-@keyframes forest-wash {
-  from { transform: translate3d(0, 0, 0); }
-  to { transform: translate3d(-3%, 2%, 0); }
-}
+/* Dark techno-glass skin on the mobile structure.
+   The signed-in desk stays on the original night canvas.
+   Gold is the active accent. Green and red stay on P&L.
+   Login is unchanged. */
 
 .desk {
-  --bg: #f4f4f2;
-  --surface: #ffffff;
-  --surface-2: #f7f6f3;
-  --surface-3: #eeeee9;
-  --panel: #ffffff;
-  --line: rgba(29, 67, 51, 0.12);
-  --line-2: rgba(29, 67, 51, 0.18);
-  --text: #1a1a1a;
-  --text-2: #5c5c56;
-  --text-3: #8a8a82;
-  --muted: #6b6b66;
-  --accent: #1d4333;
-  --accent-soft: rgba(29, 67, 51, 0.1);
-  --up: #1f7a4d;
-  --up-soft: rgba(31, 122, 77, 0.12);
-  --down: #c4382f;
-  --down-soft: rgba(196, 56, 47, 0.1);
-  --gold: #b8923e;
-  --gold-soft: rgba(184, 146, 62, 0.14);
-  --glass: #ffffff;
-  --glass-line: rgba(29, 67, 51, 0.12);
-  --silver: #8d8d86;
-  --shadow-float: 0 1px 0 rgba(255, 255, 255, 0.9) inset, 0 12px 28px -18px rgba(28, 28, 27, 0.2);
-  --chart-ink: #1d4333;
-  --chart-fill: #1d4333;
-  --chart-ink-2: #8d8d86;
-  --chart-grid: rgba(29, 67, 51, 0.08);
-  --chart-tick: #6b6b66;
-  --chart-tick-2: #8a8a82;
-  --chart-cursor: rgba(29, 67, 51, 0.35);
-  --chart-line: rgba(29, 67, 51, 0.12);
-  --chart-paper: #ffffff;
-  --forest: #1d4333;
-  color: var(--text);
+  --chart-ink: #e7c98a;
+  --chart-fill: #e7c98a;
+  --chart-ink-2: #d5d8e0;
+  --chart-grid: rgba(228, 194, 122, 0.14);
+  --chart-tick: #b3a794;
+  --chart-cursor: rgba(231, 201, 138, 0.45);
+  --chart-line: rgba(228, 194, 122, 0.28);
+  --chart-paper: rgba(12, 14, 18, 0.94);
+  --up-bar: #3ddc84;
+  --down-bar: #ff5d6c;
 }
 
-.desk h1,
-.desk h2 {
-  font-weight: 600;
-  letter-spacing: -0.02em;
-}
-
-.desk .rail,
-.desk .instrument,
-.desk .mobile-bar,
-.desk .system-bar,
-.desk .tabbar,
-.desk .ops-pane,
-.desk .panel,
-.desk .int-card,
-.desk .live-card,
+.desk .beo-chart-card,
 .desk .spy-panel,
 .desk .spy-stats article,
-.desk .beo-chart-card,
 .desk .archive-empty,
-.desk .avi-grid article,
-.desk .metric,
-.desk .engine-cube,
-.desk .engine-stage {
-  background: #fff;
-  border-color: rgba(29, 67, 51, 0.12);
-  color: var(--text);
-  box-shadow: var(--shadow-float);
+.desk .avi-grid article {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(12, 14, 18, 0.72);
+  border: 1px solid rgba(228, 194, 122, 0.28);
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.22), 0 18px 40px -24px rgba(0, 0, 0, 0.85);
+  color: var(--text, #f7f2e8);
 }
 
 .desk .system-bar {
   background: transparent;
   border-bottom: 0;
   box-shadow: none;
-  backdrop-filter: none;
 }
 
 .desk .system-switch {
-  border: 1px solid rgba(29, 67, 51, 0.12);
-  border-radius: 18px;
-  background: #fff;
-  box-shadow: var(--shadow-float);
+  border: 1px solid rgba(228, 194, 122, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(10, 12, 16, 0.72);
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.28), 0 16px 36px -20px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(18px);
 }
 
-.desk .system-switch button {
-  color: var(--text-2);
-  border-radius: 14px;
+.desk .system-switch button.on {
+  color: #1c1508;
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  box-shadow: 0 8px 18px -12px rgba(215, 179, 106, 0.9);
 }
 
-.desk .system-switch button small { color: var(--text-3); }
+.desk .system-switch button.on small { color: #4a3b1d; }
 
-.desk .system-switch button.on,
-.desk .tabbar .tab.on,
-.desk .choice.on,
-.desk .nav-link.active {
-  background: rgba(29, 67, 51, 0.12);
-  color: #1d4333;
-  box-shadow: none;
-}
-
-.desk .system-switch button.on small,
-.desk .tabbar .tab.on svg { color: #1d4333; }
-
-.desk .nav-link.active { box-shadow: inset -3px 0 0 #1d4333; }
-
-.desk .tabbar,
 body:has(.desk) .tabbar-dock .tabbar {
-  border: 1px solid rgba(29, 67, 51, 0.12);
+  border: 1px solid rgba(228, 194, 122, 0.42);
   border-radius: 22px;
-  background: #fff;
-  color: #1a1a1a;
-  box-shadow: 0 12px 28px -16px rgba(28, 28, 27, 0.22);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(10, 12, 16, 0.78);
+  color: #f7f2e8;
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.3), 0 18px 40px -12px rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
 }
 
-body:has(.desk) .tabbar .tab {
-  color: #5c5c56;
-}
+body:has(.desk) .tabbar .tab { color: #d5d8e0; }
 
 body:has(.desk) .tabbar .tab.on,
 body:has(.desk) .tab.on {
-  background: rgba(29, 67, 51, 0.12);
-  color: #1d4333;
+  color: #1c1508;
+  background: linear-gradient(180deg, #f3d7a4, #d7b36a);
 }
 
 body:has(.desk) .tabbar .tab.on svg,
-body:has(.desk) .tab.on svg { color: #1d4333; }
-
-.desk .ops-pip,
-.desk .ticker {
-  background: #fff;
-  color: var(--text-2);
-  border-color: rgba(29, 67, 51, 0.12);
-}
-
-.desk .flow-switch button.on {
-  background: rgba(29, 67, 51, 0.12);
-  color: #1d4333;
-}
+body:has(.desk) .tab.on svg { color: #1c1508; }
 
 .desk .archive-badge {
-  background: #f3e6c8;
-  color: #6a4e12;
-  border: 1px solid rgba(184, 146, 62, 0.45);
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  color: #1c1508;
+  border: 0;
 }
 
 .desk .archive-badge.wait {
-  background: rgba(29, 67, 51, 0.08);
-  color: #1d4333;
-  border-color: rgba(29, 67, 51, 0.16);
+  background: rgba(228, 194, 122, 0.14);
+  color: #f3d7a4;
+  border: 1px solid rgba(228, 194, 122, 0.45);
 }
 
 .desk .archive-save {
-  background: #1d4333;
-  color: #f7f6f3;
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  color: #1c1508;
 }
 
 .desk .archive-save.ghost {
   background: transparent;
-  color: #1d4333;
-  border: 1px solid rgba(29, 67, 51, 0.28);
+  color: #f3d7a4;
+  border: 1px solid rgba(228, 194, 122, 0.45);
 }
-
-.desk .beo-chart-card {
-  border: 1px solid rgba(29, 67, 51, 0.1);
-  background: #fff;
-}
-
-.desk .beo-chart-card figcaption,
-.desk .chart-empty,
-.desk .archive-note,
-.desk .spy-kicker { color: var(--text-2); }
-
-.desk .beo-chart-card figcaption b { color: var(--text); }
 
 .beo-chart-frame { width: 100%; height: 168px; }
 .beo-chart-frame.tall { height: 220px; }
-.beo-spark { width: 100%; height: 46px; }
+.beo-spark { width: 100%; height: 64px; }
 
 .desk button:active,
 .desk .nav-link:active,
 .desk .tab:active,
 .desk .acct-trigger:active,
-.desk .choice:active {
+.desk .choice:active,
+body:has(.desk) .tab:active {
   transform: scale(0.97);
   transition-duration: 160ms;
 }
 
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .desk .ops-pane,
-  .desk .beo-chart-card,
-  .desk .live-card,
-  .desk .spy-panel,
-  .desk .panel {
-    transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 180ms ease;
-  }
-  .desk .ops-pane:hover,
-  .desk .beo-chart-card:hover,
-  .desk .live-card:hover,
-  .desk .panel:hover {
-    transform: translateY(-2px);
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  body:has(.desk) .aura { animation: none; }
   .desk button:active,
-  .desk .nav-link:active,
-  .desk .tab:active { transform: none; }
-}
-
-@media (max-width: 980px) {
-  .desk .mobile-bar {
-    top: 64px;
-    background: rgba(255, 255, 255, 0.92);
-    backdrop-filter: blur(16px);
-  }
+  .desk .tab:active,
+  body:has(.desk) .tab:active { transform: none; }
 }

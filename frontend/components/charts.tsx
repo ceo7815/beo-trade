@@ -8,11 +8,11 @@ export type BarPoint = { label: string; value: number };
 
 const tip = {
   borderRadius: 12,
-  border: "1px solid var(--chart-line, rgba(29, 67, 51, 0.12))",
-  background: "var(--chart-paper, #fff)",
-  color: "var(--chart-ink, #1a1a1a)",
+  border: "1px solid var(--chart-line, rgba(228, 194, 122, 0.28))",
+  background: "var(--chart-paper, rgba(12, 14, 18, 0.94))",
+  color: "#f7f2e8",
   fontSize: 12,
-  boxShadow: "0 8px 24px rgb(28 28 27 / 8%)",
+  boxShadow: "0 8px 24px rgb(0 0 0 / 45%)",
 };
 
 function money(value: number) {
@@ -57,15 +57,15 @@ export function EquityCurve({ points, label = "עקומת הון" }: { points: C
         <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id={rawId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.42} />
-              <stop offset="100%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.04} />
+              <stop offset="0%" stopColor="var(--chart-fill, #e7c98a)" stopOpacity={0.42} />
+              <stop offset="100%" stopColor="var(--chart-fill, #e7c98a)" stopOpacity={0.02} />
             </linearGradient>
           </defs>
-          <CartesianGrid stroke="var(--chart-grid, rgba(29,67,51,0.08))" vertical={false} />
-          <XAxis dataKey="label" tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
-          <YAxis tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
-          <Tooltip cursor={{ stroke: "var(--chart-cursor, rgba(29,67,51,0.35))", strokeDasharray: "3 3" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
-          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #1d4333)" strokeWidth={2} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out" />
+          <CartesianGrid stroke="var(--chart-grid, rgba(228,194,122,0.14))" vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: "var(--chart-tick, #b3a794)", fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+          <YAxis tick={{ fill: "var(--chart-tick, #b3a794)", fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
+          <Tooltip cursor={{ stroke: "var(--chart-cursor, rgba(231,201,138,0.45))", strokeDasharray: "3 3" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
+          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #e7c98a)" strokeWidth={2} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out" />
         </ComposedChart>
       </ResponsiveContainer>
     </Frame>
@@ -83,11 +83,11 @@ export function SparkChart({ points, label = "ניצוץ" }: { points: number[];
         <ComposedChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
           <defs>
             <linearGradient id={rawId} x1="0" y1="0" x2="0" y2="1">
-              <stop offset="0%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.35} />
-              <stop offset="100%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0} />
+              <stop offset="0%" stopColor="var(--chart-fill, #e7c98a)" stopOpacity={0.4} />
+              <stop offset="100%" stopColor="var(--chart-fill, #e7c98a)" stopOpacity={0} />
             </linearGradient>
           </defs>
-          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #1d4333)" strokeWidth={1.6} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={700} animationEasing="ease-out" />
+          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #e7c98a)" strokeWidth={1.6} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={700} animationEasing="ease-out" />
         </ComposedChart>
       </ResponsiveContainer>
     </div>
@@ -102,13 +102,13 @@ export function DailyBars({ rows, label = "רווח והפסד יומי" }: { ro
     <Frame label={label} aside={`${shown.length} ימים`}>
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={shown} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
-          <CartesianGrid stroke="var(--chart-grid, rgba(29,67,51,0.08))" vertical={false} />
+          <CartesianGrid stroke="var(--chart-grid, rgba(228,194,122,0.14))" vertical={false} />
           <XAxis dataKey="label" hide />
-          <YAxis tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
-          <Tooltip cursor={{ fill: "rgba(29, 67, 51, 0.06)" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
+          <YAxis tick={{ fill: "var(--chart-tick, #b3a794)", fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+          <Tooltip cursor={{ fill: "rgba(231, 201, 138, 0.08)" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
           <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out">
             {shown.map((row) => (
-              <Cell key={row.label} fill={row.value < 0 ? "var(--down, #c4382f)" : "var(--chart-fill, #1d4333)"} />
+              <Cell key={row.label} fill={row.value < 0 ? "var(--down-bar, #ff5d6c)" : "var(--up-bar, #3ddc84)"} />
             ))}
           </Bar>
         </ComposedChart>
@@ -129,11 +129,11 @@ export function StrategyBars({ rows, label = "לפי אסטרטגיה" }: { rows
       <ResponsiveContainer width="100%" height="100%">
         <ComposedChart data={shown} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
           <XAxis type="number" hide />
-          <YAxis type="category" dataKey="label" width={72} tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 12 }} axisLine={false} tickLine={false} />
+          <YAxis type="category" dataKey="label" width={72} tick={{ fill: "var(--chart-tick, #b3a794)", fontSize: 12 }} axisLine={false} tickLine={false} />
           <Tooltip contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
           <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out">
             {shown.map((row) => (
-              <Cell key={row.label} fill={row.value < 0 ? "var(--down, #c4382f)" : "var(--chart-fill, #1d4333)"} />
+              <Cell key={row.label} fill={row.value < 0 ? "var(--down-bar, #ff5d6c)" : "var(--up-bar, #3ddc84)"} />
             ))}
           </Bar>
         </ComposedChart>
