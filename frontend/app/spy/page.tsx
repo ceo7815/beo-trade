@@ -10,6 +10,7 @@ type Shadow = { symbol: string; side?: string | null; qty?: number; entry_price?
 type Status = {
   enabled?: boolean;
   mode?: string;
+  sample?: boolean;
   account_last4?: string;
   account_match?: boolean;
   stale?: boolean;
@@ -136,16 +137,19 @@ function SpyScreen() {
   const position = status?.position;
   const left = status?.day_trades_left;
   const mode = status?.mode || (status?.enabled ? "running" : "disabled");
+  const sample = status?.sample === true || mode === "sample";
   const shadow = status?.shadow?.[0];
+  const modeLabel = sample ? "דוגמה" : mode === "running" ? "פעיל" : mode === "disabled" ? "כבוי" : mode === "refused" ? "נחסם" : "ממתין";
 
   return (
     <div className="spy-desk">
+      {sample ? <p className="spy-sample">נתוני דוגמה — לא מסחר אמיתי ולא פקודות</p> : null}
       <header className="spy-head">
         <div>
-          <p className="spy-kicker">PAPER · SPY בלבד · לונג</p>
+          <p className="spy-kicker">{sample ? "SAMPLE · נתוני דוגמה" : "PAPER · SPY בלבד · לונג"}</p>
           <h1>מומנטום תוך-יומי</h1>
         </div>
-        <span className={`spy-mode ${mode}`}>{mode === "running" ? "פעיל" : mode === "disabled" ? "כבוי" : mode === "refused" ? "נחסם" : "ממתין"}</span>
+        <span className={`spy-mode ${sample ? "sample" : mode}`}>{modeLabel}</span>
       </header>
       {failed ? <p className="spy-note">הקריאה האחרונה נכשלה. המסך שומר את מה שכבר נטען.</p> : null}
       {status?.stale ? <p className="spy-note">פעימת המנוע ישנה. בודקים שהשירות spy רץ.</p> : null}
