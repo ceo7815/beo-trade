@@ -226,6 +226,10 @@ def register(app: FastAPI, settings: Settings) -> None:
         from app.analytics.read_cache import FINANCE_TTL_SECONDS, read_cache
 
         user_id_from_header(settings, authorization)
+        from app.archive.readback import archived_finance, is_paper_100k
+
+        if is_paper_100k(trading_period):
+            return archived_finance()
         cache_key = ("finance", window, side, outcome, symbol, dte, start, end, exit_reason, hour, trading_period)
         cached = read_cache.get(cache_key)
         if cached is not None:
@@ -430,6 +434,9 @@ def register(app: FastAPI, settings: Settings) -> None:
             elif row.get("trading") and not row.get("read_only"):
                 row["broker_available"] = True
                 row["view_mode"] = "broker"
+            elif row.get("id") == "paper_100k":
+                row["broker_available"] = False
+                row["view_mode"] = "archive"
             elif row["has_view_keys"]:
                 reachable = view_broker_reachable(settings, row.get("id"))
                 row["broker_available"] = reachable
@@ -480,6 +487,10 @@ def register(app: FastAPI, settings: Settings) -> None:
         return collect_day_floor_snapshot()
 
     def _risk_body(settings, trading_period: str = "current") -> dict:
+        from app.archive.readback import archived_risk, is_paper_100k
+
+        if is_paper_100k(trading_period):
+            return archived_risk()
         trading = settings.trading()
         account = None
         positions = None
@@ -702,6 +713,10 @@ def register(app: FastAPI, settings: Settings) -> None:
         )
 
     def _trades_report(period: str, start: str, end: str, trading_period: str = "current") -> dict:
+        from app.archive.readback import archived_trade_report, is_paper_100k
+
+        if is_paper_100k(trading_period) or (period or "") == "paper_100k":
+            return archived_trade_report(settings, "all" if period == "paper_100k" else period, start, end)
         frame = window(period, start, end, zone=settings.exchange_timezone)
         try:
             adapter = open_paper_broker(settings)
