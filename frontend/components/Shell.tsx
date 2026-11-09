@@ -10,6 +10,7 @@ import { copy } from "@/lib/copy";
 import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
 import { AccountSwitcher } from "@/components/AccountSwitcher";
+import { DeskSwitcher } from "@/components/DeskSwitcher";
 import { Heartbeat, LiveMark, Ticker, Toasts } from "@/components/live-ui";
 import { LiveProvider, useLive } from "@/lib/live";
 
@@ -46,6 +47,7 @@ const WARM: Record<string, string[]> = {
   "/learning": ["/api/v1/learning/trades?period=all"],
   "/finance": ["/api/v1/finance"],
   "/risk": ["/api/v1/risk"],
+  "/spy": ["/api/v1/spy/status", "/api/v1/spy/trades", "/api/v1/spy/daily"],
 };
 
 const icons = {
@@ -161,6 +163,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
 
 function ShellFrame({ children }: { children: React.ReactNode }) {
   const path = usePathname();
+  const spyDesk = path.startsWith("/spy");
   const live = useLive();
   const reduce = useReducedMotion();
   const [query, setQuery] = useState("");
@@ -232,10 +235,15 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   }, [status, live.snap]);
 
   useEffect(() => {
+    if (spyDesk) {
+      document.body.classList.remove("red");
+      document.body.style.setProperty("--mood", "0.5");
+      return;
+    }
     const pnl = num(live.snap?.day?.display_pnl ?? live.snap?.day?.pnl ?? live.snap?.day?.mark_pnl);
     document.body.classList.toggle("red", pnl !== null && pnl < 0);
     document.body.style.setProperty("--mood", pnl === null ? "0.5" : String(Math.max(-1, Math.min(1, pnl / 2500))));
-  }, [live.snap]);
+  }, [live.snap, spyDesk]);
 
   async function toggleTrading() {
     const next = !halted;
@@ -280,6 +288,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       title: "מערכת",
       items: [
         { href: "/", label: "לוח ראשי", icon: icons.desk },
+        { href: "/spy", label: "SPY תוך-יומי", icon: icons.performance },
         { href: "/engine", label: "המערכת האוטונומית", icon: icons.scan },
         { href: "/positions", label: "פוזיציות פתוחות", icon: icons.positions },
         { href: "/history", label: "היסטוריית עסקאות", icon: icons.history },
@@ -329,7 +338,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     { href: "/decisions", label: "החלטות", icon: icons.decisions },
   ];
   const inTabs = tabs.some((tab) => active(tab.href));
-  const title = groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
+  const title = spyDesk ? "SPY תוך-יומי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
 
   useEffect(() => {
@@ -396,11 +405,13 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
               </div>
             ))}
           </nav>
+          {spyDesk ? null : (
           <div className="sheet-actions">
             <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
               {closing ? copy.shell.closing : copy.shell.closeAllLong}
             </button>
           </div>
+          )}
         </aside>
         <div className="stage">
           <header className="mobile-bar">
@@ -411,8 +422,10 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 {phase}
                 <MobileClock />
               </span>
-              <AccountSwitcher />
+              <DeskSwitcher />
+              {spyDesk ? null : <AccountSwitcher />}
             </div>
+            {spyDesk ? null : (
             <button
               type="button"
               className={`mobile-halt ${halted ? "halted" : ""}`}
@@ -422,6 +435,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             >
               {switching ? copy.shell.halting : halted ? copy.shell.halted : copy.shell.halt}
             </button>
+            )}
           </header>
           <header className="instrument">
             <div className="bar-item clock-line">
@@ -433,8 +447,10 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             </div>
             <Clock timeZone="America/New_York" label={copy.shell.ny} />
             <Clock timeZone="Asia/Dubai" label={copy.shell.dubai} />
-            <AccountSwitcher />
+            <DeskSwitcher />
+            {spyDesk ? null : <AccountSwitcher />}
             <div className="bar-actions">
+              {spyDesk ? null : (
               <button
                 type="button"
                 className={`halt-btn ${halted ? "halted" : "stop"}`}
@@ -444,12 +460,15 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
               >
                 {switching ? copy.shell.halting : halted ? copy.shell.resume : copy.shell.halt}
               </button>
+              )}
               <button type="button" className="halt-btn ghost" onClick={() => setFinder((open) => !open)}>
                 {copy.shell.search}
               </button>
+              {spyDesk ? null : (
               <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
                 {closing ? copy.shell.closing : copy.shell.closeAll}
               </button>
+              )}
               <button
                 type="button"
                 className="halt-btn run"

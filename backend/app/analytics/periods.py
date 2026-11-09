@@ -31,6 +31,7 @@ class TradingPeriod:
     trading: bool = True
     read_only: bool = False
     alpaca_account_name: str = ""
+    retired: bool = False
 
     def contains_day(self, day: date) -> bool:
         if day < self.start:
@@ -59,6 +60,7 @@ def load_periods(path: Path | None = None) -> list[TradingPeriod]:
                 trading=bool(item.get("trading", item.get("id") == raw.get("current_id"))),
                 read_only=bool(item.get("read_only", False)),
                 alpaca_account_name=str(item.get("alpaca_account_name") or "").strip(),
+                retired=bool(item.get("retired", False)),
             )
         )
     return rows
@@ -106,6 +108,7 @@ def public_periods(path: Path | None = None) -> dict:
                 "alpaca_account_name": row.alpaca_account_name or None,
                 "trading": row.trading,
                 "read_only": row.read_only,
+                "retired": row.retired,
                 "is_current": row.id == current,
             }
             for row in load_periods(path)

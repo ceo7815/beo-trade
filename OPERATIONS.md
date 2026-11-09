@@ -8,7 +8,8 @@
 
 פעימות:
 
-- `/app/data/worker_heartbeat.txt` בכל סיבוב
+- `/app/data/worker_heartbeat.txt` בכל סיבוב של מנוע האופציות
+- `/app/data/spy_heartbeat.txt` בכל סיבוב של מנוע SPY (שירות `spy`). המנוע כבוי כל עוד `SPY_ENGINE_ENABLED` אינו true.
 - `monitor_heartbeat.txt` אחרי מוניטור
 - `reconcile_heartbeat.txt` אחרי התאמה
 
@@ -17,6 +18,8 @@
 ## עצירה
 
 `SIGTERM` מפסיק כניסות חדשות, מריץ עוד מחזור מוניטור אחד, ויוצא. הפקודות שכבר נשלחו לא נשלחות שוב. מצב הפוזיציה נשאר במסד על ה-volume. עצירת כניסות מהממשק (`trading_halt.txt`) לא מכבה מכירה, סטופ, טריילינג, סגירת סשן, פקיעה, או סגירת הכל.
+
+מנוע SPY נעצר בנפרד. קובץ `spy_kill.flag` על ה-volume (או `SPY_KILL_SWITCH=true`) סוגר את פוזיציית SPY וחוסם כניסות SPY. הוא לא שולח פקודות אופציות.
 
 ## כשל ספק
 
