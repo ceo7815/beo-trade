@@ -143,6 +143,11 @@ entry_pace_window_minutes = 5
 entry_pace_max_entries = 2
 entry_pace_opposite_block_minutes = 30
 entry_rules_version = "v10.29-pacing"
+# Shadow log only. Records what stack_confirm, stack_window, open_loser_same_dir,
+# day_loss_pause, and setup_history would have done. No entry is blocked, delayed,
+# resized, or altered. Exits, brakes, the kill, and size do not read this flag.
+# Set false to stop writing shadow_rule_eval. Read the rows at GET /api/v1/shadow/entry-rules.
+shadow_entry_rules_enabled = true
 # Unscaled 100K ladder. On 20k_ils each step is multiplied by
 # (locked session-open equity / day_floor_deploy_reference_usd). The floor never falls.
 # Touching the active floor (the higher of this ladder and the 40% day trail) sells everything.

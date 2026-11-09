@@ -132,6 +132,8 @@ entry_pace_window_minutes = 5
 entry_pace_max_entries = 2
 entry_pace_opposite_block_minutes = 30
 entry_rules_version = "v10.29-pacing"
+# Shadow log only. Does not block, delay, resize, or alter any order. Set false to stop the log.
+shadow_entry_rules_enabled = true
 # Account day P&L, including open marks. 4,000 arms a floor of 2,000 and that floor holds through 6,999.
 # From 7,000 each extra 1,000 of peak lifts the floor by 1,000, through 15,000 which locks 11,000.
 # The floor never falls. Touching it sells everything and blocks new buys.

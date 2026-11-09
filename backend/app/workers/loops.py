@@ -1074,11 +1074,56 @@ def _is_timeout(exc: BaseException) -> bool:
     return any(cls.__name__ in _TIMEOUT_NAMES for cls in type(exc).__mro__)
 
 
+def _shadow_entry(
+    settings: Settings,
+    row,
+    *,
+    enabled: bool,
+    outcome: str,
+    block_reason: str,
+    moment: datetime,
+    positions: list | None = None,
+    day_pnl: Decimal | None = None,
+    open_equity: object = None,
+    spot=None,
+    order_id: str = "",
+    scan_entries: list | None = None,
+) -> None:
+    """Record a counterfactual. Failures and the disabled flag return without touching the order."""
+    try:
+        if not enabled:
+            return
+        from app.positions.shadow_log import note_entry_shadow, snapshot_from_entry
+
+        note_entry_shadow(
+            snapshot_from_entry(
+                row,
+                outcome=outcome,
+                block_reason=block_reason,
+                moment=moment,
+                positions=positions,
+                day_pnl=day_pnl,
+                open_equity=open_equity,
+                spot=spot,
+                order_id=order_id,
+                scan_entries=scan_entries,
+                enabled=True,
+            )
+        )
+    except Exception:
+        return
+
+
 def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetime, outcomes: list[dict] | None = None) -> None:
     buys = [row for row in recommendations if getattr(row.decision, "value", row.decision) == "BUY"]
     if not buys:
         return
     outcomes = [] if outcomes is None else outcomes
+    shadow_on = False
+    try:
+        shadow_on = bool(settings.trading().shadow_entry_rules_enabled)
+    except Exception:
+        shadow_on = False
     import structlog
 
     log = structlog.get_logger()
@@ -1099,6 +1144,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         _flush_logs()
         for row in buys:
             outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+            _shadow_entry(settings, row, enabled=shadow_on, outcome="blocked", block_reason=reason, moment=moment)
             with session_scope() as session:
                 record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", reason, row.recommendation_id)
                 session.commit()
@@ -1298,6 +1344,29 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             entries=0 if pace_book is None else len(pace_book.entries),
             losses=0 if pace_book is None else len(pace_book.losses),
         )
+        scan_entries: list[dict] = []
+
+        def shadow(row, outcome: str, reason: str = "", order_id: str = "") -> None:
+            # Log only. A failure here must not skip the order bookkeeping below the call.
+            try:
+                spot = spots.get(row.underlying) if isinstance(spots, dict) else None
+                _shadow_entry(
+                    settings,
+                    row,
+                    enabled=shadow_on,
+                    outcome=outcome,
+                    block_reason=reason,
+                    moment=moment,
+                    positions=limit_positions,
+                    day_pnl=measured,
+                    open_equity=None if account is None else account.get("last_equity"),
+                    spot=spot,
+                    order_id=order_id,
+                    scan_entries=list(scan_entries),
+                )
+            except Exception:
+                return
+
         for row in buys:
             side = row.call_put.value
             if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
@@ -1307,6 +1376,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "OPENING_CAP", row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CAP"})
+                shadow(row, "blocked", "OPENING_CAP")
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CAP")
                 continue
             if opening_call_blocked(side, moment, trading.opening_call_block_until_minutes):
@@ -1316,6 +1386,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "OPENING_CALL_BLOCK", row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "OPENING_CALL_BLOCK"})
+                shadow(row, "blocked", "OPENING_CALL_BLOCK")
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="OPENING_CALL_BLOCK")
                 continue
             spot = spots.get(row.underlying) if isinstance(spots, dict) else None
@@ -1334,6 +1405,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", stretch, row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": stretch})
+                shadow(row, "blocked", stretch)
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=stretch)
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
@@ -1343,6 +1415,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", "DIRECTION_CONCENTRATION", row.recommendation_id)
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": "DIRECTION_CONCENTRATION"})
+                shadow(row, "blocked", "DIRECTION_CONCENTRATION")
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason="DIRECTION_CONCENTRATION")
                 continue
             if trading.entry_pace_enabled:
@@ -1354,6 +1427,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", pace_reason, row.recommendation_id)
                         session.commit()
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": pace_reason})
+                    shadow(row, "blocked", pace_reason)
                     _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=pace_reason)
                     continue
             bucket = sector_key(row.underlying)
@@ -1400,6 +1474,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     )
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+                shadow(row, "blocked", reason)
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=reason)
                 continue
             _submit_step(log, "row_gate", symbol=row.option_symbol, result="ready", quantity=int(decision.quantity))
@@ -1459,6 +1534,18 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                         quotes,
                     )
                     outcomes.append({"symbol": row.option_symbol, "result": "submitted", "reason": ""})
+                    duplicate = isinstance(placed, dict) and bool(placed.get("duplicate"))
+                    order_payload = placed.get("order") if isinstance(placed, dict) else None
+                    order_id = ""
+                    if isinstance(order_payload, dict):
+                        order_id = str(order_payload.get("broker_order_id") or "")
+                    if not order_id and isinstance(placed, dict):
+                        order_id = str(placed.get("trade_id") or "")
+                    if duplicate:
+                        shadow(row, "blocked", "duplicate", order_id)
+                    else:
+                        shadow(row, "submitted", "", order_id)
+                        scan_entries.append({"at": moment.isoformat(), "side": side, "symbol": row.option_symbol})
                     _submit_step(log, "place_order_done", symbol=row.option_symbol, result="submitted")
                     same_side[side] = same_side.get(side, 0) + 1
                     if opening_taken is not None:
@@ -1471,6 +1558,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     log_failure("worker.scan_caught", exc, service="worker", where="place_order")
                     reason = f"SUBMIT_TIMEOUT: {type(exc).__name__}" if _is_timeout(exc) else str(exc)[:300]
                     outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": reason})
+                    shadow(row, "blocked", reason)
                     _submit_step(log, "place_order_done", symbol=row.option_symbol, result="blocked", reason=reason[:120])
                 session.commit()
     finally:

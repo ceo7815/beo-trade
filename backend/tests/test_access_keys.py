@@ -14,6 +14,7 @@ CLOSED_ROUTES = (
     ("GET", "/api/v1/system"),
     ("GET", "/api/v1/report/trades"),
     ("GET", "/api/v1/learning/trades"),
+    ("GET", "/api/v1/shadow/entry-rules"),
     ("GET", "/metrics"),
     ("POST", "/api/v1/control/close-all"),
     ("POST", "/api/v1/control/trading"),
@@ -75,6 +76,7 @@ def test_the_read_key_reads_the_allowed_pages_and_nothing_else(tmp_path, monkeyp
             assert client.get("/api/v1/desk", headers=headers).status_code == 200
             assert client.get("/api/v1/report/trades", headers=headers).status_code == 200
             assert client.get("/api/v1/learning/trades", headers=headers).status_code == 200
+            assert client.get("/api/v1/shadow/entry-rules", headers=headers).status_code == 200
         assert client.get("/api/v1/integrations", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.get("/api/v1/broker/alpaca/account", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.get("/api/v1/settings", headers={"X-Beo-Key": READ}).status_code == 403

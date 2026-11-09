@@ -176,6 +176,18 @@ def register(app: FastAPI, settings: Settings) -> None:
             "scan_progress": read_scan_progress(),
         }
 
+    @app.get("/api/v1/shadow/entry-rules")
+    def shadow_entry_rules(authorization: str | None = Header(default=None), limit: int = Query(default=100, ge=1, le=500)):
+        """Recent shadow evaluations and closed-P&L split. Read-only. Does not change trading."""
+        from app.main import user_id_from_header
+        from app.positions.shadow_log import shadow_report
+
+        user_id_from_header(settings, authorization)
+        try:
+            return shadow_report(limit)
+        except Exception:
+            return {"shadow_entry_rules_enabled": True, "available": False, "rows": [], "summary": []}
+
     @app.get("/api/v1/decisions")
     def decisions(authorization: str | None = Header(default=None), limit: int = Query(default=50, ge=1, le=200)):
         from app.main import user_id_from_header

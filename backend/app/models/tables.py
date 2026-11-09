@@ -580,6 +580,37 @@ class AIFingerprintLock(Base):
     claimed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ShadowRuleEval(Base):
+    """What a candidate entry filter would have done. Never read by the order path."""
+
+    __tablename__ = "shadow_rule_eval"
+    __table_args__ = (
+        Index("ix_shadow_rule_eval_evaluated_at", "evaluated_at"),
+        Index("ix_shadow_rule_eval_recommendation", "recommendation_id"),
+    )
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
+    recommendation_id: Mapped[str] = mapped_column(String(36), default="")
+    order_id: Mapped[str] = mapped_column(String(64), default="")
+    evaluated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    outcome: Mapped[str] = mapped_column(String(16), nullable=False, default="")
+    existing_block_reason: Mapped[str] = mapped_column(Text, default="")
+    underlying: Mapped[str] = mapped_column(String(32), default="")
+    option_symbol: Mapped[str] = mapped_column(String(64), default="")
+    side: Mapped[str] = mapped_column(String(8), default="")
+    dte: Mapped[int | None] = mapped_column()
+    minutes_since_open: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    underlying_price: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    session_open: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    prior_close: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    vwap: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    price_vs_open_pct: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    price_vs_vwap_pct: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    change_vs_prior_close_pct: Mapped[float | None] = mapped_column(Numeric(18, 6))
+    rules: Mapped[list] = mapped_column(JSON, nullable=False)
+    context: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
+
 class AIRequestLog(Base):
     __tablename__ = "ai_request_logs"
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=_id)
