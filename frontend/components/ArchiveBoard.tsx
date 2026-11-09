@@ -57,18 +57,20 @@ export function ArchiveBoard() {
   const [failed, setFailed] = useState(false);
 
   async function load() {
-    const [nextSummary, nextEquity, nextTrades, nextOrders] = await Promise.all([
+    const [nextSummary, nextEquity, nextTrades, nextOrders] = await Promise.allSettled([
       apiGet<Summary>("/api/v1/archive/paper_100k/summary"),
       apiGet<{ points?: Point[] }>("/api/v1/archive/paper_100k/equity?period=all"),
       apiGet<{ items?: Trade[] }>("/api/v1/archive/paper_100k/trades?limit=500"),
       apiGet<{ items?: Order[]; total?: number }>("/api/v1/archive/paper_100k/orders?limit=100"),
     ]);
-    setSummary(nextSummary);
-    setPoints(nextEquity.points || []);
-    setTrades(nextTrades.items || []);
-    setOrders(nextOrders.items || []);
-    setOrderTotal(nextOrders.total || 0);
-    setFailed(false);
+    if (nextSummary.status === "fulfilled") setSummary(nextSummary.value);
+    if (nextEquity.status === "fulfilled") setPoints(nextEquity.value.points || []);
+    if (nextTrades.status === "fulfilled") setTrades(nextTrades.value.items || []);
+    if (nextOrders.status === "fulfilled") {
+      setOrders(nextOrders.value.items || []);
+      setOrderTotal(nextOrders.value.total || 0);
+    }
+    setFailed(nextSummary.status !== "fulfilled" && nextEquity.status !== "fulfilled");
   }
 
   useEffect(() => {
