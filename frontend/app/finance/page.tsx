@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { readStoredPeriod } from "@/lib/account";
+import { useTradingPeriod } from "@/lib/live";
 import { LiveMark, Odometer, StaleNote } from "@/components/live-ui";
 import { apiGet, holdScreen, poll } from "@/lib/api";
 import { useLive } from "@/lib/live";
@@ -85,7 +88,10 @@ export default function FinancePage() {
   const [failed, setFailed] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const live = useLive();
+  const headerPeriod = useTradingPeriod();
+  const archiveOn = tradingPeriod === "paper_100k" || (tradingPeriod === "current" && headerPeriod === "paper_100k");
   useEffect(() => {
+    if (tradingPeriod === "paper_100k" || readStoredPeriod() === "paper_100k") return;
     let alive = true;
     const load = () => {
       const query = new URLSearchParams({ window: windowName, side, outcome, symbol, dte, start, end, exit_reason: "", hour: "", trading_period: tradingPeriod });
@@ -153,6 +159,14 @@ export default function FinancePage() {
     ["1DTE", body?.by_dte["1DTE"]],
     ["2DTE+", body?.by_dte["2DTE+"]],
   ] as const;
+
+  if (archiveOn) {
+    return (
+      <Shell>
+        <ArchiveBoard />
+      </Shell>
+    );
+  }
 
   return (
     <Shell>

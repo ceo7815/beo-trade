@@ -10,9 +10,12 @@ import { copy } from "@/lib/copy";
 import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
 import { AccountSwitcher } from "@/components/AccountSwitcher";
-import { DeskSwitcher } from "@/components/DeskSwitcher";
+import { SystemSwitch } from "@/components/SystemSwitch";
+import { systemFromPath, type SystemId } from "@/lib/systems";
+import { readStoredPeriod } from "@/lib/account";
 import { Heartbeat, LiveMark, Ticker, Toasts } from "@/components/live-ui";
 import { LiveProvider, useLive } from "@/lib/live";
+import { homeSpring } from "@/lib/iambodyMotion";
 
 type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
 type DeskData = { query: string; status: SystemStatus | null };
@@ -162,8 +165,15 @@ export function Shell({ children }: { children: React.ReactNode }) {
 }
 
 function ShellFrame({ children }: { children: React.ReactNode }) {
-  const path = usePathname();
-  const spyDesk = path.startsWith("/spy");
+  const path = usePathname() || "/";
+  const system: SystemId = systemFromPath(path);
+  const spyDesk = system === "eli";
+  const aviDesk = system === "avi";
+  const [period, setPeriod] = useState("current");
+  const archiveView = period === "paper_100k" && !spyDesk && !aviDesk;
+  const quietDesk = spyDesk || aviDesk;
+  const noOrders = quietDesk || archiveView;
+  const [hash, setHash] = useState("");
   const live = useLive();
   const reduce = useReducedMotion();
   const [query, setQuery] = useState("");
@@ -179,6 +189,11 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setMenu(false);
+    setPeriod(readStoredPeriod());
+    const read = () => setHash(window.location.hash.replace("#", ""));
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
   }, [path]);
 
   useEffect(() => {
@@ -235,7 +250,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   }, [status, live.snap]);
 
   useEffect(() => {
-    if (spyDesk) {
+    if (noOrders) {
       document.body.classList.remove("red");
       document.body.style.setProperty("--mood", "0.5");
       return;
@@ -243,7 +258,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     const pnl = num(live.snap?.day?.display_pnl ?? live.snap?.day?.pnl ?? live.snap?.day?.mark_pnl);
     document.body.classList.toggle("red", pnl !== null && pnl < 0);
     document.body.style.setProperty("--mood", pnl === null ? "0.5" : String(Math.max(-1, Math.min(1, pnl / 2500))));
-  }, [live.snap, spyDesk]);
+  }, [live.snap, noOrders]);
 
   async function toggleTrading() {
     const next = !halted;
@@ -288,7 +303,8 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       title: "מערכת",
       items: [
         { href: "/", label: "לוח ראשי", icon: icons.desk },
-        { href: "/spy", label: "SPY תוך-יומי", icon: icons.performance },
+        { href: "/spy", label: "מסחר יומי אלי", icon: icons.performance },
+        { href: "/avi", label: "מסחר יומי אבי", icon: icons.ai },
         { href: "/engine", label: "המערכת האוטונומית", icon: icons.scan },
         { href: "/positions", label: "פוזיציות פתוחות", icon: icons.positions },
         { href: "/history", label: "היסטוריית עסקאות", icon: icons.history },
@@ -331,14 +347,30 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     return path === href || path.startsWith(`${href}/`);
   }
 
-  const tabs = [
-    { href: "/", label: "לוח", icon: icons.desk },
-    { href: "/positions", label: "פוזיציות", icon: icons.positions },
-    { href: "/history", label: "עסקאות", icon: icons.history },
-    { href: "/decisions", label: "החלטות", icon: icons.decisions },
-  ];
-  const inTabs = tabs.some((tab) => active(tab.href));
-  const title = spyDesk ? "SPY תוך-יומי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
+  const tabs = spyDesk
+    ? [
+        { href: "/spy#board", label: "לוח", icon: icons.desk },
+        { href: "/spy#positions", label: "פוזיציות", icon: icons.positions },
+        { href: "/spy#trades", label: "עסקאות", icon: icons.history },
+        { href: "/spy#brakes", label: "בלמים", icon: icons.performance },
+      ]
+    : aviDesk
+      ? [{ href: "/avi", label: "לוח", icon: icons.desk }]
+      : [
+          { href: "/", label: "לוח", icon: icons.desk },
+          { href: "/positions", label: "פוזיציות", icon: icons.positions },
+          { href: "/history", label: "עסקאות", icon: icons.history },
+          { href: "/decisions", label: "החלטות", icon: icons.decisions },
+        ];
+  function tabOn(href: string) {
+    if (!href.includes("#")) return active(href);
+    const [hrefPath, hrefHash] = href.split("#");
+    if (path !== hrefPath) return false;
+    if (!hash) return hrefHash === "board";
+    return hash === hrefHash;
+  }
+  const inTabs = tabs.some((tab) => tabOn(tab.href));
+  const title = aviDesk ? "מסחר יומי אבי" : spyDesk ? "מסחר יומי אלי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
 
   useEffect(() => {
@@ -405,7 +437,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
               </div>
             ))}
           </nav>
-          {spyDesk ? null : (
+          {noOrders ? null : (
           <div className="sheet-actions">
             <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
               {closing ? copy.shell.closing : copy.shell.closeAllLong}
@@ -414,18 +446,20 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           )}
         </aside>
         <div className="stage">
+          <div className="system-bar">
+            <SystemSwitch />
+          </div>
           <header className="mobile-bar">
             <div className="mobile-title">
-              <DeskSwitcher />
               <b>{title}</b>
               <span>
                 <i className={`dot ${link}`} />
                 {phase}
                 <MobileClock />
               </span>
-              {spyDesk ? null : <AccountSwitcher />}
+              {quietDesk ? null : <AccountSwitcher />}
             </div>
-            {spyDesk ? null : (
+            {noOrders ? null : (
             <button
               type="button"
               className={`mobile-halt ${halted ? "halted" : ""}`}
@@ -439,8 +473,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           </header>
           <header className="instrument">
             <div className="header-picks">
-              <DeskSwitcher />
-              {spyDesk ? null : <AccountSwitcher />}
+              {quietDesk ? null : <AccountSwitcher />}
             </div>
             <div className="bar-item clock-line">
               <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>
@@ -452,7 +485,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             <Clock timeZone="America/New_York" label={copy.shell.ny} />
             <Clock timeZone="Asia/Dubai" label={copy.shell.dubai} />
             <div className="bar-actions">
-              {spyDesk ? null : (
+              {noOrders ? null : (
               <button
                 type="button"
                 className={`halt-btn ${halted ? "halted" : "stop"}`}
@@ -466,7 +499,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
               <button type="button" className="halt-btn ghost" onClick={() => setFinder((open) => !open)}>
                 {copy.shell.search}
               </button>
-              {spyDesk ? null : (
+              {noOrders ? null : (
               <button type="button" className="halt-btn run" disabled={closing} onClick={closePositions}>
                 {closing ? copy.shell.closing : copy.shell.closeAll}
               </button>
@@ -501,16 +534,16 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <motion.div
             className="stage-body"
             key={path}
-            initial={reduce ? false : { opacity: 0, y: 10 }}
+            initial={reduce ? false : { opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={reduce ? { duration: 0 } : { duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            transition={reduce ? { duration: 0 } : homeSpring}
           >
             {children}
           </motion.div>
         </div>
         <MobileTabBar>
           {tabs.map((tab) => (
-            <Link key={tab.href} href={tab.href} className={`tab${active(tab.href) ? " on" : ""}`} onMouseEnter={() => warm(WARM[tab.href] ?? [])} onFocus={() => warm(WARM[tab.href] ?? [])}>
+            <Link key={tab.href} href={tab.href} className={`tab${tabOn(tab.href) ? " on" : ""}`} onMouseEnter={() => warm(WARM[tab.href.split("#")[0]] ?? [])} onFocus={() => warm(WARM[tab.href.split("#")[0]] ?? [])}>
               <TabIcon d={tab.icon} />
               <span>{tab.label}</span>
             </Link>

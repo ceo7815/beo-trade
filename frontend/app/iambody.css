@@ -1,0 +1,119 @@
+/* Dark techno-glass skin on the mobile structure.
+   The signed-in desk stays on the original night canvas.
+   Gold is the active accent. Green and red stay on P&L.
+   Login is unchanged. */
+
+.desk {
+  --chart-ink: #e7c98a;
+  --chart-fill: #e7c98a;
+  --chart-ink-2: #d5d8e0;
+  --chart-grid: rgba(228, 194, 122, 0.14);
+  --chart-tick: #b3a794;
+  --chart-cursor: rgba(231, 201, 138, 0.45);
+  --chart-line: rgba(228, 194, 122, 0.28);
+  --chart-paper: rgba(12, 14, 18, 0.94);
+  --up-bar: #3ddc84;
+  --down-bar: #ff5d6c;
+}
+
+.desk .beo-chart-card,
+.desk .spy-panel,
+.desk .spy-stats article,
+.desk .archive-empty,
+.desk .avi-grid article {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02)),
+    rgba(12, 14, 18, 0.72);
+  border: 1px solid rgba(228, 194, 122, 0.28);
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.22), 0 18px 40px -24px rgba(0, 0, 0, 0.85);
+  color: var(--text, #f7f2e8);
+}
+
+.desk .system-bar {
+  background: transparent;
+  border-bottom: 0;
+  box-shadow: none;
+}
+
+.desk .system-switch {
+  border: 1px solid rgba(228, 194, 122, 0.42);
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(10, 12, 16, 0.72);
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.28), 0 16px 36px -20px rgba(0, 0, 0, 0.8);
+  backdrop-filter: blur(18px);
+}
+
+.desk .system-switch button.on {
+  color: #1c1508;
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  box-shadow: 0 8px 18px -12px rgba(215, 179, 106, 0.9);
+}
+
+.desk .system-switch button.on small { color: #4a3b1d; }
+
+body:has(.desk) .tabbar-dock .tabbar {
+  border: 1px solid rgba(228, 194, 122, 0.42);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)),
+    rgba(10, 12, 16, 0.78);
+  color: #f7f2e8;
+  box-shadow: inset 0 1px 0 rgba(213, 216, 224, 0.3), 0 18px 40px -12px rgba(0, 0, 0, 0.88);
+  backdrop-filter: blur(22px) saturate(1.35);
+  -webkit-backdrop-filter: blur(22px) saturate(1.35);
+}
+
+body:has(.desk) .tabbar .tab { color: #d5d8e0; }
+
+body:has(.desk) .tabbar .tab.on,
+body:has(.desk) .tab.on {
+  color: #1c1508;
+  background: linear-gradient(180deg, #f3d7a4, #d7b36a);
+}
+
+body:has(.desk) .tabbar .tab.on svg,
+body:has(.desk) .tab.on svg { color: #1c1508; }
+
+.desk .archive-badge {
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  color: #1c1508;
+  border: 0;
+}
+
+.desk .archive-badge.wait {
+  background: rgba(228, 194, 122, 0.14);
+  color: #f3d7a4;
+  border: 1px solid rgba(228, 194, 122, 0.45);
+}
+
+.desk .archive-save {
+  background: linear-gradient(180deg, #f6e2b8, #d7b36a);
+  color: #1c1508;
+}
+
+.desk .archive-save.ghost {
+  background: transparent;
+  color: #f3d7a4;
+  border: 1px solid rgba(228, 194, 122, 0.45);
+}
+
+.beo-chart-frame { width: 100%; height: 168px; }
+.beo-chart-frame.tall { height: 220px; }
+.beo-spark { width: 100%; height: 64px; }
+
+.desk button:active,
+.desk .nav-link:active,
+.desk .tab:active,
+.desk .acct-trigger:active,
+.desk .choice:active,
+body:has(.desk) .tab:active {
+  transform: scale(0.97);
+  transition-duration: 160ms;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desk button:active,
+  .desk .tab:active,
+  body:has(.desk) .tab:active { transform: none; }
+}

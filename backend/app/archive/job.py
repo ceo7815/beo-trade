@@ -1,0 +1,444 @@
+"""Idempotent copy of the Paper 100K account into archive tables.
+
+Reads Alpaca with GET only. Local journal rows for the paper_100k period are
+copied too. Nothing in this module deletes archive rows or sends an order.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from datetime import datetime, timezone
+from decimal import Decimal
+
+from sqlalchemy import func, select
+from sqlalchemy.orm import Session
+
+from app.analytics.periods import get_period, session_day
+from app.archive.tables import (
+    ArchiveAccount,
+    ArchiveActivity,
+    ArchiveEquity,
+    ArchiveLocal,
+    ArchiveOrder,
+    ArchivePosition,
+    ArchiveRun,
+)
+from app.models.tables import (
+    BrokerActivityRecord,
+    BrokerFillRecord,
+    BrokerOrderRecord,
+    BrokerOrderSnapshot,
+    BrokerTrade,
+    BrokerTradeEvent,
+    PaperPosition,
+    PaperTrade,
+    PositionState,
+    TradeOutcome,
+)
+
+PERIOD_ID = "paper_100k"
+EXPECTED_LAST4 = "NXN0"
+EQUITY_PERIODS = ("all", "1A", "6M", "3M", "1M", "1W", "1D")
+_ACCOUNT_DROP = {"id", "account_number"}
+_LOCAL_SOURCES = (
+    (PaperTrade, "paper_trades", "entry_at", "id"),
+    (PaperPosition, "paper_positions", "opened_at", "id"),
+    (TradeOutcome, "trade_outcomes", "observed_at", "id"),
+    (BrokerTrade, "broker_trades", "created_at", "id"),
+    (BrokerTradeEvent, "broker_trade_events", "created_at", "id"),
+    (PositionState, "position_states", "entry_time", "trade_id"),
+    (BrokerOrderRecord, "broker_orders", "created_at", "id"),
+    (BrokerFillRecord, "broker_fills", "observed_at", "id"),
+    (BrokerActivityRecord, "broker_activities", "observed_at", "id"),
+    (BrokerOrderSnapshot, "broker_order_snapshots", "observed_at", "id"),
+)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _text(value) -> str:
+    if value is None:
+        return ""
+    return str(value)
+
+
+def _jsonable(value):
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, Decimal):
+        return str(value)
+    return value
+
+
+def row_payload(row) -> dict:
+    data = {}
+    for column in row.__table__.columns:
+        data[column.name] = _jsonable(getattr(row, column.name))
+    return data
+
+
+def redact_account(raw: dict) -> tuple[dict, str]:
+    number = _text(raw.get("account_number"))
+    last4 = number[-4:] if len(number) >= 4 else ""
+    payload = {}
+    for key, value in raw.items():
+        lowered = key.lower()
+        if key in _ACCOUNT_DROP or any(word in lowered for word in ("key", "secret", "token", "password")):
+            continue
+        payload[key] = value
+    payload["account_last4"] = last4
+    return payload, last4
+
+
+def activity_key(row: dict) -> str:
+    raw = _text(row.get("id") or row.get("activity_id")).strip()
+    if raw:
+        return raw[:80]
+    blob = json.dumps(row, sort_keys=True, default=str)
+    return hashlib.sha256(blob.encode()).hexdigest()[:80]
+
+
+def _in_period(moment) -> bool:
+    period = get_period(PERIOD_ID)
+    if period is None:
+        return False
+    day = session_day(moment)
+    if day is None:
+        return False
+    return period.contains_day(day)
+
+
+def _pull_account(session: Session, reader, moment: datetime) -> None:
+    raw = reader.account() or {}
+    payload, last4 = redact_account(raw if isinstance(raw, dict) else {})
+    row = session.get(ArchiveAccount, "snapshot")
+    if row is None:
+        row = ArchiveAccount(id="snapshot")
+        session.add(row)
+    row.equity = _text(raw.get("equity"))
+    row.cash = _text(raw.get("cash"))
+    row.last_equity = _text(raw.get("last_equity"))
+    row.account_last4 = last4
+    row.payload = payload
+    row.archived_at = moment
+    session.commit()
+
+
+def _pull_positions(session: Session, reader, run_id: str, moment: datetime) -> int:
+    rows = reader.positions() or []
+    kept = 0
+    for raw in rows:
+        if not isinstance(raw, dict):
+            continue
+        session.add(
+            ArchivePosition(
+                run_id=run_id,
+                symbol=_text(raw.get("symbol"))[:64],
+                payload=raw,
+                archived_at=moment,
+            )
+        )
+        kept += 1
+    session.commit()
+    return kept
+
+
+def _pull_orders(session: Session, reader, moment: datetime, page_size: int) -> int:
+    seen: set[str] = set()
+    until: str | None = None
+    pages = 0
+    while pages < 500:
+        page = reader.orders_page(until=until, limit=page_size) or []
+        pages += 1
+        if not page:
+            break
+        fresh = 0
+        oldest = ""
+        for raw in page:
+            if not isinstance(raw, dict):
+                continue
+            order_id = _text(raw.get("id")).strip()
+            submitted = _text(raw.get("submitted_at"))
+            if submitted and (not oldest or submitted < oldest):
+                oldest = submitted
+            if not order_id or order_id in seen:
+                continue
+            seen.add(order_id)
+            fresh += 1
+            row = session.get(ArchiveOrder, order_id)
+            if row is None:
+                row = ArchiveOrder(alpaca_order_id=order_id)
+                session.add(row)
+            row.status = _text(raw.get("status"))[:32]
+            row.symbol = _text(raw.get("symbol"))[:64]
+            row.submitted_at = submitted[:40]
+            row.payload = raw
+            row.archived_at = moment
+        session.commit()
+        if fresh == 0 or len(page) < page_size or not oldest or oldest == until:
+            break
+        until = oldest
+    return len(seen)
+
+
+def _pull_activities(session: Session, reader, moment: datetime, page_size: int) -> int:
+    seen: set[str] = set()
+    token: str | None = None
+    pages = 0
+    while pages < 2000:
+        page = reader.activities_page(page_token=token, limit=page_size) or []
+        pages += 1
+        if not page:
+            break
+        fresh = 0
+        last_key = ""
+        for raw in page:
+            if not isinstance(raw, dict):
+                continue
+            key = activity_key(raw)
+            last_key = key
+            if key in seen:
+                continue
+            seen.add(key)
+            fresh += 1
+            row = session.get(ArchiveActivity, key)
+            if row is None:
+                row = ArchiveActivity(activity_id=key)
+                session.add(row)
+            row.activity_type = _text(raw.get("activity_type"))[:32]
+            row.payload = raw
+            row.archived_at = moment
+        session.commit()
+        if fresh == 0 or len(page) < page_size or not last_key or last_key == token:
+            break
+        token = last_key
+    return len(seen)
+
+
+def _pull_equity(session: Session, reader, moment: datetime) -> tuple[dict[str, int], list[str]]:
+    counts: dict[str, int] = {}
+    errors: list[str] = []
+    for period in EQUITY_PERIODS:
+        try:
+            body = reader.portfolio_history(period, "1D") or {}
+        except Exception as exc:
+            errors.append(f"{period}:{type(exc).__name__}")
+            counts[period] = 0
+            continue
+        stamps = body.get("timestamp") or []
+        equities = body.get("equity") or []
+        profits = body.get("profit_loss") or []
+        pcts = body.get("profit_loss_pct") or []
+        kept = 0
+        for index, stamp in enumerate(stamps):
+            try:
+                ts = int(stamp)
+            except (TypeError, ValueError):
+                continue
+            existing = session.scalar(
+                select(ArchiveEquity).where(
+                    ArchiveEquity.period == period,
+                    ArchiveEquity.timeframe == "1D",
+                    ArchiveEquity.ts == ts,
+                )
+            )
+            equity = equities[index] if index < len(equities) else None
+            profit = profits[index] if index < len(profits) else None
+            pct = pcts[index] if index < len(pcts) else None
+            if existing is None:
+                session.add(
+                    ArchiveEquity(
+                        period=period,
+                        timeframe="1D",
+                        ts=ts,
+                        equity=_text(equity),
+                        profit_loss=_text(profit),
+                        profit_loss_pct=_text(pct),
+                        archived_at=moment,
+                    )
+                )
+            else:
+                existing.equity = _text(equity)
+                existing.profit_loss = _text(profit)
+                existing.profit_loss_pct = _text(pct)
+                existing.archived_at = moment
+            kept += 1
+        counts[period] = kept
+        session.commit()
+    return counts, errors
+
+
+def _pull_local(session: Session, moment: datetime) -> int:
+    kept = 0
+    for model, source, stamp_attr, id_attr in _LOCAL_SOURCES:
+        rows = session.scalars(select(model)).all()
+        for row in rows:
+            if not _in_period(getattr(row, stamp_attr, None)):
+                continue
+            source_id = _text(getattr(row, id_attr, "")).strip()
+            if not source_id:
+                continue
+            existing = session.scalar(
+                select(ArchiveLocal).where(ArchiveLocal.source == source, ArchiveLocal.source_id == source_id)
+            )
+            payload = row_payload(row)
+            if existing is None:
+                session.add(
+                    ArchiveLocal(
+                        source=source,
+                        source_id=source_id[:64],
+                        payload=payload,
+                        archived_at=moment,
+                    )
+                )
+            else:
+                existing.payload = payload
+                existing.archived_at = moment
+            kept += 1
+    session.commit()
+    return kept
+
+
+def run_paper_100k_archive(
+    session: Session,
+    reader,
+    *,
+    order_page_size: int = 500,
+    activity_page_size: int = 100,
+) -> dict:
+    """Copy the account. ``reader`` None archives local rows only."""
+    moment = _now()
+    run = ArchiveRun(started_at=moment, status="running")
+    session.add(run)
+    session.commit()
+    errors: list[str] = []
+    if reader is None:
+        errors.append("alpaca:not_configured")
+    else:
+        for name, pull in (
+            ("account", lambda: _pull_account(session, reader, moment)),
+            ("positions", lambda: _pull_positions(session, reader, run.id, moment)),
+            ("orders", lambda: _pull_orders(session, reader, moment, order_page_size)),
+            ("activities", lambda: _pull_activities(session, reader, moment, activity_page_size)),
+        ):
+            try:
+                pull()
+            except Exception as exc:
+                errors.append(f"{name}:{type(exc).__name__}")
+                session.rollback()
+        equity_warnings: list[str] = []
+        try:
+            _counts, equity_warnings = _pull_equity(session, reader, moment)
+            if equity_warnings and not any(_counts.values()):
+                errors.append("equity:unavailable")
+        except Exception as exc:
+            equity_warnings = []
+            errors.append(f"equity:{type(exc).__name__}")
+            session.rollback()
+    try:
+        _pull_local(session, moment)
+    except Exception as exc:
+        errors.append(f"local:{type(exc).__name__}")
+        session.rollback()
+    summary = archive_summary(session)
+    run.status = "ok" if not errors else ("partial" if summary["counts"]["orders"] or summary["counts"]["local_rows"] or summary["counts"]["activities"] else "failed")
+    if reader is None and not errors[1:]:
+        run.status = "local_only"
+    if reader is not None and equity_warnings:
+        errors = errors + [f"equity_skip:{item}" for item in equity_warnings]
+    run.detail = ",".join(errors)[:500]
+    run.finished_at = _now()
+    run.counts = summary["counts"]
+    session.commit()
+    summary["run"] = {"id": run.id, "status": run.status, "detail": run.detail, "finished_at": run.finished_at.isoformat()}
+    summary["ok"] = run.status in {"ok", "local_only"}
+    return summary
+
+
+def archive_summary(session: Session) -> dict:
+    account = session.get(ArchiveAccount, "snapshot")
+    orders = session.scalar(select(func.count()).select_from(ArchiveOrder)) or 0
+    activities = session.scalar(select(func.count()).select_from(ArchiveActivity)) or 0
+    local_rows = session.scalar(select(func.count()).select_from(ArchiveLocal)) or 0
+    periods: dict[str, int] = {}
+    for period in EQUITY_PERIODS:
+        periods[period] = session.scalar(
+            select(func.count()).select_from(ArchiveEquity).where(
+                ArchiveEquity.period == period,
+                ArchiveEquity.timeframe == "1D",
+            )
+        ) or 0
+    days = periods.get("all") or max(periods.values() or [0])
+    latest_run = session.scalar(select(ArchiveRun).order_by(ArchiveRun.started_at.desc()).limit(1))
+    positions = 0
+    if latest_run is not None:
+        positions = session.scalar(
+            select(func.count()).select_from(ArchivePosition).where(ArchivePosition.run_id == latest_run.id)
+        ) or 0
+    status_rows = session.execute(select(ArchiveOrder.status, func.count()).group_by(ArchiveOrder.status)).all()
+    type_rows = session.execute(select(ArchiveActivity.activity_type, func.count()).group_by(ArchiveActivity.activity_type)).all()
+    last4 = "" if account is None else account.account_last4
+    return {
+        "archive": PERIOD_ID,
+        "ready": bool(account or orders or activities or days or local_rows),
+        "source": "archive",
+        "account": None
+        if account is None
+        else {
+            "equity": account.equity or None,
+            "cash": account.cash or None,
+            "last_equity": account.last_equity or None,
+            "last4": last4 or None,
+            "account_match": (not last4) or last4 == EXPECTED_LAST4,
+            "archived_at": account.archived_at.isoformat() if account.archived_at else None,
+        },
+        "counts": {
+            "orders": int(orders),
+            "activities": int(activities),
+            "days": int(days),
+            "positions": int(positions),
+            "local_rows": int(local_rows),
+        },
+        "equity_periods": periods,
+        "orders_by_status": {str(status or ""): int(count) for status, count in status_rows},
+        "activity_types": {str(kind or ""): int(count) for kind, count in type_rows},
+        "last_run": None
+        if latest_run is None or latest_run.finished_at is None
+        else {
+            "id": latest_run.id,
+            "status": latest_run.status,
+            "detail": latest_run.detail,
+            "finished_at": latest_run.finished_at.isoformat(),
+        },
+    }
+
+
+def equity_points(session: Session, period: str) -> list[dict]:
+    rows = session.scalars(
+        select(ArchiveEquity)
+        .where(ArchiveEquity.period == period, ArchiveEquity.timeframe == "1D")
+        .order_by(ArchiveEquity.ts.asc())
+    ).all()
+    points = []
+    previous: float | None = None
+    for row in rows:
+        try:
+            equity = float(row.equity) if row.equity != "" else None
+        except ValueError:
+            equity = None
+        day_pnl = None if equity is None or previous is None else equity - previous
+        if equity is not None:
+            previous = equity
+        points.append(
+            {
+                "ts": row.ts,
+                "t": datetime.fromtimestamp(row.ts, tz=timezone.utc).isoformat(),
+                "equity": row.equity or None,
+                "profit_loss": row.profit_loss or None,
+                "day_pnl": None if day_pnl is None else f"{day_pnl:.2f}",
+            }
+        )
+    return points

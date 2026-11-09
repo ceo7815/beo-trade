@@ -5,13 +5,14 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "test": "node --experimental-strip-types --test lib/proxyAccess.test.ts lib/holdScreen.test.ts lib/format.test.ts lib/protection.test.ts lib/account.test.ts lib/accountMenu.test.ts lib/liveFigures.test.ts"
+    "test": "node --experimental-strip-types --test lib/proxyAccess.test.ts lib/holdScreen.test.ts lib/format.test.ts lib/protection.test.ts lib/account.test.ts lib/accountMenu.test.ts lib/liveFigures.test.ts lib/systems.test.ts lib/iambody.test.ts"
   },
   "dependencies": {
     "framer-motion": "^14.6.0",
     "next": "^15.5.4",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1"
+    "react-dom": "^19.1.1",
+    "recharts": "^2.15.4"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

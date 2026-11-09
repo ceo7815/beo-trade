@@ -3,6 +3,8 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Shell, useDesk } from "@/components/Shell";
+import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { DailyBars, EquityCurve, StrategyBars, tradesToCharts } from "@/components/charts";
 import { PHASES, holdScreen, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
@@ -112,7 +114,7 @@ type Position = {
   cost_basis?: string | null;
 };
 
-type ClosedLite = { closed_at?: string | null; pnl?: string | null; invested?: string | null };
+type ClosedLite = { closed_at?: string | null; pnl?: string | null; invested?: string | null; underlying?: string | null; exit_reason?: string | null };
 type FlowFilter = "all" | "trades" | "blocks";
 type AgedReport = { available?: boolean; stale?: boolean; as_of?: string | null; summary?: TradeTotals; closed?: ClosedLite[] };
 
@@ -185,8 +187,29 @@ function clock(iso: string | null | undefined) {
 export default function HomePage() {
   return (
     <Shell>
-      <Board />
+      <HomeGate />
     </Shell>
+  );
+}
+
+function HomeGate() {
+  const period = useTradingPeriod();
+  if (period === "paper_100k") return <ArchiveBoard />;
+  return <Board />;
+}
+
+function DeskCharts({ book }: { book: ClosedLite[] | null }) {
+  if (!book?.length) return null;
+  const charts = tradesToCharts(
+    book.map((row) => ({ at: row.closed_at, pnl: row.pnl, strategy: row.underlying || row.exit_reason || "אחר" })),
+  );
+  if (charts.days.length < 1) return null;
+  return (
+    <section className="desk-charts">
+      <EquityCurve points={charts.curve} label="עקומת רווח מצטבר" />
+      <DailyBars rows={charts.days} />
+      <StrategyBars rows={charts.strategies} label="לפי נכס" />
+    </section>
   );
 }
 
@@ -358,6 +381,7 @@ function Board() {
           {showLast ? null : protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
         </article>
       </div>
+      <DeskCharts book={book} />
 
       <section className="ops-pane">
         <header className="ops-pane-head">
