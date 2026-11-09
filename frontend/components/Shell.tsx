@@ -15,6 +15,7 @@ import { systemFromPath, type SystemId } from "@/lib/systems";
 import { readStoredPeriod } from "@/lib/account";
 import { Heartbeat, LiveMark, Ticker, Toasts } from "@/components/live-ui";
 import { LiveProvider, useLive } from "@/lib/live";
+import { homeSpring } from "@/lib/iambodyMotion";
 
 type Release = { current: string; releases: { version: string; date: string; title: string; changes: string[] }[] };
 type DeskData = { query: string; status: SystemStatus | null };
@@ -533,9 +534,9 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <motion.div
             className="stage-body"
             key={path}
-            initial={reduce ? false : { opacity: 0, y: 10 }}
+            initial={reduce ? false : { opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={reduce ? { duration: 0 } : { duration: 0.28, ease: [0.16, 1, 0.3, 1] }}
+            transition={reduce ? { duration: 0 } : homeSpring}
           >
             {children}
           </motion.div>

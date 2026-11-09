@@ -4,6 +4,7 @@ import "./globals.css";
 import "./v2.css";
 import "./glass.css";
 import "./phone.css";
+import "./iambody.css";
 
 const rubik = localFont({
   src: "../fonts/Rubik-latin.woff2",
@@ -43,7 +44,7 @@ export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
   viewportFit: "cover",
-  themeColor: "#07080a",
+  themeColor: "#f4f4f2",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

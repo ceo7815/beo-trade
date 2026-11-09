@@ -1,10 +1,19 @@
 "use client";
 
-import { motion } from "framer-motion";
-import { useReduced } from "@/components/live-ui";
+import { useEffect, useId, useState, type ReactNode } from "react";
+import { Area, Bar, CartesianGrid, Cell, ComposedChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
 
 export type CurvePoint = { label?: string; value: number };
 export type BarPoint = { label: string; value: number };
+
+const tip = {
+  borderRadius: 12,
+  border: "1px solid var(--chart-line, rgba(29, 67, 51, 0.12))",
+  background: "var(--chart-paper, #fff)",
+  color: "var(--chart-ink, #1a1a1a)",
+  fontSize: 12,
+  boxShadow: "0 8px 24px rgb(28 28 27 / 8%)",
+};
 
 function money(value: number) {
   const body = Math.abs(value).toLocaleString("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 });
@@ -13,120 +22,123 @@ function money(value: number) {
   return body;
 }
 
-function pathOf(values: number[], width: number, height: number) {
-  if (!values.length) return { d: "", area: "" };
-  const min = Math.min(...values, 0);
-  const max = Math.max(...values, 0);
-  const span = max - min || 1;
-  const coords = values.map((value, index) => {
-    const x = values.length === 1 ? width / 2 : (index / (values.length - 1)) * width;
-    const y = 10 + (1 - (value - min) / span) * (height - 20);
-    return [x, y] as const;
-  });
-  const d = coords.map(([x, y], index) => `${index ? "L" : "M"}${x.toFixed(1)} ${y.toFixed(1)}`).join(" ");
-  const last = coords[coords.length - 1][0];
-  const first = coords[0][0];
-  return { d, area: `${d} L${last.toFixed(1)} ${height} L${first.toFixed(1)} ${height} Z` };
+function useDraw() {
+  const [draw, setDraw] = useState(false);
+  useEffect(() => {
+    setDraw(!window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  }, []);
+  return draw;
 }
 
-export function EquityCurve({ points, label = "עקומת הון" }: { points: CurvePoint[]; label?: string }) {
-  const reduced = useReduced();
-  const values = points.map((point) => point.value).filter((value) => Number.isFinite(value));
-  if (values.length < 2) return <p className="chart-empty">העקומה תופיע כשיהיו לפחות שתי נקודות.</p>;
-  const width = 720;
-  const height = 168;
-  const { d, area } = pathOf(values, width, height);
-  const last = values[values.length - 1];
+function Frame({ label, aside, children, tall = false }: { label: string; aside?: string; children: ReactNode; tall?: boolean }) {
   return (
     <figure className="beo-chart-card">
       <figcaption>
         <span>{label}</span>
-        <b className={last < 0 ? "down" : "up"}>{money(last)}</b>
+        {aside ? <b>{aside}</b> : null}
       </figcaption>
-      <svg className="beo-chart" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-        <defs>
-          <linearGradient id="beoFill" x1="0" y1="0" x2="0" y2="1">
-            <stop offset="0" stopColor="rgba(231,201,138,0.38)" />
-            <stop offset="1" stopColor="rgba(231,201,138,0)" />
-          </linearGradient>
-        </defs>
-        <path d={area} className="area" />
-        <path d={d} className={`line${reduced ? " still" : ""}`} pathLength={1} />
-      </svg>
+      <div className={`beo-chart-frame${tall ? " tall" : ""}`} dir="ltr">
+        {children}
+      </div>
     </figure>
+  );
+}
+
+export function EquityCurve({ points, label = "עקומת הון" }: { points: CurvePoint[]; label?: string }) {
+  const draw = useDraw();
+  const rawId = useId().replace(/:/g, "");
+  const values = points.filter((point) => Number.isFinite(point.value));
+  if (values.length < 2) return <p className="chart-empty">העקומה תופיע כשיהיו לפחות שתי נקודות.</p>;
+  const data = values.map((point, index) => ({ label: point.label || String(index + 1), value: point.value }));
+  const last = data[data.length - 1].value;
+  return (
+    <Frame label={label} aside={money(last)} tall>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id={rawId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.42} />
+              <stop offset="100%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.04} />
+            </linearGradient>
+          </defs>
+          <CartesianGrid stroke="var(--chart-grid, rgba(29,67,51,0.08))" vertical={false} />
+          <XAxis dataKey="label" tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} interval="preserveStartEnd" />
+          <YAxis tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} width={48} />
+          <Tooltip cursor={{ stroke: "var(--chart-cursor, rgba(29,67,51,0.35))", strokeDasharray: "3 3" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
+          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #1d4333)" strokeWidth={2} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out" />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </Frame>
+  );
+}
+
+export function SparkChart({ points, label = "ניצוץ" }: { points: number[]; label?: string }) {
+  const draw = useDraw();
+  const rawId = useId().replace(/:/g, "");
+  const data = points.filter((value) => Number.isFinite(value)).map((value, index) => ({ i: index, value }));
+  if (data.length < 2) return null;
+  return (
+    <div className="beo-spark" dir="ltr" aria-label={label}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={data} margin={{ top: 4, right: 0, left: 0, bottom: 0 }}>
+          <defs>
+            <linearGradient id={rawId} x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0.35} />
+              <stop offset="100%" stopColor="var(--chart-fill, #1d4333)" stopOpacity={0} />
+            </linearGradient>
+          </defs>
+          <Area type="monotone" dataKey="value" stroke="var(--chart-ink, #1d4333)" strokeWidth={1.6} fill={`url(#${rawId})`} isAnimationActive={draw} animationDuration={700} animationEasing="ease-out" />
+        </ComposedChart>
+      </ResponsiveContainer>
+    </div>
   );
 }
 
 export function DailyBars({ rows, label = "רווח והפסד יומי" }: { rows: BarPoint[]; label?: string }) {
-  const reduced = useReduced();
-  const usable = rows.filter((row) => Number.isFinite(row.value));
-  if (!usable.length) return <p className="chart-empty">אין עמודות יומיות עדיין.</p>;
-  const shown = usable.slice(-48);
-  const peak = Math.max(...shown.map((row) => Math.abs(row.value)), 1);
-  const width = Math.max(280, shown.length * 14);
-  const height = 140;
-  const mid = height / 2;
+  const draw = useDraw();
+  const shown = rows.filter((row) => Number.isFinite(row.value)).slice(-48);
+  if (!shown.length) return <p className="chart-empty">אין עמודות יומיות עדיין.</p>;
   return (
-    <figure className="beo-chart-card">
-      <figcaption>
-        <span>{label}</span>
-        <b>{shown.length} ימים</b>
-      </figcaption>
-      <svg className="beo-chart bars" viewBox={`0 0 ${width} ${height}`} role="img" aria-label={label}>
-        <line x1="0" y1={mid} x2={width} y2={mid} className="axis" />
-        {shown.map((row, index) => {
-          const bar = (Math.abs(row.value) / peak) * (mid - 10);
-          const y = row.value >= 0 ? mid - bar : mid;
-          return (
-            <motion.rect
-              key={`${row.label}-${index}`}
-              x={index * 14 + 3}
-              width={8}
-              rx={2}
-              className={row.value < 0 ? "down" : "up"}
-              initial={reduced ? false : { height: 0, y: mid }}
-              animate={{ height: Math.max(bar, 1), y }}
-              transition={reduced ? { duration: 0 } : { duration: 0.55, delay: Math.min(index, 24) * 0.012, ease: [0.16, 1, 0.3, 1] }}
-            >
-              <title>{`${row.label} ${money(row.value)}`}</title>
-            </motion.rect>
-          );
-        })}
-      </svg>
-    </figure>
+    <Frame label={label} aside={`${shown.length} ימים`}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={shown} margin={{ top: 8, right: 4, left: 0, bottom: 0 }}>
+          <CartesianGrid stroke="var(--chart-grid, rgba(29,67,51,0.08))" vertical={false} />
+          <XAxis dataKey="label" hide />
+          <YAxis tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 11 }} axisLine={false} tickLine={false} width={44} />
+          <Tooltip cursor={{ fill: "rgba(29, 67, 51, 0.06)" }} contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
+          <Bar dataKey="value" radius={[3, 3, 0, 0]} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out">
+            {shown.map((row) => (
+              <Cell key={row.label} fill={row.value < 0 ? "var(--down, #c4382f)" : "var(--chart-fill, #1d4333)"} />
+            ))}
+          </Bar>
+        </ComposedChart>
+      </ResponsiveContainer>
+    </Frame>
   );
 }
 
 export function StrategyBars({ rows, label = "לפי אסטרטגיה" }: { rows: BarPoint[]; label?: string }) {
-  const reduced = useReduced();
+  const draw = useDraw();
   const shown = rows
     .filter((row) => Number.isFinite(row.value) && row.label)
     .sort((a, b) => Math.abs(b.value) - Math.abs(a.value))
     .slice(0, 6);
   if (!shown.length) return <p className="chart-empty">אין פירוק לפי אסטרטגיה עדיין.</p>;
-  const peak = Math.max(...shown.map((row) => Math.abs(row.value)), 1);
   return (
-    <figure className="beo-chart-card">
-      <figcaption>
-        <span>{label}</span>
-      </figcaption>
-      <ul className="strategy-bars">
-        {shown.map((row, index) => (
-          <li key={row.label}>
-            <span>{row.label}</span>
-            <i>
-              <motion.b
-                className={row.value < 0 ? "down" : "up"}
-                initial={reduced ? false : { width: 0 }}
-                animate={{ width: `${Math.max(6, (Math.abs(row.value) / peak) * 100)}%` }}
-                transition={reduced ? { duration: 0 } : { duration: 0.6, delay: index * 0.05 }}
-              />
-            </i>
-            <strong className={row.value < 0 ? "down" : "up"}>{money(row.value)}</strong>
-          </li>
-        ))}
-      </ul>
-    </figure>
+    <Frame label={label}>
+      <ResponsiveContainer width="100%" height="100%">
+        <ComposedChart data={shown} layout="vertical" margin={{ top: 4, right: 12, left: 8, bottom: 0 }}>
+          <XAxis type="number" hide />
+          <YAxis type="category" dataKey="label" width={72} tick={{ fill: "var(--chart-tick, #6b6b66)", fontSize: 12 }} axisLine={false} tickLine={false} />
+          <Tooltip contentStyle={tip} formatter={(value) => [money(Number(value)), label]} />
+          <Bar dataKey="value" radius={[0, 4, 4, 0]} isAnimationActive={draw} animationDuration={900} animationEasing="ease-out">
+            {shown.map((row) => (
+              <Cell key={row.label} fill={row.value < 0 ? "var(--down, #c4382f)" : "var(--chart-fill, #1d4333)"} />
+            ))}
+          </Bar>
+        </ComposedChart>
+      </ResponsiveContainer>
+    </Frame>
   );
 }
 

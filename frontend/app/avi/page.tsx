@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
+import { SparkChart } from "@/components/charts";
 import { apiGet } from "@/lib/api";
 
 type SystemsBody = { systems?: { id: string; label?: string; ready?: boolean; status_path?: string | null; note?: string }[] };
@@ -52,9 +53,7 @@ export default function AviPage() {
             <span>עקומת הון</span>
             <b>תופיע עם המנוע</b>
           </figcaption>
-          <svg className="beo-chart" viewBox="0 0 720 140" aria-hidden="true">
-            <path className="line still" d="M0 100 C80 96 120 90 180 92 C260 96 300 40 380 46 C460 52 520 70 600 48 C660 34 690 30 720 22" />
-          </svg>
+          <SparkChart points={[8, 9, 8, 11, 10, 13, 12, 15]} label="הגרף יופיע עם המנוע" />
         </figure>
       </section>
     </Shell>
