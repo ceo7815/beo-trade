@@ -115,8 +115,10 @@ class Engine:
         self.cfg = cfg
         self.store = store
         self.broker = broker
+        self._vix_source = ""
 
-    def cycle(self, now: datetime, bars: list[Bar], vix: Decimal | None, clock: dict | None, account: dict | None) -> None:
+    def cycle(self, now: datetime, bars: list[Bar], vix: Decimal | None, clock: dict | None, account: dict | None, vix_source: str = "") -> None:
+        self._vix_source = vix_source or ""
         session = as_ny(now).date()
         session_date = session.isoformat()
         matched = bool(account) and account_matches(self.cfg.account_last4, str(account.get("account_number") or ""))
@@ -292,7 +294,7 @@ class Engine:
             return
         minute = as_ny(now).hour * 60 + as_ny(now).minute
         today = rth_sessions(bars).get(session, [])
-        value = self._mark(trade)
+        value = self._mark(trade, now)
         if value is not None:
             self.store.update_mark(int(trade["id"]), _text(value, "0.0001") or "0")
         reason = exit_reason(
@@ -423,6 +425,8 @@ class Engine:
         pairs: dict[Decimal, dict] = {}
         from app.avi.strategy import wing_strikes
 
+        chosen_by_width: dict[Decimal, tuple] = {}
+        symbols: list[str] = []
         for width in WIDTHS:
             chosen = wing_strikes(price, strikes, side, width)
             if chosen is None:
@@ -431,7 +435,10 @@ class Engine:
             long_strike, short_strike = chosen
             long_symbol = book[long_strike]
             short_symbol = book[short_strike]
-            quotes = self.broker.quotes([long_symbol, short_symbol])
+            chosen_by_width[width] = (long_symbol, short_symbol, long_strike, short_strike)
+            symbols.extend((long_symbol, short_symbol))
+        quotes = self.broker.quotes(list(dict.fromkeys(symbols))) if symbols else {}
+        for width, (long_symbol, short_symbol, long_strike, short_strike) in chosen_by_width.items():
             prices = entry_prices(quotes.get(long_symbol), quotes.get(short_symbol))
             if prices is None:
                 debits[width] = None
@@ -564,11 +571,17 @@ class Engine:
             }
         )
 
-    def _mark(self, trade) -> Decimal | None:
+    def _mark(self, trade, now: datetime | None = None) -> Decimal | None:
+        """One indicative quote per minute for the two open legs. Not every cycle."""
+        if now is not None:
+            slot = as_ny(now).strftime("%Y-%m-%d %H:%M")
+            if self.store.meta("quote_minute") == slot:
+                return _dec(trade["current_value"])
+            self.store.set_meta("quote_minute", slot)
         try:
             quotes = self.broker.quotes([str(trade["long_symbol"]), str(trade["short_symbol"])])
         except Exception:
-            return None
+            return _dec(trade["current_value"]) if now is not None else None
         return mark_value(quotes.get(str(trade["long_symbol"])), quotes.get(str(trade["short_symbol"])))
 
     def _cancel(self, row) -> None:
@@ -593,6 +606,7 @@ class Engine:
                 "state": state,
                 "reason": reason,
                 "detail": None if detail is None else str(detail),
+                "vix_source": fields.pop("vix_source", None) or self._vix_source or None,
                 **fields,
             }
         )
@@ -661,6 +675,7 @@ class Engine:
                 "at": None if signal is None else signal["decision_at"],
                 "price": None if signal is None else signal["price"],
                 "vix": None if signal is None else signal["vix"],
+                "vix_source": None if signal is None else signal["vix_source"],
                 "detail": None if signal is None else signal["detail"],
             },
             "position": position,
@@ -669,6 +684,7 @@ class Engine:
             "bankroll": _text(bankroll),
             "equity": _text(equity),
             "vix": _text(vix, "0.01"),
+            "vix_source": self._vix_source or None,
             "brakes": {
                 "kill": killed,
                 "weekly": self._week_halted(session),

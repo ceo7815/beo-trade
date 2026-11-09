@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS avi_signals (
   lower_px TEXT,
   vwap TEXT,
   vix TEXT,
+  vix_source TEXT,
   detail TEXT,
   created_at TEXT NOT NULL,
   UNIQUE (session_date, decision_at)
@@ -103,6 +104,9 @@ class Store:
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA busy_timeout=5000")
         self._conn.executescript(SCHEMA)
+        columns = {row[1] for row in self._conn.execute("PRAGMA table_info(avi_signals)")}
+        if "vix_source" not in columns:
+            self._conn.execute("ALTER TABLE avi_signals ADD COLUMN vix_source TEXT")
 
     def close(self) -> None:
         self._conn.close()
@@ -150,8 +154,8 @@ class Store:
             """
             INSERT OR IGNORE INTO avi_signals(
               session_date, decision_at, state, reason, price, open_px, sigma,
-              upper_px, lower_px, vwap, vix, detail, created_at
-            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              upper_px, lower_px, vwap, vix, vix_source, detail, created_at
+            ) VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 row["session_date"],
@@ -165,6 +169,7 @@ class Store:
                 row.get("lower_px"),
                 row.get("vwap"),
                 row.get("vix"),
+                row.get("vix_source"),
                 row.get("detail"),
                 _now(),
             ),

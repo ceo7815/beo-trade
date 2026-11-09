@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from decimal import Decimal
 
+import time
+
 import httpx
 
 from app.avi.config import SYMBOL, AviConfig, NotConfigured, redact
@@ -23,8 +25,9 @@ class BrokerError(RuntimeError):
 
 
 class AviBroker:
-    def __init__(self, cfg: AviConfig, transport: httpx.BaseTransport | None = None) -> None:
+    def __init__(self, cfg: AviConfig, transport: httpx.BaseTransport | None = None, sleep=time.sleep) -> None:
         self.cfg = cfg
+        self._sleep = sleep
         trading = assert_paper_url(cfg.trading_url)
         data = assert_data_url(cfg.data_url)
         if trading != PAPER_HTTP or data != DATA_HTTP:
@@ -122,17 +125,6 @@ class AviBroker:
                 return rows
         return []
 
-    def vix(self) -> Decimal | None:
-        response = self._data.get("/v1beta1/indices/snapshots/VIX")
-        if response.status_code < 400:
-            price = _snapshot_price(response.json())
-            if price is not None:
-                return price
-        bars = self._data.get("/v1beta1/indices/bars", params={"symbols": "VIX", "timeframe": "1Min", "limit": 1})
-        if bars.status_code >= 400:
-            return None
-        return _bar_price(bars.json())
-
     def contracts(self, right: str, expiration_gte: str) -> list[dict]:
         if right not in {"call", "put"}:
             raise BrokerError("right refused")
@@ -143,6 +135,7 @@ class AviBroker:
                 "underlying_symbols": SYMBOL,
                 "status": "active",
                 "expiration_date_gte": expiration_gte,
+                "expiration_date_lte": _window_end(expiration_gte),
                 "type": right,
                 "limit": 1000,
             }
@@ -165,7 +158,7 @@ class AviBroker:
         clean = [symbol for symbol in symbols if symbol]
         if not clean:
             return {}
-        response = self._data.get("/v1beta1/options/snapshots", params={"symbols": ",".join(clean)})
+        response = self._data_get("/v1beta1/options/snapshots", {"symbols": ",".join(clean), "feed": "indicative"})
         self._note(response, "/v1beta1/options/snapshots")
         if response.status_code >= 400:
             raise BrokerError(f"quotes {response.status_code}")
@@ -201,6 +194,18 @@ class AviBroker:
             raise BrokerError("qty refused")
         if not str(body.get("limit_price") or ""):
             raise BrokerError("limit refused")
+
+    def _data_get(self, path: str, params: dict) -> httpx.Response:
+        """Indicative option quotes. A 429 waits a few seconds, at most three tries."""
+        waits = (2.0, 4.0)
+        response = self._data.get(path, params=params)
+        for attempt, pause in enumerate(waits):
+            if response.status_code != 429:
+                return response
+            self._sleep(pause)
+            response = self._data.get(path, params=params)
+            del attempt
+        return response
 
     def _require_otm_short(self, legs: list[dict], buy_intent: str, sell_intent: str) -> None:
         buy = next(leg for leg in legs if leg.get("position_intent") == buy_intent)
@@ -244,42 +249,12 @@ def _option_quote(snap: object) -> dict | None:
     return {"bid": str(bid), "ask": str(ask)}
 
 
-def _snapshot_price(body: object) -> Decimal | None:
-    if not isinstance(body, dict):
-        return None
-    node = body.get("snapshot") or body.get("snapshots") or body
-    if isinstance(node, dict) and "VIX" in node and isinstance(node["VIX"], dict):
-        node = node["VIX"]
-    if not isinstance(node, dict):
-        return None
-    for block in ("minuteBar", "dailyBar", "latestTrade", "latestQuote"):
-        item = node.get(block)
-        if not isinstance(item, dict):
-            continue
-        for field in ("c", "p", "ap", "bp"):
-            raw = item.get(field)
-            if raw not in {None, ""}:
-                try:
-                    return Decimal(str(raw))
-                except Exception:
-                    continue
-    return None
+def _window_end(expiration_gte: str) -> str:
+    """Keep the chain request to the next two weeks. One signal, not a full book."""
+    from datetime import date, timedelta
 
-
-def _bar_price(body: object) -> Decimal | None:
-    if not isinstance(body, dict):
-        return None
-    bars = body.get("bars") or {}
-    rows = bars.get("VIX") if isinstance(bars, dict) else None
-    if not rows and isinstance(body.get("bars"), list):
-        rows = body["bars"]
-    if not isinstance(rows, list) or not rows:
-        return None
-    last = rows[-1]
-    raw = last.get("c") if isinstance(last, dict) else None
-    if raw in {None, ""}:
-        return None
     try:
-        return Decimal(str(raw))
-    except Exception:
-        return None
+        start = date.fromisoformat(expiration_gte[:10])
+    except ValueError:
+        return expiration_gte[:10]
+    return (start + timedelta(days=14)).isoformat()

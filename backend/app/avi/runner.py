@@ -13,6 +13,7 @@ from app.avi.broker import AviBroker
 from app.avi.config import SYMBOL, AviConfig, load_config, startup_mode
 from app.avi.engine import Engine, bars_from_rows, write_idle_status
 from app.avi.store import Store
+from app.avi.vix import read_vix
 
 log = structlog.get_logger()
 _stop = False
@@ -91,11 +92,11 @@ def run(cfg: AviConfig | None = None) -> None:
                 account = broker.account()
                 clock = broker.clock()
                 try:
-                    vix = broker.vix()
+                    vix, vix_source = read_vix(now, store)
                 except Exception:
-                    vix = None
+                    vix, vix_source = None, ""
                 bars = _sync(broker, store, now)
-                engine.cycle(now, bars, vix, clock, account)
+                engine.cycle(now, bars, vix, clock, account, vix_source=vix_source)
             except Exception as exc:
                 log.warning("avi.cycle_failed", error=type(exc).__name__)
                 try:

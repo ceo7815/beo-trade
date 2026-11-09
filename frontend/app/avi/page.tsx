@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
 import { apiGet, poll } from "@/lib/api";
 
-type Signal = { state?: string; reason?: string; at?: string | null; price?: string | null; vix?: string | null };
+type Signal = { state?: string; reason?: string; at?: string | null; price?: string | null; vix?: string | null; vix_source?: string | null };
 type Leg = { symbol?: string; side?: string; strike?: string | null };
 type Position = {
   open?: boolean;
@@ -26,6 +26,7 @@ type Status = {
   stale?: boolean;
   heartbeat_age_seconds?: number;
   signal?: Signal;
+  vix_source?: string | null;
   position?: Position;
   day_pnl?: string | null;
   week_pnl?: string | null;
@@ -127,7 +128,7 @@ function AviScreen() {
         <article id="signal">
           <b>איתות היום</b>
           <span>{signalText(status?.signal)}</span>
-          <span>QQQ {status?.signal?.price || "—"} · VIX {status?.signal?.vix || "—"}</span>
+          <span>QQQ {status?.signal?.price || "—"} · VIX {status?.signal?.vix || "—"} {status?.vix_source || status?.signal?.vix_source || ""}</span>
         </article>
         <article id="position">
           <b>פוזיציה</b>

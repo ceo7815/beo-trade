@@ -69,6 +69,7 @@ class FakeBroker:
     def __init__(self) -> None:
         self.submitted: list[dict] = []
         self.contracts_called = 0
+        self.quotes_called = 0
 
     def get_order(self, client_order_id: str):
         return None
@@ -94,6 +95,7 @@ class FakeBroker:
         return rows
 
     def quotes(self, symbols: list[str]) -> dict[str, dict]:
+        self.quotes_called += 1
         found = {}
         for symbol in symbols:
             strike = Decimal(symbol[10:]) / Decimal(1000)
@@ -254,6 +256,7 @@ def test_entry_is_a_debit_spread_and_a_wrong_pin_sends_nothing_else(tmp_path):
         now, _up_bars(), Decimal("18"), {"is_open": True}, {"account_number": ACCOUNT, "equity": "6274"}
     )
     assert store.meta("equity_open:2026-01-20") == "6274.00"
+    assert broker.quotes_called == 1
     assert len(broker.submitted) == 1
     body = broker.submitted[0]
     assert body["order_class"] == "mleg"
