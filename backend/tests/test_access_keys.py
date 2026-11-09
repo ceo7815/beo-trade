@@ -79,10 +79,13 @@ def test_the_read_key_reads_the_allowed_pages_and_nothing_else(tmp_path, monkeyp
             assert client.get("/api/v1/spy/trades", headers=headers).status_code == 200
             assert client.get("/api/v1/spy/daily", headers=headers).status_code == 200
             assert client.get("/api/v1/spy/signals", headers=headers).status_code == 200
+            assert client.get("/api/v1/avi/status", headers=headers).status_code == 200
+            assert client.get("/api/v1/avi/trades", headers=headers).status_code == 200
         assert client.get("/api/v1/integrations", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.get("/api/v1/broker/alpaca/account", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.get("/api/v1/settings", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.post("/api/v1/control/close-all", headers={"X-Beo-Key": READ}).status_code == 403
+        assert client.post("/api/v1/avi/kill", headers={"X-Beo-Key": READ}).status_code == 403
         assert client.post("/api/v1/control/trading", headers={"X-Beo-Key": READ}, json={"halted": True}).status_code == 403
         assert client.post("/api/v1/integrations/openai/secrets", headers={"X-Beo-Key": READ}, json={}).status_code == 403
 

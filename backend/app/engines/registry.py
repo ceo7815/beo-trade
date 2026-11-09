@@ -1,4 +1,4 @@
-"""Three desk systems. Options and Eli are live. Avi is a slot for a later engine."""
+"""Three desk systems. Options, Eli, and Avi each have their own status path."""
 
 from __future__ import annotations
 
@@ -22,17 +22,33 @@ SYSTEMS = (
     },
     {
         "id": "avi",
-        "label": "מסחר יומי אבי",
-        "label_en": "Avi intraday",
-        "status_path": None,
-        "engine": None,
+        "label": "מסחר אופציות אבי",
+        "label_en": "Avi options",
+        "status_path": "/api/v1/avi/status",
+        "engine": "avi",
         "ready": False,
-        "note": "בפיתוח",
     },
 )
+
+
+def avi_row() -> dict:
+    """Ready follows the engine flag. The status path is always the Avi route."""
+    from app.avi.api import ready
+
+    return {
+        "id": "avi",
+        "label": "מסחר אופציות אבי",
+        "label_en": "Avi options",
+        "status_path": "/api/v1/avi/status",
+        "engine": "avi",
+        "ready": ready(),
+    }
 
 
 def register(app: FastAPI) -> None:
     @app.get("/api/v1/systems")
     def systems():
-        return {"systems": [dict(row) for row in SYSTEMS]}
+        rows = []
+        for row in SYSTEMS:
+            rows.append(avi_row() if row["id"] == "avi" else dict(row))
+        return {"systems": rows}

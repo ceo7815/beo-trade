@@ -47,8 +47,12 @@ services:
     environment:
       <<: *paper-env
       THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
+      # Status and the kill flag live on the Avi volume. This does not point at beo_trade.db.
+      AVI_ENGINE_ENABLED: ${AVI_ENGINE_ENABLED:-false}
+      AVI_DB_PATH: /app/avi/avi.sqlite
     volumes:
       - beo_data:/app/data
+      - avi_data:/app/avi
     expose:
       - "8000"
     networks:
@@ -162,6 +166,55 @@ services:
       retries: 8
       start_period: 30s
 
+  avi:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.avi.runner"]
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+      PYTHONUNBUFFERED: "1"
+      AVI_ENGINE_ENABLED: ${AVI_ENGINE_ENABLED:-false}
+      AVI_ALPACA_API_KEY: ${AVI_ALPACA_API_KEY:-}
+      AVI_ALPACA_SECRET_KEY: ${AVI_ALPACA_SECRET_KEY:-}
+      AVI_ACCOUNT_LAST4: ${AVI_ACCOUNT_LAST4:-}
+      AVI_ALPACA_BASE_URL: ${AVI_ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      AVI_DATA_URL: ${AVI_DATA_URL:-https://data.alpaca.markets}
+      AVI_RISK_PCT: ${AVI_RISK_PCT:-0.04}
+      AVI_BANKROLL: ${AVI_BANKROLL:-}
+      AVI_MAX_CONTRACTS: ${AVI_MAX_CONTRACTS:-10}
+      AVI_MAX_DEBIT_PCT: ${AVI_MAX_DEBIT_PCT:-0.08}
+      AVI_KILL_SWITCH: ${AVI_KILL_SWITCH:-false}
+      AVI_KILL_FLAG: ${AVI_KILL_FLAG:-}
+      AVI_DB_PATH: /app/data/avi.sqlite
+    volumes:
+      - avi_data:/app/data
+    networks:
+      - beo
+    depends_on:
+      api:
+        condition: service_healthy
+    init: true
+    stop_grace_period: 20s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 512m
+    memswap_limit: 512m
+    deploy:
+      resources:
+        limits:
+          cpus: "0.50"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; p=Path('/app/data/avi_heartbeat.txt'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
   theta:
     image: beo-trade-theta
     build:
@@ -242,5 +295,6 @@ networks:
 
 volumes:
   beo_data:
+  avi_data:
   theta_logs:
   theta_lib:
