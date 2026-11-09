@@ -41,18 +41,20 @@ PERIOD_ID = "paper_100k"
 EXPECTED_LAST4 = "NXN0"
 EQUITY_PERIODS = ("all", "1A", "6M", "3M", "1M", "1W", "1D")
 _ACCOUNT_DROP = {"id", "account_number"}
+# Fills first. A later table must not stop the journal copy, and each table commits alone.
 _LOCAL_SOURCES = (
+    (BrokerFillRecord, "broker_fills", "observed_at", "id"),
+    (BrokerActivityRecord, "broker_activities", "observed_at", "id"),
+    (BrokerTrade, "broker_trades", "created_at", "id"),
+    (BrokerTradeEvent, "broker_trade_events", "created_at", "id"),
     (PaperTrade, "paper_trades", "entry_at", "id"),
     (PaperPosition, "paper_positions", "opened_at", "id"),
     (TradeOutcome, "trade_outcomes", "observed_at", "id"),
-    (BrokerTrade, "broker_trades", "created_at", "id"),
-    (BrokerTradeEvent, "broker_trade_events", "created_at", "id"),
     (PositionState, "position_states", "entry_time", "trade_id"),
     (BrokerOrderRecord, "broker_orders", "created_at", "id"),
-    (BrokerFillRecord, "broker_fills", "observed_at", "id"),
-    (BrokerActivityRecord, "broker_activities", "observed_at", "id"),
     (BrokerOrderSnapshot, "broker_order_snapshots", "observed_at", "id"),
 )
+_PAYLOAD_TIMES = ("timestamp", "filled_at", "transaction_time", "submitted_at", "created_at", "date")
 
 
 def _now() -> datetime:
@@ -101,14 +103,58 @@ def activity_key(row: dict) -> str:
     return hashlib.sha256(blob.encode()).hexdigest()[:80]
 
 
+def _coerce_moment(value):
+    """SQLite stores UTC wall time as ``2026-10-07 15:04:00.000000`` or with ``+00:00``."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value
+    text = str(value).strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        pass
+    for pattern in ("%Y-%m-%d %H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S%z", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"):
+        try:
+            return datetime.strptime(text, pattern)
+        except ValueError:
+            continue
+    return None
+
+
 def _in_period(moment) -> bool:
     period = get_period(PERIOD_ID)
     if period is None:
         return False
-    day = session_day(moment)
+    day = session_day(_coerce_moment(moment))
     if day is None:
         return False
     return period.contains_day(day)
+
+
+def _row_in_period(row, stamp_attr: str) -> bool:
+    """Keep the row when the column or the payload trade time falls in paper_100k.
+
+    ``observed_at`` is when we stored the fill. A fill synced after 2026-11-02
+    still belongs in the archive when the trade itself is inside the period.
+    """
+    moments = [getattr(row, stamp_attr, None)]
+    payload = getattr(row, "payload", None)
+    if isinstance(payload, dict):
+        moments.extend(payload.get(key) for key in _PAYLOAD_TIMES)
+    return any(_in_period(moment) for moment in moments)
+
+
+def _iso(value) -> str | None:
+    if value is None or value == "":
+        return None
+    if isinstance(value, datetime):
+        return value.isoformat()
+    return str(value)
 
 
 def _pull_account(session: Session, reader, moment: datetime) -> None:
@@ -271,35 +317,55 @@ def _pull_equity(session: Session, reader, moment: datetime) -> tuple[dict[str, 
     return counts, errors
 
 
-def _pull_local(session: Session, moment: datetime) -> int:
+def _pull_local_source(session: Session, spec, moment: datetime) -> int:
+    model, source, stamp_attr, id_attr = spec
     kept = 0
-    for model, source, stamp_attr, id_attr in _LOCAL_SOURCES:
-        rows = session.scalars(select(model)).all()
-        for row in rows:
-            if not _in_period(getattr(row, stamp_attr, None)):
-                continue
-            source_id = _text(getattr(row, id_attr, "")).strip()
-            if not source_id:
-                continue
-            existing = session.scalar(
-                select(ArchiveLocal).where(ArchiveLocal.source == source, ArchiveLocal.source_id == source_id)
-            )
-            payload = row_payload(row)
-            if existing is None:
-                session.add(
-                    ArchiveLocal(
-                        source=source,
-                        source_id=source_id[:64],
-                        payload=payload,
-                        archived_at=moment,
-                    )
-                )
-            else:
-                existing.payload = payload
-                existing.archived_at = moment
-            kept += 1
+    rows = session.scalars(select(model)).all()
+    for row in rows:
+        if not _row_in_period(row, stamp_attr):
+            continue
+        source_id = _text(getattr(row, id_attr, "")).strip()
+        if not source_id:
+            continue
+        existing = session.scalar(select(ArchiveLocal).where(ArchiveLocal.source == source, ArchiveLocal.source_id == source_id))
+        payload = row_payload(row)
+        if existing is None:
+            session.add(ArchiveLocal(source=source, source_id=source_id[:64], payload=payload, archived_at=moment))
+        else:
+            existing.payload = payload
+            existing.archived_at = moment
+        kept += 1
     session.commit()
     return kept
+
+
+def _pull_local(session: Session, moment: datetime) -> tuple[int, list[str]]:
+    """Copy each journal table on its own. One bad table does not drop the fills."""
+    kept = 0
+    errors: list[str] = []
+    for spec in _LOCAL_SOURCES:
+        try:
+            kept += _pull_local_source(session, spec, moment)
+        except Exception as exc:
+            errors.append(f"{spec[1]}:{type(exc).__name__}")
+            session.rollback()
+    return kept, errors
+
+
+def _persist_run(session: Session, run_id: str, status: str, detail: str, counts: dict) -> None:
+    """Write the run row even after an earlier rollback left the session unusable."""
+    try:
+        session.rollback()
+    except Exception:
+        pass
+    row = session.get(ArchiveRun, run_id)
+    if row is None:
+        return
+    row.status = status
+    row.detail = (detail or "")[:500]
+    row.finished_at = _now()
+    row.counts = counts or {}
+    session.commit()
 
 
 def run_paper_100k_archive(
@@ -338,23 +404,37 @@ def run_paper_100k_archive(
             equity_warnings = []
             errors.append(f"equity:{type(exc).__name__}")
             session.rollback()
+    local_errors: list[str] = []
     try:
-        _pull_local(session, moment)
+        _kept, local_errors = _pull_local(session, moment)
     except Exception as exc:
-        errors.append(f"local:{type(exc).__name__}")
+        local_errors = [f"local:{type(exc).__name__}"]
         session.rollback()
-    summary = archive_summary(session)
-    run.status = "ok" if not errors else ("partial" if summary["counts"]["orders"] or summary["counts"]["local_rows"] or summary["counts"]["activities"] else "failed")
-    if reader is None and not errors[1:]:
-        run.status = "local_only"
+    errors.extend(local_errors)
     if reader is not None and equity_warnings:
-        errors = errors + [f"equity_skip:{item}" for item in equity_warnings]
-    run.detail = ",".join(errors)[:500]
-    run.finished_at = _now()
-    run.counts = summary["counts"]
-    session.commit()
-    summary["run"] = {"id": run.id, "status": run.status, "detail": run.detail, "finished_at": run.finished_at.isoformat()}
-    summary["ok"] = run.status in {"ok", "local_only"}
+        errors.extend(f"equity_skip:{item}" for item in equity_warnings)
+    summary: dict = {"counts": {}}
+    try:
+        summary = archive_summary(session)
+    except Exception as exc:
+        errors.append(f"summary:{type(exc).__name__}")
+        session.rollback()
+    counts = summary.get("counts") or {}
+    hard = [item for item in errors if not str(item).startswith("equity_skip:")]
+    if reader is None and hard == ["alpaca:not_configured"]:
+        status = "local_only"
+    elif not hard:
+        status = "ok"
+    elif counts.get("orders") or counts.get("local_rows") or counts.get("activities"):
+        status = "partial"
+    else:
+        status = "failed"
+    detail = ",".join(errors)
+    _persist_run(session, run.id, status, detail, counts)
+    summary["run"] = {"id": run.id, "status": status, "detail": detail[:500], "finished_at": _iso(session.get(ArchiveRun, run.id).finished_at)}
+    summary["counts"] = counts or summary.get("counts") or {}
+    summary["ok"] = status in {"ok", "local_only", "partial"}
+    summary["last_run"] = summary["run"]
     return summary
 
 
@@ -406,12 +486,13 @@ def archive_summary(session: Session) -> dict:
         "orders_by_status": {str(status or ""): int(count) for status, count in status_rows},
         "activity_types": {str(kind or ""): int(count) for kind, count in type_rows},
         "last_run": None
-        if latest_run is None or latest_run.finished_at is None
+        if latest_run is None
         else {
             "id": latest_run.id,
             "status": latest_run.status,
-            "detail": latest_run.detail,
-            "finished_at": latest_run.finished_at.isoformat(),
+            "detail": latest_run.detail or "",
+            "started_at": _iso(latest_run.started_at),
+            "finished_at": _iso(latest_run.finished_at),
         },
     }
 
