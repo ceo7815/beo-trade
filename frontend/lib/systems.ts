@@ -1,4 +1,4 @@
-/** Top-level desk systems. Avi is a slot: set statusPath when its engine exists. */
+/** Top-level desk systems. Avi is the QQQ debit-spread paper engine. */
 
 export type SystemId = "options" | "eli" | "avi";
 
@@ -14,7 +14,7 @@ export type SystemRow = {
 export const SYSTEMS: SystemRow[] = [
   { id: "options", label: "אופציות", short: "אופציות", href: "/", badge: "ראשי", statusPath: "/api/v1/system" },
   { id: "eli", label: "מסחר יומי אלי", short: "יומי אלי", href: "/spy", badge: "נייר", statusPath: "/api/v1/spy/status" },
-  { id: "avi", label: "מסחר יומי אבי", short: "יומי אבי", href: "/avi", badge: "בפיתוח", statusPath: null },
+  { id: "avi", label: "מסחר אופציות אבי", short: "אבי", href: "/avi", badge: "נייר", statusPath: "/api/v1/avi/status" },
 ];
 
 export function systemFromPath(path: string): SystemId {

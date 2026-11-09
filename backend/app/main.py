@@ -774,6 +774,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         register_spy(app)
     except Exception as exc:
         log.warning("spy.routes_unavailable", error=type(exc).__name__)
+    try:
+        from app.avi.api import register as register_avi
+
+        register_avi(app)
+    except Exception as exc:
+        log.warning("avi.routes_unavailable", error=type(exc).__name__)
     from app.archive.routes import register as register_archive
     from app.engines.registry import register as register_engines
 

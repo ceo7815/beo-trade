@@ -51,6 +51,7 @@ const WARM: Record<string, string[]> = {
   "/finance": ["/api/v1/finance"],
   "/risk": ["/api/v1/risk"],
   "/spy": ["/api/v1/spy/status", "/api/v1/spy/trades", "/api/v1/spy/daily"],
+  "/avi": ["/api/v1/avi/status", "/api/v1/avi/trades"],
 };
 
 const icons = {
@@ -304,7 +305,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/", label: "לוח ראשי", icon: icons.desk },
         { href: "/spy", label: "מסחר יומי אלי", icon: icons.performance },
-        { href: "/avi", label: "מסחר יומי אבי", icon: icons.ai },
+        { href: "/avi", label: "מסחר אופציות אבי", icon: icons.ai },
         { href: "/engine", label: "המערכת האוטונומית", icon: icons.scan },
         { href: "/positions", label: "פוזיציות פתוחות", icon: icons.positions },
         { href: "/history", label: "היסטוריית עסקאות", icon: icons.history },
@@ -370,7 +371,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     return hash === hrefHash;
   }
   const inTabs = tabs.some((tab) => tabOn(tab.href));
-  const title = aviDesk ? "מסחר יומי אבי" : spyDesk ? "מסחר יומי אלי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
+  const title = aviDesk ? "מסחר אופציות אבי" : spyDesk ? "מסחר יומי אלי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
 
   useEffect(() => {

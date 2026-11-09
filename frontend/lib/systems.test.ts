@@ -18,8 +18,9 @@ test("the old spy desk key opens Eli and a query wins", () => {
   assert.equal(parseStored(null, null, null), null);
 });
 
-test("Avi has no status endpoint yet", () => {
-  assert.equal(systemById("avi").statusPath, null);
+test("Avi options points at its own status route", () => {
+  assert.equal(systemById("avi").label, "מסחר אופציות אבי");
+  assert.equal(systemById("avi").statusPath, "/api/v1/avi/status");
   assert.equal(systemById("eli").statusPath, "/api/v1/spy/status");
   assert.equal(systemById("options").label, "אופציות");
 });
