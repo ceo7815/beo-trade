@@ -65,7 +65,7 @@ def _cfg(tmp_path, **overrides) -> SpyConfig:
         enabled=True,
         key_id="kid",
         secret="super-secret-value",
-        account="PA3YUE43D",
+        account="PA3NEW25000",
         trading_url="",
         data_url="",
         pdt_guard=True,
@@ -118,7 +118,7 @@ def _clock(day: date = TODAY) -> dict:
     return {"is_open": True, "next_close": close}
 
 
-def _account(equity: str = "6252.00", count: int | None = 0, pdt: bool = False, number: str = "PA3YUE43D") -> dict:
+def _account(equity: str = "6252.00", count: int | None = 0, pdt: bool = False, number: str = "PA3NEW25000") -> dict:
     return {
         "equity": equity,
         "account_number": number,
@@ -287,7 +287,7 @@ def test_paper_host_is_the_only_trading_url():
     assert assert_paper_url("https://paper-api.alpaca.markets/") == "https://paper-api.alpaca.markets"
     with pytest.raises(Exception):
         assert_paper_url("https://api.alpaca.markets")
-    cfg = SpyConfig(True, "kid", "super-secret-value", "PA3YUE43D", "https://api.alpaca.markets", "", True, False, ("QQQ",), TODAY and __import__("pathlib").Path("/tmp/spy.sqlite"))
+    cfg = SpyConfig(True, "kid", "super-secret-value", "PA3NEW25000", "https://api.alpaca.markets", "", True, False, ("QQQ",), TODAY and __import__("pathlib").Path("/tmp/spy.sqlite"))
     assert startup_mode(cfg) == "refused"
     assert "super-secret-value" not in repr(cfg)
     assert "super-secret-value" not in redact("token super-secret-value leaked", cfg)
@@ -395,7 +395,7 @@ def test_account_mismatch_sends_nothing(tmp_path):
     assert broker.submitted == []
     assert store.meta("account_mismatch") == "1"
     store.close()
-    assert account_matches(_cfg(tmp_path), {"account_number": "PA3YUE43D"})
+    assert account_matches(_cfg(tmp_path), {"account_number": "PA3NEW25000"})
 
 
 def test_spy_package_does_not_touch_the_options_worker():
@@ -418,7 +418,7 @@ def test_daily_vol_needs_prior_sessions_only():
 
 
 def test_broker_refuses_a_non_spy_order(monkeypatch):
-    cfg = SpyConfig(True, "kid", "sec", "PA3YUE43D", "", "", True, False, (), __import__("pathlib").Path("/tmp/x.sqlite"))
+    cfg = SpyConfig(True, "kid", "sec", "PA3NEW25000", "", "", True, False, (), __import__("pathlib").Path("/tmp/x.sqlite"))
 
     class Transport:
         def handle_request(self, request):
@@ -426,5 +426,5 @@ def test_broker_refuses_a_non_spy_order(monkeypatch):
 
     # Construction checks the URL before any request. A live URL never builds a client.
     with pytest.raises(Exception):
-        SpyBroker(SpyConfig(True, "kid", "sec", "PA3YUE43D", "https://api.alpaca.markets", "", True, False, (), cfg.db))
+        SpyBroker(SpyConfig(True, "kid", "sec", "PA3NEW25000", "https://api.alpaca.markets", "", True, False, (), cfg.db))
     assert LOOKBACK == 14

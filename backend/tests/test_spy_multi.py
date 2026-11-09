@@ -8,7 +8,7 @@ from decimal import Decimal
 from app.spy.clock import NY
 from app.spy.engine import Engine
 from app.spy.store import Store
-from app.spy.strategy import fit_order_qty, share_qty
+from app.spy.strategy import fit_order_qty, pdt_block_reason, share_qty
 from tests.test_spy_rules import TODAY, _cfg, _clock, _prior
 
 SYMBOLS = ("SPY", "QQQ", "IWM")
@@ -28,7 +28,7 @@ def _account(count: int = 0, buying: str = "6252") -> dict:
     return {
         "equity": "6252.00",
         "buying_power": buying,
-        "account_number": "PA3YUE43D",
+        "account_number": "PA3NEW25000",
         "daytrade_count": count,
         "pattern_day_trader": False,
     }
@@ -117,6 +117,16 @@ def test_pdt_count_is_shared_across_symbols(tmp_path):
     assert blocked["reason"] == "PDT_LIMIT"
     notionals = sum(int(row["qty"]) * Decimal("102") for row in broker.submitted)
     assert notionals <= Decimal("6252")
+    engine.store.close()
+
+
+def test_pdt_does_not_block_a_25k_book(tmp_path):
+    assert pdt_block_reason(equity=Decimal("25000"), daytrade_count=3, pattern_day_trader=True, guard=True) is None
+    engine, broker = _engine(tmp_path, max_positions=3)
+    account = _account(count=3, buying="25000")
+    account["equity"] = "25000.00"
+    _run(engine, account)
+    assert [row["symbol"] for row in broker.submitted] == ["SPY", "QQQ", "IWM"]
     engine.store.close()
 
 

@@ -25,12 +25,12 @@ Rules follow spec v5 (Zarattini, Aziz & Barbon 2024), not the paper where they d
 - Size is min(1, 0.02 / 14-day daily volatility) of **live equity**, in whole shares, and never more than 1× equity. Nothing is hardcoded to a dollar balance.
 - Live book is long-only (`SPY_ALLOW_SHORT=false`). Short math exists and is tested; it does not send orders unless that flag is turned on.
 - The live book is `SPY_TRADE_SYMBOLS` (default `SPY,QQQ,IWM`), up to `SPY_MAX_POSITIONS` (3). Each name has its own noise zone. Size is `min(1, 0.02/σ) × equity / positions`, and the book never exceeds 1× equity or available buying power. `SPY_SHADOW_SYMBOLS` defaults to empty; those names are logged and never ordered.
-- Brakes: PDT guard (default on; under $25,000, no new entry when day trades left are 0, reason `PDT_LIMIT`; a PDT reject is not retried), 2% daily loss, 4 entries a day, 10% drawdown halt, and a kill switch.
+- Brakes: PDT guard stays on. At or above $25,000 it does not block. Below that line a missing day trade is `PDT_LIMIT` and is not retried. Daily loss is 2% of total equity. Each symbol may enter twice a day, and the book stops at `SPY_MAX_ENTRIES_DAY` (6). A 10% drawdown and the kill switch halt the engine.
 
-Account pin for this deploy: `SPY_ALPACA_ACCOUNT=PA3YUE43D` (SPY Intraday 20K ILS). If the broker account number differs, the engine sends nothing. Keys are `SPY_ALPACA_KEY_ID` and `SPY_ALPACA_SECRET_KEY` on `https://paper-api.alpaca.markets` only.
+Set `SPY_ALPACA_ACCOUNT` to the new $25,000 paper account when its number is known. An empty pin does not guess an old account. If the pin is set and the broker account differs, the engine sends nothing. Keys are `SPY_ALPACA_KEY_ID` and `SPY_ALPACA_SECRET_KEY` on `https://paper-api.alpaca.markets` only.
 
 Enable on XCloud: set those variables in the server env, set `SPY_ENGINE_ENABLED=true`, then Deploy Now. A git push does not start it. Kill switch: `touch` the data volume file `spy_kill.flag`, or set `SPY_KILL_SWITCH=true`.
 
-The deleted options view account `PA3LU0NE5` (beo 10K ILS) stays in the history switcher as unavailable. Its credentials are not used, and a failure there does not change options trading.
+The deleted view accounts stay in the account menu as unavailable: `PA3LU0NE5` (beo 10K ILS) and `PA3YUE43D` (SPY Intraday 20K ILS). Their credentials are not used, and a failure there does not change options trading.
 
 Read API, same key as the other desk reads: `/api/v1/spy/status`, `/api/v1/spy/trades`, `/api/v1/spy/daily`, `/api/v1/spy/signals`. The site switcher at the top moves between Options and SPY Intraday.
