@@ -285,6 +285,18 @@ body {
 }
 .spy-mode { padding: 6px 12px; border-radius: 999px; font-size: 13px; font-weight: 700; }
 .spy-stats { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.spy-symbols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.spy-symbols article {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid rgba(228, 194, 122, 0.38);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.1), rgba(255, 255, 255, 0.03)), var(--glass);
+}
+.spy-symbols b { font-size: 18px; }
+.spy-symbols span { color: var(--silver); font-size: 13px; }
 .spy-stats article, .spy-shadow { display: flex; flex-direction: column; gap: 4px; padding: 14px 16px; border-radius: 18px; }
 .spy-stats span, .spy-shadow span, .spy-shadow p { color: var(--silver); font-size: 12px; }
 .spy-stats b, .spy-shadow strong { font-size: 22px; font-variant-numeric: tabular-nums; }
@@ -332,7 +344,8 @@ body {
 .spy-desk .down { color: #ff5d6c; }
 @media (max-width: 980px) {
   .header-picks, .mobile-title .account-switch { width: 100%; }
-  .spy-stats, .spy-layout { display: grid; grid-template-columns: 1fr 1fr; }
+  .spy-stats, .spy-layout, .spy-symbols { display: grid; grid-template-columns: 1fr 1fr; }
+  .spy-symbols { grid-template-columns: 1fr; }
   .spy-layout { grid-template-columns: 1fr; }
   .spy-shadow { width: auto; }
   .spy-head h1 { font-size: 20px; margin: 0; }

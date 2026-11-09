@@ -7,6 +7,15 @@ import { apiGet, poll } from "@/lib/api";
 type Point = { t: string; price: string | null; upper: string | null; lower: string | null; vwap: string | null };
 type Marker = { t: string; kind: string; price: string | null; reason?: string };
 type Shadow = { symbol: string; side?: string | null; qty?: number; entry_price?: string | null; day_pnl?: string | null };
+type SymbolCard = {
+  symbol: string;
+  price?: string | null;
+  upper?: string | null;
+  lower?: string | null;
+  vwap?: string | null;
+  pnl?: string | null;
+  position?: { side?: string; qty?: number };
+};
 type Status = {
   enabled?: boolean;
   mode?: string;
@@ -21,11 +30,13 @@ type Status = {
   daytrade_count?: number | null;
   pdt_guard?: boolean;
   brakes?: { daily_loss?: boolean; drawdown?: boolean; kill?: boolean; entries_today?: number; entries_max?: number; halt_reason?: string; pdt_blocked?: boolean };
+  symbols?: SymbolCard[];
   shadow?: Shadow[];
   series?: Point[];
   markers?: Marker[];
 };
 type Trade = {
+  symbol?: string;
   session_date?: string;
   side?: string;
   qty?: number;
@@ -146,7 +157,7 @@ function SpyScreen() {
       {sample ? <p className="spy-sample">נתוני דוגמה — לא מסחר אמיתי ולא פקודות</p> : null}
       <header className="spy-head">
         <div>
-          <p className="spy-kicker">{sample ? "SAMPLE · נתוני דוגמה" : "PAPER · SPY בלבד · לונג"}</p>
+          <p className="spy-kicker">{sample ? "SAMPLE · נתוני דוגמה" : "PAPER · לונג · כמה סימולים"}</p>
           <h1>מומנטום תוך-יומי</h1>
         </div>
         <span className={`spy-mode ${sample ? "sample" : mode}`}>{modeLabel}</span>
@@ -171,6 +182,20 @@ function SpyScreen() {
           <b>{left == null ? "לא חל" : String(left)}</b>
         </article>
       </section>
+      {(status?.symbols || []).length ? (
+        <section className="spy-symbols">
+          {(status?.symbols || []).map((card) => (
+            <article key={card.symbol}>
+              <b>{card.symbol}</b>
+              <span>מחיר {card.price || "—"}</span>
+              <span>עליון {card.upper || "—"} · תחתון {card.lower || "—"}</span>
+              <span>VWAP {card.vwap || "—"}</span>
+              <span>{card.position?.qty ? `${card.position.side === "short" ? "שורט" : "לונג"} ${card.position.qty}` : "שטוח"}</span>
+              <strong className={Number(card.pnl) < 0 ? "down" : "up"}>{cash(card.pnl, true)}</strong>
+            </article>
+          ))}
+        </section>
+      ) : null}
       <section className="spy-layout">
         <div className="spy-panel">
           <div className="spy-legend">
@@ -182,6 +207,7 @@ function SpyScreen() {
           </div>
           <ZoneChart series={status?.series || []} markers={status?.markers || []} />
         </div>
+        {shadow?.symbol ? (
         <aside className="spy-shadow">
           <p>צל {shadow?.symbol || "QQQ"}</p>
           <b>בלי פקודות</b>
@@ -189,6 +215,7 @@ function SpyScreen() {
           <strong className={Number(shadow?.day_pnl) < 0 ? "down" : "up"}>{cash(shadow?.day_pnl, true)}</strong>
           <span>{shadow?.qty ? `${shadow.side === "short" ? "שורט" : "לונג"} ${shadow.qty}` : "אין פוזיציית צל"}</span>
         </aside>
+        ) : null}
       </section>
       <section className="spy-meta">
         <p>חשבון ••••{status?.account_last4 || "—"} {status?.account_match === false ? "· לא תואם" : ""}</p>
@@ -203,6 +230,7 @@ function SpyScreen() {
             <table className="ops-cardify">
               <thead>
                 <tr>
+                  <th>סימול</th>
                   <th>יום</th>
                   <th>צד</th>
                   <th>כמות</th>
@@ -215,6 +243,7 @@ function SpyScreen() {
               <tbody>
                 {trades.slice(0, 30).map((trade, index) => (
                   <tr key={`${trade.session_date}-${index}`}>
+                    <td>{trade.symbol || "SPY"}</td>
                     <td>{trade.session_date}</td>
                     <td>{trade.side === "short" ? "שורט" : "לונג"}</td>
                     <td>{trade.qty}</td>

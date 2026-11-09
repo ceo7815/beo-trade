@@ -150,21 +150,45 @@ def daily_vol(prior: list[list[Bar]], lookback: int = LOOKBACK) -> Decimal | Non
     return population_stdev(returns)
 
 
-def share_qty(equity: Decimal, price: Decimal, daily_volatility: Decimal) -> int:
-    """Whole shares. Weight is min(1, 0.02 / vol) of *this* equity, never above 1x.
+def share_qty(equity: Decimal, price: Decimal, daily_volatility: Decimal, slots: int = 1) -> int:
+    """Whole shares. Each slot is equity / slots, then min(1, 0.02 / vol) of that slice.
 
-    Equity and price come from the caller. There is no hardcoded account size.
+    ``slots`` is SPY_MAX_POSITIONS. The default 1 keeps a single-symbol book on the
+    full equity slice. Equity and price come from the caller.
     """
     equity = _d(equity)
     price = _d(price)
     daily_volatility = _d(daily_volatility)
+    slots = max(1, int(slots))
     if equity <= 0 or price <= 0 or daily_volatility <= 0:
         return 0
+    budget = equity / Decimal(slots)
     weight = min(Decimal(1), VOL_TARGET / daily_volatility)
-    notional = equity * weight
+    notional = budget * weight
+    if notional > budget:
+        notional = budget
     if notional > equity:
         notional = equity
     return int((notional / price).to_integral_value(rounding=ROUND_DOWN))
+
+
+def fit_order_qty(qty: int, price: Decimal, *, equity: Decimal, gross: Decimal, buying_power: Decimal | None) -> int:
+    """Shrink an order so gross stays within 1x equity and within buying power."""
+    price = _d(price)
+    equity = _d(equity)
+    gross = _d(gross)
+    if qty < 1 or price <= 0 or equity <= 0:
+        return 0
+    room = equity - gross
+    if room <= 0:
+        return 0
+    allowed = int((room / price).to_integral_value(rounding=ROUND_DOWN))
+    if buying_power is not None:
+        power = _d(buying_power)
+        if power <= 0:
+            return 0
+        allowed = min(allowed, int((power / price).to_integral_value(rounding=ROUND_DOWN)))
+    return max(0, min(int(qty), allowed))
 
 
 def stop_level(side: str, upper: Decimal, lower: Decimal, vwap: Decimal | None) -> Decimal:

@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import structlog
 
 from app.spy.broker import SpyBroker
-from app.spy.config import SYMBOL, SpyConfig, load_config, startup_mode
+from app.spy.config import SpyConfig, load_config, startup_mode
 from app.spy.engine import Engine, bars_from_rows, write_idle_status
 from app.spy.store import Store
 
@@ -99,7 +99,7 @@ def run(cfg: SpyConfig | None = None) -> None:
             try:
                 account = broker.account()
                 clock = broker.clock()
-                symbols = [SYMBOL, *current.shadow]
+                symbols = list(dict.fromkeys([*current.symbols, *current.shadow]))
                 bars = {symbol: _sync(broker, store, symbol, now) for symbol in symbols}
                 engine.cycle(now, bars, clock, account)
             except Exception as exc:

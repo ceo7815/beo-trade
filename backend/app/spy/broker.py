@@ -108,8 +108,9 @@ class SpyBroker:
 
     def submit(self, body: dict) -> dict:
         symbol = str(body.get("symbol") or "")
-        if symbol != "SPY":
-            raise BrokerError("spy broker accepts SPY only")
+        allowed = set(self.cfg.symbols) or {"SPY"}
+        if symbol not in allowed:
+            raise BrokerError("symbol is outside the trade list")
         response = self._trade.post("/v2/orders", json=body)
         if response.status_code < 400:
             payload = response.json()

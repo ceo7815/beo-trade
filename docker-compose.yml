@@ -133,7 +133,10 @@ services:
       SPY_DATA_URL: ${SPY_DATA_URL:-https://data.alpaca.markets}
       SPY_PDT_GUARD: ${SPY_PDT_GUARD:-true}
       SPY_ALLOW_SHORT: ${SPY_ALLOW_SHORT:-false}
-      SPY_SHADOW_SYMBOLS: ${SPY_SHADOW_SYMBOLS:-QQQ}
+      SPY_TRADE_SYMBOLS: ${SPY_TRADE_SYMBOLS:-SPY,QQQ,IWM}
+      SPY_MAX_POSITIONS: ${SPY_MAX_POSITIONS:-3}
+      SPY_MAX_ENTRIES_DAY: ${SPY_MAX_ENTRIES_DAY:-6}
+      SPY_SHADOW_SYMBOLS: ${SPY_SHADOW_SYMBOLS:-}
     volumes:
       - beo_data:/app/data
     networks:

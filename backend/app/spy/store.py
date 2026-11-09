@@ -241,15 +241,17 @@ class Store:
             ).fetchone()
         return row is not None
 
-    def entry_count(self, session_date: str) -> int:
-        row = self._conn.execute(
-            """
+    def entry_count(self, session_date: str, symbol: str | None = None) -> int:
+        sql = """
             SELECT COUNT(*) AS n FROM spy_orders
             WHERE session_date = ? AND purpose = 'entry'
               AND status IN ('new', 'accepted', 'pending_new', 'partially_filled', 'filled')
-            """,
-            (session_date,),
-        ).fetchone()
+        """
+        params: list[object] = [session_date]
+        if symbol:
+            sql += " AND symbol = ?"
+            params.append(symbol)
+        row = self._conn.execute(sql, params).fetchone()
         return int(row["n"] if row else 0)
 
     def open_trade(self, table: str = "spy_trades", symbol: str = "SPY") -> sqlite3.Row | None:
