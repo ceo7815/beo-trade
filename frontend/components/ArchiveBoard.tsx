@@ -10,7 +10,7 @@ type Summary = {
   account?: { equity?: string | null; cash?: string | null; last_equity?: string | null; last4?: string | null; account_match?: boolean } | null;
   counts?: { orders?: number; activities?: number; days?: number; positions?: number; local_rows?: number };
   orders_by_status?: Record<string, number>;
-  last_run?: { status?: string; finished_at?: string; detail?: string } | null;
+  last_run?: { id?: string; status?: string; finished_at?: string; detail?: string } | null;
 };
 
 type Point = { t?: string; equity?: string | null; day_pnl?: string | null };
