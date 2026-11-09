@@ -6,7 +6,7 @@ from fastapi import FastAPI, Query
 from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
-from app.archive.job import PERIOD_ID, archive_summary, equity_points, run_paper_100k_archive
+from app.archive.job import PERIOD_ID, archive_summary, equity_points, start_paper_100k_archive
 from app.archive.reader import ArchiveNotConfigured, ReadOnlyAlpaca
 from app.archive.tables import ArchiveActivity, ArchiveLocal, ArchiveOrder
 from app.config.settings import Settings
@@ -25,21 +25,19 @@ def build_reader(settings: Settings) -> ReadOnlyAlpaca:
 def register(app: FastAPI, settings: Settings) -> None:
     @app.post("/api/v1/archive/paper_100k/run")
     def run_archive():
-        reader = None
+        """Start the copy on a background thread and return the run id. Health stays up."""
+        keys = True
         try:
-            reader = build_reader(settings)
+            probe = build_reader(settings)
         except ArchiveNotConfigured:
-            reader = None
-        try:
-            with session_scope() as session:
-                body = run_paper_100k_archive(session, reader)
-        finally:
-            if reader is not None and hasattr(reader, "close"):
-                reader.close()
-        status = 200 if reader is not None else 409
-        if reader is None:
+            keys = False
+        else:
+            if hasattr(probe, "close"):
+                probe.close()
+        body = start_paper_100k_archive(settings)
+        if not keys:
             body["detail"] = "אין מפתחות ALPACA_100K. נשמר רק היומן המקומי. לא נשלחה פקודה."
-        return JSONResponse(body, status_code=status)
+        return JSONResponse(body, status_code=200 if body.get("already_running") else 202)
 
     @app.get("/api/v1/archive/paper_100k/summary")
     def summary():

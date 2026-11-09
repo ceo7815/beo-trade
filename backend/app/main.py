@@ -220,6 +220,13 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         assert_boot_safe(current)
         configure_database(current)
         init_db(current)
+        try:
+            from app.archive.job import recover_stale_runs
+
+            with session_scope() as session:
+                recover_stale_runs(session, own_ids=set())
+        except Exception as exc:
+            log.warning("archive.stale_recover_failed", error=type(exc).__name__)
         log.info("api.started", service="api", trading_mode="PAPER")
         yield
 

@@ -54,10 +54,10 @@ def _fill(execution_id: str, stamp: str, symbol: str, side: str, qty: str, price
 def test_stored_fill_timestamps_are_archived_and_last_run_is_visible(tmp_path, monkeypatch):
     real = _pull_local_source
 
-    def flaky(session, spec, moment):
+    def flaky(session, spec, moment, **kwargs):
         if spec[1] == "position_states":
             raise RuntimeError("schema")
-        return real(session, spec, moment)
+        return real(session, spec, moment, **kwargs)
 
     monkeypatch.setattr("app.archive.job._pull_local_source", flaky)
     with TestClient(create_app(_settings(tmp_path))) as client:

@@ -8,11 +8,14 @@ from __future__ import annotations
 
 import hashlib
 import json
-from datetime import datetime, timezone
+import threading
+from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
+
+from app.models.db import session_scope
 
 from app.analytics.periods import get_period, session_day
 from app.archive.tables import (
@@ -39,6 +42,10 @@ from app.models.tables import (
 
 PERIOD_ID = "paper_100k"
 EXPECTED_LAST4 = "NXN0"
+LOCAL_BATCH_SIZE = 500
+STALE_RUN_AFTER = timedelta(minutes=15)
+_start_lock = threading.Lock()
+_owned_runs: set[str] = set()
 EQUITY_PERIODS = ("all", "1A", "6M", "3M", "1M", "1W", "1D")
 _ACCOUNT_DROP = {"id", "account_number"}
 # Fills first. A later table must not stop the journal copy, and each table commits alone.
@@ -224,6 +231,7 @@ def _pull_orders(session: Session, reader, moment: datetime, page_size: int) -> 
             row.payload = raw
             row.archived_at = moment
         session.commit()
+        session.expunge_all()
         if fresh == 0 or len(page) < page_size or not oldest or oldest == until:
             break
         until = oldest
@@ -258,6 +266,7 @@ def _pull_activities(session: Session, reader, moment: datetime, page_size: int)
             row.payload = raw
             row.archived_at = moment
         session.commit()
+        session.expunge_all()
         if fresh == 0 or len(page) < page_size or not last_key or last_key == token:
             break
         token = last_key
@@ -317,39 +326,94 @@ def _pull_equity(session: Session, reader, moment: datetime) -> tuple[dict[str, 
     return counts, errors
 
 
-def _pull_local_source(session: Session, spec, moment: datetime) -> int:
+def _as_utc(value) -> datetime | None:
+    moment = _coerce_moment(value)
+    if moment is None:
+        return None
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
+def _touch_run(session: Session, run_id: str) -> None:
+    row = session.get(ArchiveRun, run_id)
+    if row is not None and row.status == "running":
+        row.started_at = _now()
+
+
+def _pull_local_source(session: Session, spec, moment: datetime, *, batch_size: int = LOCAL_BATCH_SIZE, run_id: str = "") -> int:
+    """Keyset pages. Each batch is committed and dropped so the identity map cannot grow to the whole table."""
     model, source, stamp_attr, id_attr = spec
+    key = getattr(model, id_attr)
     kept = 0
-    rows = session.scalars(select(model)).all()
-    for row in rows:
-        if not _row_in_period(row, stamp_attr):
-            continue
-        source_id = _text(getattr(row, id_attr, "")).strip()
-        if not source_id:
-            continue
-        existing = session.scalar(select(ArchiveLocal).where(ArchiveLocal.source == source, ArchiveLocal.source_id == source_id))
-        payload = row_payload(row)
-        if existing is None:
-            session.add(ArchiveLocal(source=source, source_id=source_id[:64], payload=payload, archived_at=moment))
-        else:
-            existing.payload = payload
-            existing.archived_at = moment
-        kept += 1
-    session.commit()
+    last_id = ""
+    size = max(1, int(batch_size))
+    while True:
+        query = select(model).order_by(key.asc()).limit(size)
+        if last_id:
+            query = query.where(key > last_id)
+        rows = session.scalars(query).all()
+        if not rows:
+            break
+        for row in rows:
+            source_id = _text(getattr(row, id_attr, "")).strip()
+            if source_id > last_id:
+                last_id = source_id
+            if not source_id or not _row_in_period(row, stamp_attr):
+                continue
+            existing = session.scalar(select(ArchiveLocal).where(ArchiveLocal.source == source, ArchiveLocal.source_id == source_id[:64]))
+            payload = row_payload(row)
+            if existing is None:
+                session.add(ArchiveLocal(source=source, source_id=source_id[:64], payload=payload, archived_at=moment))
+            else:
+                existing.payload = payload
+                existing.archived_at = moment
+            kept += 1
+        if run_id:
+            _touch_run(session, run_id)
+        session.commit()
+        session.expunge_all()
+        if len(rows) < size or not last_id:
+            break
     return kept
 
 
-def _pull_local(session: Session, moment: datetime) -> tuple[int, list[str]]:
+def _pull_local(session: Session, moment: datetime, *, batch_size: int = LOCAL_BATCH_SIZE, run_id: str = "") -> tuple[int, list[str]]:
     """Copy each journal table on its own. One bad table does not drop the fills."""
     kept = 0
     errors: list[str] = []
     for spec in _LOCAL_SOURCES:
         try:
-            kept += _pull_local_source(session, spec, moment)
+            kept += _pull_local_source(session, spec, moment, batch_size=batch_size, run_id=run_id)
         except Exception as exc:
             errors.append(f"{spec[1]}:{type(exc).__name__}")
             session.rollback()
     return kept, errors
+
+
+def recover_stale_runs(session: Session, *, now: datetime | None = None, stale_after: timedelta = STALE_RUN_AFTER, own_ids: set[str] | None = None) -> int:
+    """Close runs this process is not actively finishing.
+
+    A run still owned by this process and touched within ``stale_after`` stays
+    ``running``. Everything else left in ``running`` is a killed request.
+    """
+    moment = now or _now()
+    cutoff = moment - stale_after
+    owned = _owned_runs if own_ids is None else own_ids
+    rows = session.scalars(select(ArchiveRun).where(ArchiveRun.status == "running")).all()
+    changed = 0
+    for row in rows:
+        started = _as_utc(row.started_at)
+        fresh = started is not None and started >= cutoff
+        if row.id in owned and fresh:
+            continue
+        row.status = "failed"
+        row.detail = "interrupted"
+        row.finished_at = moment
+        changed += 1
+    if changed:
+        session.commit()
+    return changed
 
 
 def _persist_run(session: Session, run_id: str, status: str, detail: str, counts: dict) -> None:
@@ -368,25 +432,80 @@ def _persist_run(session: Session, run_id: str, status: str, detail: str, counts
     session.commit()
 
 
+def _public_run(row: ArchiveRun) -> dict:
+    return {
+        "id": row.id,
+        "status": row.status,
+        "detail": row.detail or "",
+        "started_at": _iso(row.started_at),
+        "finished_at": _iso(row.finished_at),
+    }
+
+
+def _fresh_running(session: Session) -> ArchiveRun | None:
+    return session.scalar(select(ArchiveRun).where(ArchiveRun.status == "running").order_by(ArchiveRun.started_at.desc()).limit(1))
+
+
 def run_paper_100k_archive(
     session: Session,
     reader,
     *,
     order_page_size: int = 500,
     activity_page_size: int = 100,
+    local_batch_size: int = LOCAL_BATCH_SIZE,
+    run_id: str | None = None,
 ) -> dict:
-    """Copy the account. ``reader`` None archives local rows only."""
+    """Copy the account. ``reader`` None archives local rows only.
+
+    Pass ``run_id`` when the row was already inserted and this call only does the work.
+    """
+    recover_stale_runs(session)
+    if run_id is None:
+        active = _fresh_running(session)
+        if active is not None:
+            summary = archive_summary(session)
+            summary["run"] = _public_run(active)
+            summary["last_run"] = summary["run"]
+            summary["started"] = False
+            summary["already_running"] = True
+            summary["ok"] = False
+            return summary
+        moment = _now()
+        run = ArchiveRun(started_at=moment, status="running")
+        session.add(run)
+        session.commit()
+        run_id = run.id
+    _owned_runs.add(run_id)
+    try:
+        return _execute_archive(
+            session,
+            reader,
+            run_id,
+            order_page_size=order_page_size,
+            activity_page_size=activity_page_size,
+            local_batch_size=local_batch_size,
+        )
+    finally:
+        _owned_runs.discard(run_id)
+
+
+def _execute_archive(
+    session: Session,
+    reader,
+    run_id: str,
+    *,
+    order_page_size: int,
+    activity_page_size: int,
+    local_batch_size: int,
+) -> dict:
     moment = _now()
-    run = ArchiveRun(started_at=moment, status="running")
-    session.add(run)
-    session.commit()
     errors: list[str] = []
     if reader is None:
         errors.append("alpaca:not_configured")
     else:
         for name, pull in (
             ("account", lambda: _pull_account(session, reader, moment)),
-            ("positions", lambda: _pull_positions(session, reader, run.id, moment)),
+            ("positions", lambda: _pull_positions(session, reader, run_id, moment)),
             ("orders", lambda: _pull_orders(session, reader, moment, order_page_size)),
             ("activities", lambda: _pull_activities(session, reader, moment, activity_page_size)),
         ):
@@ -406,7 +525,7 @@ def run_paper_100k_archive(
             session.rollback()
     local_errors: list[str] = []
     try:
-        _kept, local_errors = _pull_local(session, moment)
+        _kept, local_errors = _pull_local(session, moment, batch_size=local_batch_size, run_id=run_id)
     except Exception as exc:
         local_errors = [f"local:{type(exc).__name__}"]
         session.rollback()
@@ -430,12 +549,75 @@ def run_paper_100k_archive(
     else:
         status = "failed"
     detail = ",".join(errors)
-    _persist_run(session, run.id, status, detail, counts)
-    summary["run"] = {"id": run.id, "status": status, "detail": detail[:500], "finished_at": _iso(session.get(ArchiveRun, run.id).finished_at)}
+    _persist_run(session, run_id, status, detail, counts)
+    finished = session.get(ArchiveRun, run_id)
+    summary["run"] = _public_run(finished) if finished is not None else {"id": run_id, "status": status, "detail": detail[:500], "finished_at": None}
     summary["counts"] = counts or summary.get("counts") or {}
     summary["ok"] = status in {"ok", "local_only", "partial"}
     summary["last_run"] = summary["run"]
+    summary["started"] = True
+    summary["already_running"] = False
     return summary
+
+
+def finish_archive_run(settings, run_id: str) -> None:
+    """Background entry. Builds its own reader and session so the request can return."""
+    from app.archive.routes import build_reader
+    from app.archive.reader import ArchiveNotConfigured
+
+    reader = None
+    try:
+        try:
+            reader = build_reader(settings)
+        except ArchiveNotConfigured:
+            reader = None
+        with session_scope() as session:
+            _execute_archive(
+                session,
+                reader,
+                run_id,
+                order_page_size=500,
+                activity_page_size=100,
+                local_batch_size=LOCAL_BATCH_SIZE,
+            )
+    except Exception:
+        try:
+            with session_scope() as session:
+                _persist_run(session, run_id, "failed", "interrupted", {})
+        except Exception:
+            return
+    finally:
+        _owned_runs.discard(run_id)
+        if reader is not None and hasattr(reader, "close"):
+            reader.close()
+
+
+def start_paper_100k_archive(settings) -> dict:
+    """Insert a run row and return. The copy continues on a daemon thread."""
+    from app.models.db import session_scope
+
+    with _start_lock:
+        with session_scope() as session:
+            recover_stale_runs(session)
+            active = _fresh_running(session)
+            if active is not None:
+                return {"started": False, "already_running": True, "run": _public_run(active)}
+            run = ArchiveRun(started_at=_now(), status="running", detail="")
+            session.add(run)
+            session.commit()
+            run_id = run.id
+            _owned_runs.add(run_id)
+        threading.Thread(
+            target=finish_archive_run,
+            args=(settings, run_id),
+            name="archive-paper-100k",
+            daemon=True,
+        ).start()
+        return {
+            "started": True,
+            "already_running": False,
+            "run": {"id": run_id, "status": "running", "detail": "", "started_at": _iso(_now()), "finished_at": None},
+        }
 
 
 def archive_summary(session: Session) -> dict:
