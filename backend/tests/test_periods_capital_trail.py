@@ -62,8 +62,8 @@ def _cfg_100k() -> TradingConfig:
 
 def test_periods_split_at_2026_11_02():
     rows = load_periods(PERIODS)
-    assert [row.id for row in rows] == ["paper_100k", "paper_10k_ils", "paper_20k_ils"]
-    p1, p2, p3 = rows
+    assert [row.id for row in rows] == ["paper_100k", "paper_10k_ils", "paper_20k_ils", "spy_intraday_20k"]
+    p1, p2, p3, retired_spy = rows
     assert p1.contains_day(date(2026, 11, 2))
     assert not p1.contains_day(date(2026, 11, 3))
     assert p2.contains_day(date(2026, 11, 3))
@@ -73,6 +73,9 @@ def test_periods_split_at_2026_11_02():
     assert public_periods(PERIODS)["current_id"] == "paper_20k_ils"
     assert p2.trading is False
     assert p3.trading is True
+    assert retired_spy.trading is False
+    assert retired_spy.retired is True
+    assert retired_spy.alpaca_account_number == "PA3YUE43D"
     assert p1.read_only is True
     assert Decimal(str(p2.capital_basis_usd)) == WC
     assert Decimal(str(p3.capital_basis_usd)) == (Decimal("20000") / Decimal("3.14")).quantize(Decimal("0.01"))

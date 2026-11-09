@@ -20,7 +20,7 @@ from app.broker.adapter import AlpacaAdapter
 from app.integrations.alpaca import AlpacaNotConfigured, AlpacaPaperClient
 from app.integrations.secrets import resolve_secret
 
-RETIRED_ACCOUNT_NUMBERS = frozenset({"PA3LU0NE5"})
+RETIRED_ACCOUNT_NUMBERS = frozenset({"PA3LU0NE5", "PA3YUE43D"})
 _VIEW_TTL_SECONDS = 600.0
 _view_cache: dict[str, tuple[float, bool]] = {}
 

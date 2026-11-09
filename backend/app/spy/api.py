@@ -70,31 +70,39 @@ def _bars(symbol: str) -> list:
     )
 
 
-def status() -> dict:
+def status(symbol: str = "") -> dict:
     try:
         body = _snapshot()
-        bars = _bars(SYMBOL)
-        sessions = rth_sessions(bars)
-        if sessions:
-            day = max(sessions)
-            body["session_date"] = body.get("session_date") or day.isoformat()
-            body["series"] = series_for_day(sessions, day)
-        else:
-            body["series"] = []
-        body["markers"] = _markers(body.get("session_date"))
+        names = [symbol] if symbol else [row.get("symbol") for row in body.get("symbols") or [] if row.get("symbol")]
+        if not names:
+            names = [SYMBOL]
+        charts = {}
+        for name in names:
+            bars = _bars(name)
+            sessions = rth_sessions(bars)
+            charts[name] = series_for_day(sessions, max(sessions)) if sessions else []
+        body["charts"] = charts
+        first = names[0]
+        if charts.get(first):
+            body["session_date"] = body.get("session_date") or max(rth_sessions(_bars(first)))
+        body["series"] = charts.get(first) or []
+        body["markers"] = _markers(str(body.get("session_date") or ""), first if symbol or len(names) == 1 else "")
         body.setdefault("paper_only", True)
+        body.setdefault("symbols", [{"symbol": name} for name in names])
         return body
     except Exception:
         return {"ok": False, "enabled": False, "error": "spy_unavailable", "paper_only": True, "symbol": SYMBOL}
 
 
-def _markers(session_date: str | None) -> list[dict]:
+def _markers(session_date: str | None, symbol: str = "") -> list[dict]:
     if not session_date:
         return []
-    rows = signals()["items"]
+    rows = signals(symbol=symbol)["items"]
     markers = []
     for row in rows:
-        if row.get("session_date") != session_date or row.get("symbol") != SYMBOL or int(row.get("shadow") or 0):
+        if row.get("session_date") != session_date or int(row.get("shadow") or 0):
+            continue
+        if symbol and row.get("symbol") != symbol:
             continue
         if row.get("action") not in {"ENTER_LONG", "ENTER_SHORT", "EXIT"}:
             continue
@@ -109,11 +117,15 @@ def _markers(session_date: str | None) -> list[dict]:
     return markers
 
 
-def signals(limit: int = 200) -> dict:
+def signals(limit: int = 200, symbol: str = "") -> dict:
+    if symbol:
+        return {"items": _filtered("spy_signals", symbol, limit)}
     return {"items": _table("SELECT * FROM spy_signals ORDER BY id DESC LIMIT ?", limit)}
 
 
-def trades(limit: int = 200) -> dict:
+def trades(limit: int = 200, symbol: str = "") -> dict:
+    if symbol:
+        return {"items": _filtered("spy_trades", symbol, limit)}
     return {"items": _table("SELECT * FROM spy_trades ORDER BY id DESC LIMIT ?", limit)}
 
 
@@ -129,7 +141,13 @@ def daily() -> dict:
     return {"items": curve}
 
 
-def _table(sql: str, limit: int | None) -> list[dict]:
+def _filtered(table: str, symbol: str, limit: int) -> list[dict]:
+    if table not in {"spy_signals", "spy_trades"}:
+        return []
+    return _table(f"SELECT * FROM {table} WHERE symbol = ? ORDER BY id DESC LIMIT ?", limit, symbol)
+
+
+def _table(sql: str, limit: int | None, symbol: str = "") -> list[dict]:
     cfg = load_config()
     conn = connect_read(cfg.db)
     if conn is None:
@@ -137,6 +155,8 @@ def _table(sql: str, limit: int | None) -> list[dict]:
     try:
         if limit is None:
             rows = conn.execute(sql).fetchall()
+        elif symbol:
+            rows = conn.execute(sql, (symbol, limit)).fetchall()
         else:
             rows = conn.execute(sql, (limit,)).fetchall()
         return [_row(row) for row in rows]
@@ -148,13 +168,13 @@ def _table(sql: str, limit: int | None) -> list[dict]:
 
 def register(app: FastAPI) -> None:
     @app.get("/api/v1/spy/status")
-    def spy_status():
-        return status()
+    def spy_status(symbol: str = ""):
+        return status(symbol.strip().upper())
 
     @app.get("/api/v1/spy/trades")
-    def spy_trades():
+    def spy_trades(symbol: str = ""):
         try:
-            return trades()
+            return trades(symbol=symbol.strip().upper())
         except Exception:
             return {"items": []}
 
@@ -166,8 +186,8 @@ def register(app: FastAPI) -> None:
             return {"items": []}
 
     @app.get("/api/v1/spy/signals")
-    def spy_signals():
+    def spy_signals(symbol: str = ""):
         try:
-            return signals()
+            return signals(symbol=symbol.strip().upper())
         except Exception:
             return {"items": []}

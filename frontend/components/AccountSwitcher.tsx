@@ -14,6 +14,7 @@ const FALLBACK: TradingPeriodRow[] = [
   { id: "paper_100k", label: "פייפר 100K", read_only: true, trading: false },
   { id: "paper_10k_ils", label: "פייפר 10K ₪", read_only: true, trading: false, retired: true, view_mode: "unavailable" },
   { id: "paper_20k_ils", label: "פייפר 20K ₪", trading: true, read_only: false },
+  { id: "spy_intraday_20k", label: "SPY תוך-יומי 20K", read_only: true, trading: false, retired: true, view_mode: "unavailable" },
 ];
 
 export function AccountSwitcher() {

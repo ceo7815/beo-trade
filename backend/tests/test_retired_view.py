@@ -21,6 +21,11 @@ def test_deleted_10k_account_is_not_the_trading_account():
     assert _keys_for_period("paper_20k_ils") == ("alpaca_api_key", "alpaca_api_secret")
     assert _keys_for_period("current") == ("alpaca_api_key", "alpaca_api_secret")
     assert _keys_for_period("paper_100k") == ("alpaca_100k_api_key", "alpaca_100k_api_secret")
+    retired_spy = resolve_period("spy_intraday_20k")
+    assert retired_spy is not None
+    assert retired_spy.alpaca_account_number == "PA3YUE43D"
+    assert is_retired(retired_spy)
+    assert _keys_for_period("spy_intraday_20k") == ("", "")
 
 
 def test_retired_view_does_not_construct_a_client(monkeypatch):

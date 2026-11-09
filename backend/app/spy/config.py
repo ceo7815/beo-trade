@@ -57,14 +57,42 @@ def assert_data_url(url: str) -> str:
     return DATA_HTTP
 
 
-def shadow_symbols(raw: str | None) -> tuple[str, ...]:
+def _symbols(raw: str | None, default: str) -> tuple[str, ...]:
+    text = default if raw is None else raw
     found: list[str] = []
-    for part in (raw if raw is not None else "QQQ").split(","):
+    for part in text.split(","):
         symbol = part.strip().upper()
-        if not symbol or symbol == SYMBOL or symbol in found:
+        if not symbol or not symbol.isalpha() or len(symbol) > 5 or symbol in found:
             continue
         found.append(symbol)
     return tuple(found)
+
+
+def trade_symbols(raw: str | None) -> tuple[str, ...]:
+    parsed = _symbols(raw, "SPY,QQQ,IWM")
+    return parsed or ("SPY",)
+
+
+def shadow_symbols(raw: str | None, traded: tuple[str, ...] = ()) -> tuple[str, ...]:
+    """Symbols that are logged and never ordered. Default is empty. Traded names are skipped."""
+    blocked = set(traded)
+    found: list[str] = []
+    for symbol in _symbols(raw, ""):
+        if symbol in blocked or symbol in found:
+            continue
+        found.append(symbol)
+    return tuple(found)
+
+
+def _count(name: str, default: int, lo: int, hi: int) -> int:
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        return default
+    return min(hi, max(lo, value))
 
 
 def db_path() -> Path:
@@ -109,6 +137,10 @@ class SpyConfig:
     allow_short: bool
     shadow: tuple[str, ...]
     db: Path
+    symbols: tuple[str, ...] = ("SPY",)
+    max_positions: int = 1
+    max_entries_day: int = 4
+    per_symbol_entries: int = 4
 
     def public(self) -> dict:
         """Safe to log and to return from the API. No key material."""
@@ -120,6 +152,9 @@ class SpyConfig:
             "secret_set": bool(self.secret),
             "pdt_guard": self.pdt_guard,
             "allow_short": self.allow_short,
+            "symbols": list(self.symbols),
+            "max_positions": self.max_positions,
+            "max_entries_day": self.max_entries_day,
             "shadow": list(self.shadow),
             "paper_only": True,
         }
@@ -139,7 +174,11 @@ def load_config() -> SpyConfig:
         data_url=os.environ.get("SPY_DATA_URL", "").strip(),
         pdt_guard=_flag("SPY_PDT_GUARD", True),
         allow_short=_flag("SPY_ALLOW_SHORT", False),
-        shadow=shadow_symbols(os.environ.get("SPY_SHADOW_SYMBOLS")),
+        symbols=trade_symbols(os.environ.get("SPY_TRADE_SYMBOLS")),
+        max_positions=_count("SPY_MAX_POSITIONS", 3, 1, 3),
+        max_entries_day=_count("SPY_MAX_ENTRIES_DAY", 6, 1, 12),
+        per_symbol_entries=2,
+        shadow=shadow_symbols(os.environ.get("SPY_SHADOW_SYMBOLS"), trade_symbols(os.environ.get("SPY_TRADE_SYMBOLS"))),
         db=db_path(),
     )
 

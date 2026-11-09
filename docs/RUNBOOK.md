@@ -22,7 +22,7 @@ npm run dev
 python -m pytest backend/tests -q
 ```
 
-מנוע SPY הוא תהליך נפרד (`python -m app.spy.runner`, שירות `spy`). הוא לא נוגע במסחר האופציות. חשבון הנייר בפריסה הזו הוא PA3YUE43D. פרטים והפעלה ב-`README.md`.
+מנוע SPY הוא תהליך נפרד (`python -m app.spy.runner`, שירות `spy`). הוא לא נוגע במסחר האופציות. מספר חשבון הנייר החדש ($25,000) נכנס רק ב-`SPY_ALPACA_ACCOUNT`. פרטים והפעלה ב-`README.md`.
 
 לשרת XCloud, מתוך שורש הפרויקט:
 

@@ -37,6 +37,19 @@
       "trading": true,
       "read_only": false,
       "alpaca_account_name": "beo 20K ILS"
+    },
+    {
+      "id": "spy_intraday_20k",
+      "label": "SPY תוך-יומי 20K",
+      "start": "2026-11-09",
+      "end": "2026-11-09",
+      "capital_basis_usd": "6252",
+      "alpaca_account_id": "",
+      "alpaca_account_number": "PA3YUE43D",
+      "trading": false,
+      "read_only": true,
+      "retired": true,
+      "alpaca_account_name": "SPY Intraday 20K ILS"
     }
   ]
 }
