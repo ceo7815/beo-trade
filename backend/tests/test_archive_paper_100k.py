@@ -207,7 +207,7 @@ def test_archive_copies_pages_and_is_idempotent(tmp_path, monkeypatch):
         activities = client.get("/api/v1/archive/paper_100k/activities", headers=read)
         assert activities.status_code == 200
         assert activities.json()["total"] == 3
-        trades = client.get("/api/v1/archive/paper_100k/trades", headers=read)
+        trades = client.get("/api/v1/archive/paper_100k/journal", headers=read)
         assert trades.status_code == 200
         sources = {item["source"] for item in trades.json()["items"]}
         assert "broker_trades" in sources

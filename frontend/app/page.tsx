@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Shell, useDesk } from "@/components/Shell";
-import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { ArchiveSummary, type ArchiveResult } from "@/components/ArchiveMark";
 import { DailyBars, EquityCurve, StrategyBars, tradesToCharts } from "@/components/charts";
-import { PHASES, holdScreen, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
+import { PHASES, apiGet, holdScreen, loadCached, peekCached, poll, transportMode, type SystemStatus } from "@/lib/api";
+import { archiveRangeLabel, dayDot, isArchivePeriod } from "@/lib/archiveView";
 import { TradeStory, type Story } from "@/components/TradeStory";
 import { exitLabel } from "@/lib/exits";
 import { FloorMark } from "@/components/FloorMark";
@@ -116,7 +117,17 @@ type Position = {
 
 type ClosedLite = { closed_at?: string | null; pnl?: string | null; invested?: string | null; underlying?: string | null; exit_reason?: string | null };
 type FlowFilter = "all" | "trades" | "blocks";
-type AgedReport = { available?: boolean; stale?: boolean; as_of?: string | null; summary?: TradeTotals; closed?: ClosedLite[] };
+type EquityPoint = { session_date?: string | null; equity?: string | number | null; day_pnl?: string | number | null };
+type AgedReport = {
+  available?: boolean;
+  stale?: boolean;
+  as_of?: string | null;
+  summary?: TradeTotals & Partial<DaySummary>;
+  closed?: ClosedLite[];
+  archive_result?: ArchiveResult | null;
+  equity_curve?: EquityPoint[];
+  read_only?: boolean;
+};
 
 type TradeTotals = {
   total_pnl: string;
@@ -193,8 +204,6 @@ export default function HomePage() {
 }
 
 function HomeGate() {
-  const period = useTradingPeriod();
-  if (period === "paper_100k") return <ArchiveBoard />;
   return <Board />;
 }
 
@@ -213,10 +222,31 @@ function DeskCharts({ book }: { book: ClosedLite[] | null }) {
   );
 }
 
+function ArchiveCharts({ points, book }: { points: EquityPoint[]; book: ClosedLite[] | null }) {
+  const curve = points
+    .map((point) => ({ label: dayDot(point.session_date), value: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.value));
+  const days = points
+    .map((point) => ({ label: dayDot(point.session_date), value: Number(point.day_pnl) }))
+    .filter((point) => point.label && Number.isFinite(point.value));
+  const strategies = book?.length
+    ? tradesToCharts(book.map((row) => ({ at: row.closed_at, pnl: row.pnl, strategy: row.underlying || row.exit_reason || "אחר" }))).strategies
+    : [];
+  if (curve.length < 2 && days.length === 0) return null;
+  return (
+    <section className="desk-charts">
+      <EquityCurve points={curve} label="עקומת הון" />
+      <DailyBars rows={days} label="רווח והפסד לפי יום מסחר" />
+      {strategies.length ? <StrategyBars rows={strategies} label="לפי נכס" /> : null}
+    </section>
+  );
+}
+
 function Board() {
   const { status } = useDesk();
   const live = useLive();
   const period = useTradingPeriod();
+  const archiveScreen = isArchivePeriod(period);
   const reduce = useReduced();
   const [desk, setDesk] = useState<Desk | null>(() => peekCached<Desk>("/api/v1/desk"));
   const [account, setAccount] = useState<BrokerAccount | null>(() => peekCached<{ account?: BrokerAccount }>("/api/v1/broker/alpaca/account")?.account ?? null);
@@ -232,12 +262,15 @@ function Board() {
     const cached = peekCached<AgedReport>("/api/v1/report/trades?period=all");
     return { stale: cached?.stale, as_of: cached?.as_of };
   });
+  const [archiveResult, setArchiveResult] = useState<ArchiveResult | null>(null);
+  const [equityCurve, setEquityCurve] = useState<EquityPoint[]>([]);
   const [flowFilter, setFlowFilter] = useState<FlowFilter>("trades");
   const [syncedAt, setSyncedAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const [beatAt, setBeatAt] = useState<number | null>(null);
 
   useEffect(() => {
+    if (isArchivePeriod(readStoredPeriod())) return;
     let alive = true;
     const feed = <T,>(path: string, apply: (body: T) => void, everyMs: number, timeoutMs = 15000) =>
       poll(async () => {
@@ -276,6 +309,29 @@ function Board() {
       alive = false;
       stops.forEach((stop) => stop());
       window.clearInterval(clockTimer);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isArchivePeriod(readStoredPeriod())) return;
+    let alive = true;
+    const load = () =>
+      apiGet<AgedReport>("/api/v1/report/trades?period=paper_100k", 30000)
+        .then((body) => {
+          if (!alive || body.available === false) return;
+          setArchiveResult(body.archive_result ?? null);
+          setEquityCurve(body.equity_curve ?? []);
+          setTotals(body.summary ?? null);
+          if (body.closed) setBook(body.closed);
+          setBookAge({ stale: body.stale, as_of: body.as_of });
+          setToday({ available: true, summary: body.summary ? { realized_pnl: body.summary.realized_pnl, closed_count: body.summary.closed_count, wins: body.summary.wins, losses: body.summary.losses, invested_closed: body.summary.invested_closed } : null, closed: [], open: [] });
+          setSyncedAt(Date.now());
+        })
+        .catch(() => undefined);
+    const stop = poll(() => load(), 60000);
+    return () => {
+      alive = false;
+      stop();
     };
   }, []);
 
@@ -330,23 +386,25 @@ function Board() {
     closed,
     lastDay: lastDay?.pnl ?? null,
   });
-  const showLast = dayView.showLast;
-  const shownPnl = dayView.pnl;
+  const showLast = archiveScreen ? false : dayView.showLast;
+  const shownPnl = archiveScreen ? num(archiveResult?.pnl) : dayView.pnl;
 
-  const equityShown = head.equity ?? viewAccount?.equity;
+  const equityShown = archiveScreen ? archiveResult?.final_equity : head.equity ?? viewAccount?.equity;
   const equityTick = useTick(equityShown);
-  const equityUp = (num(equityShown) ?? 0) >= (num(viewAccount?.last_equity) ?? num(equityShown) ?? 0);
+  const equityUp = archiveScreen ? (num(archiveResult?.pnl) ?? 0) >= 0 : (num(equityShown) ?? 0) >= (num(viewAccount?.last_equity) ?? num(equityShown) ?? 0);
+  const rangeLabel = archiveRangeLabel(archiveResult?.start, archiveResult?.end);
 
   return (
     <section className="desk-home">
-      <KillBanner pnl={shownPnl} kill={kill} state={dayView.note ? null : lossState} />
+      {archiveScreen ? <ArchiveSummary result={archiveResult} /> : null}
+      <KillBanner pnl={archiveScreen ? null : shownPnl} kill={kill} state={dayView.note ? null : lossState} />
       <div className="desk-top">
         <article className="ops-pane account-card">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.account}</h2>
             <span className="head-meta">
               <StaleNote stale={today?.stale} asOf={today?.as_of} now={now} />
-              <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
+              <span className={sync.tone === "on" ? "up" : sync.tone === "off" ? "down" : ""}>{archiveScreen ? "קריאה בלבד" : live.stale ? copy.common.stale(Math.max(1, Math.round((now - (live.updatedAt || now)) / 1000))) : sync.text}</span>
             </span>
           </header>
           <div className="acct-pair">
@@ -359,30 +417,31 @@ function Board() {
             <Sparkline points={live.series.eq || []} up={equityUp} />
           </div>
           <div className="acct-pair">
-            <Stat label={copy.dashboard.cash} value={money(viewAccount?.cash)} />
-            <Stat label={copy.dashboard.atRisk} value={stake === null ? "—" : money(stake.dollars)} />
+            <Stat label={archiveScreen ? "בסיס" : copy.dashboard.cash} value={archiveScreen ? money(archiveResult?.capital_basis_usd) : money(viewAccount?.cash)} />
+            <Stat label={archiveScreen ? "ימי מסחר" : copy.dashboard.atRisk} value={archiveScreen ? String(archiveResult?.sessions ?? "—") : stake === null ? "—" : money(stake.dollars)} />
           </div>
         </article>
         <article className="ops-pane desk-hero">
           <div className="desk-hero-top">
-            <span>{showLast && lastDay ? dayTitle(lastDay.day) : phase}</span>
+            <span>{archiveScreen ? (rangeLabel || "ארכיון") : showLast && lastDay ? dayTitle(lastDay.day) : phase}</span>
             <span className="hero-side">
-              <LiveMark live={head.live} />
-              <span>{showLast ? copy.dashboard.closedNote : narrative.short}</span>
+              {archiveScreen ? null : <LiveMark live={head.live} />}
+              <span>{archiveScreen ? (archiveResult?.capital_basis_usd ? `מ-${money(archiveResult.capital_basis_usd)}` : "קריאה בלבד") : showLast ? copy.dashboard.closedNote : narrative.short}</span>
             </span>
           </div>
           <div className="desk-hero-main">
             <div className="desk-hero-figure">
               <Odometer value={shownPnl} />
-              {showLast ? null : <DayReturn pct={sse ? live.snap?.day?.day_return_pct : risk?.day_return_pct ?? live.snap?.day?.day_return_pct} note={dayView.note} />}
+              {archiveScreen ? <p className={`desk-hero-return ${tone(shownPnl)}`}>{archiveResult?.return_pct == null ? "—" : signedPct(Number(archiveResult.return_pct), 0)}</p> : showLast ? null : <DayReturn pct={sse ? live.snap?.day?.day_return_pct : risk?.day_return_pct ?? live.snap?.day?.day_return_pct} note={dayView.note} />}
             </div>
-            {floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
+            {archiveScreen ? null : floor?.armed && floor.floor ? <FloorMark closed={Boolean(floor.closed)} amount={String(floor.floor)} /> : lossUnknown ? <span className="floor-mark unknown" aria-label="לא ידוע"><b>לא ידוע</b></span> : null}
           </div>
-          {showLast ? null : protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
+          {archiveScreen || showLast ? null : protection || lossUnknown ? <ProtectionBar protection={lossUnknown ? { status: "unknown", line: "לא ידוע" } : protection} /> : null}
         </article>
       </div>
-      <DeskCharts book={book} />
+      {archiveScreen ? <ArchiveCharts points={equityCurve} book={book} /> : <DeskCharts book={book} />}
 
+      {archiveScreen ? null : (
       <section className="ops-pane">
         <header className="ops-pane-head">
           <h2>{copy.dashboard.positions}</h2>
@@ -407,8 +466,10 @@ function Board() {
           </AnimatePresence>
         </div>
       </section>
+      )}
 
       <div className="desk-split">
+        {archiveScreen ? null : (
         <section className="ops-pane">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.flow}</h2>
@@ -452,6 +513,7 @@ function Board() {
           </div>
           </div>
         </section>
+        )}
         <section className="ops-pane desk-days">
           <header className="ops-pane-head">
             <h2>{copy.dashboard.days}</h2>
@@ -475,6 +537,8 @@ function Board() {
         </section>
       </div>
 
+      {archiveScreen ? null : (
+      <>
       <div className="ops-meters">
         <Meter label={copy.dashboard.dailyLoss} used={risk?.daily_loss_used} limit={kill == null ? risk?.daily_loss_limit : String(kill)} />
         <Meter label={copy.dashboard.exposure} used={exposure === null ? null : String(exposure)} limit={risk?.exposure_limit} />
@@ -528,6 +592,8 @@ function Board() {
           ))}
         </section>
       </div>
+      </>
+      )}
       {picked ? <TradeWindow trade={picked} onClose={() => setPicked(null)} /> : null}
     </section>
   );

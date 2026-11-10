@@ -695,10 +695,13 @@ def equity_points(session: Session, period: str) -> list[dict]:
         day_pnl = None if equity is None or previous is None else equity - previous
         if equity is not None:
             previous = equity
+        moment = datetime.fromtimestamp(row.ts, tz=timezone.utc)
+        session = session_day(moment)
         points.append(
             {
                 "ts": row.ts,
-                "t": datetime.fromtimestamp(row.ts, tz=timezone.utc).isoformat(),
+                "t": moment.isoformat(),
+                "session_date": None if session is None else session.isoformat(),
                 "equity": row.equity or None,
                 "profit_loss": row.profit_loss or None,
                 "day_pnl": None if day_pnl is None else f"{day_pnl:.2f}",

@@ -10,6 +10,7 @@ import { copy } from "@/lib/copy";
 import { num } from "@/lib/format";
 import { LogoLockup } from "@/components/Logo";
 import { AccountSwitcher } from "@/components/AccountSwitcher";
+import { ArchiveBadge } from "@/components/ArchiveMark";
 import { SystemSwitch } from "@/components/SystemSwitch";
 import { systemFromPath, type SystemId } from "@/lib/systems";
 import { readStoredPeriod } from "@/lib/account";
@@ -459,6 +460,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 <MobileClock />
               </span>
               {quietDesk ? null : <AccountSwitcher />}
+              {archiveView ? <ArchiveBadge /> : null}
             </div>
             {noOrders ? null : (
             <button
@@ -475,6 +477,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           <header className="instrument">
             <div className="header-picks">
               {quietDesk ? null : <AccountSwitcher />}
+              {archiveView ? <ArchiveBadge /> : null}
             </div>
             <div className="bar-item clock-line">
               <b>{status ? PHASES[status.market_phase] || status.market_phase : "מתחבר"}</b>

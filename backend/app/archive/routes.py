@@ -108,8 +108,15 @@ def register(app: FastAPI, settings: Settings) -> None:
 
     @app.get("/api/v1/archive/paper_100k/trades")
     def trades(limit: int = Query(default=200, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+        from app.archive.readback import closed_trade_page
+
+        return closed_trade_page(settings, limit, offset)
+
+    @app.get("/api/v1/archive/paper_100k/journal")
+    def journal(limit: int = Query(default=200, ge=1, le=500), offset: int = Query(default=0, ge=0)):
+        """Raw copied journal rows. The trades screen does not read this list."""
         with session_scope() as session:
-            local = session.scalars(select(ArchiveLocal).order_by(ArchiveLocal.source.asc())).all()
+            local = session.scalars(select(ArchiveLocal).order_by(ArchiveLocal.source.asc(), ArchiveLocal.source_id.asc())).all()
             fills = session.scalars(
                 select(ArchiveActivity).where(ArchiveActivity.activity_type == "FILL")
             ).all()

@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { ArchiveSummary, type ArchiveResult } from "@/components/ArchiveMark";
 import { readStoredPeriod } from "@/lib/account";
+import { dayDot, isArchivePeriod } from "@/lib/archiveView";
 import { useTradingPeriod } from "@/lib/live";
 import { LiveMark, Odometer, StaleNote } from "@/components/live-ui";
 import { apiGet, holdScreen, poll } from "@/lib/api";
@@ -38,6 +39,9 @@ type Finance = {
   by_symbol: Record<string, Summary>;
   sector: { note: string };
   best_worst: { note?: string | null };
+  day_pnl_note?: string | null;
+  read_only?: boolean;
+  archive_result?: ArchiveResult | null;
 };
 
 type Risk = { max_positions?: number | null };
@@ -86,12 +90,19 @@ export default function FinancePage() {
   const [body, setBody] = useState<Finance | null>(null);
   const [maxPositions, setMaxPositions] = useState<number | null>(null);
   const [failed, setFailed] = useState(false);
+  const [ready, setReady] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const live = useLive();
   const headerPeriod = useTradingPeriod();
-  const archiveOn = tradingPeriod === "paper_100k" || (tradingPeriod === "current" && headerPeriod === "paper_100k");
+  const archiveOn = isArchivePeriod(tradingPeriod) || isArchivePeriod(headerPeriod);
   useEffect(() => {
-    if (tradingPeriod === "paper_100k" || readStoredPeriod() === "paper_100k") return;
+    const stored = readStoredPeriod();
+    if (stored && stored !== "current") setTradingPeriod(stored);
+    if (isArchivePeriod(stored)) setWindowName("all");
+    setReady(true);
+  }, []);
+  useEffect(() => {
+    if (!ready) return;
     let alive = true;
     const load = () => {
       const query = new URLSearchParams({ window: windowName, side, outcome, symbol, dte, start, end, exit_reason: "", hour: "", trading_period: tradingPeriod });
@@ -115,7 +126,7 @@ export default function FinancePage() {
       alive = false;
       stop();
     };
-  }, [windowName, tradingPeriod, side, outcome, symbol, dte, start, end]);
+  }, [ready, windowName, tradingPeriod, side, outcome, symbol, dte, start, end]);
 
   useEffect(() => {
     if (!body?.stale) return;
@@ -160,14 +171,6 @@ export default function FinancePage() {
     ["2DTE+", body?.by_dte["2DTE+"]],
   ] as const;
 
-  if (archiveOn) {
-    return (
-      <Shell>
-        <ArchiveBoard />
-      </Shell>
-    );
-  }
-
   return (
     <Shell>
       <section className="engine book" onClick={() => setMenu(null)}>
@@ -182,6 +185,8 @@ export default function FinancePage() {
           ) : (
             <p className={`num ${ink(headline)}`}>{body ? money(headline) : failed ? "אין נתונים" : "טוען"}</p>
           )}
+          {archiveOn ? <ArchiveSummary result={body?.archive_result} /> : null}
+          {body?.day_pnl_note ? <p className="archive-note">{body.day_pnl_note}</p> : null}
         </header>
         <div className="period-row" onClick={(event) => event.stopPropagation()}>
           {(body?.trading_periods?.periods || [
@@ -221,7 +226,7 @@ export default function FinancePage() {
         <div className="plain-list">
           {[...(body?.daily || [])].sort((a, b) => (a.date < b.date ? 1 : -1)).map((row) => (
             <div className="plain-row" key={row.date}>
-              <b>{row.date}</b>
+              <b>{archiveOn ? (dayDot(row.date) || row.date) : row.date}</b>
               <strong className={`num ${ink(row.pnl)}`}>{money(row.pnl)}</strong>
             </div>
           ))}

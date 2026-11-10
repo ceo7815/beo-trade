@@ -55,6 +55,7 @@ READ_PATHS = (
     "/api/v1/archive/paper_100k/equity",
     "/api/v1/archive/paper_100k/activities",
     "/api/v1/archive/paper_100k/trades",
+    "/api/v1/archive/paper_100k/journal",
 )
 
 

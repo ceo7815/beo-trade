@@ -90,7 +90,7 @@ def test_stored_fill_timestamps_are_archived_and_last_run_is_visible(tmp_path, m
         last = summary.json()["last_run"]
         assert last["status"] in {"ok", "partial"}
         assert last["finished_at"]
-        trades = client.get("/api/v1/archive/paper_100k/trades", headers={"X-Beo-Key": READ}).json()
+        trades = client.get("/api/v1/archive/paper_100k/journal", headers={"X-Beo-Key": READ}).json()
         symbols = {item["symbol"] for item in trades["items"]}
         assert "SMCI" in symbols
         assert "HOOD" in symbols

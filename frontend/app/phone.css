@@ -139,6 +139,22 @@ html, body { overflow-x: clip; }
   font-weight: 800;
 }
 .archive-badge.wait { background: rgba(255, 255, 255, 0.08); color: #f6e2b8; border: 1px solid rgba(228, 194, 122, 0.45); }
+.archive-mark {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 14px;
+}
+.archive-mark p {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: baseline;
+  margin: 0;
+  color: var(--silver, #d5d8e0);
+  font-size: 14px;
+}
+.archive-mark b { font-size: 22px; letter-spacing: -0.03em; }
 .archive-note, .spy-kicker { margin: 0; color: var(--muted, #b3a794); font-size: 13px; font-weight: 700; }
 .archive-counts { display: flex; flex-wrap: wrap; gap: 8px; }
 .archive-counts span, .avi-grid article {
