@@ -74,7 +74,7 @@ def test_local_rows_are_copied_in_batches_and_not_duplicated(tmp_path):
             )
             assert again == 5
             assert session.query(ArchiveLocal).count() == 5
-        listed = client.get("/api/v1/archive/paper_100k/trades", headers={"X-Beo-Key": READ})
+        listed = client.get("/api/v1/archive/paper_100k/journal", headers={"X-Beo-Key": READ})
         assert listed.status_code == 200
         assert listed.json()["total"] == 5
 

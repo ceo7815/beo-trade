@@ -229,7 +229,17 @@ def register(app: FastAPI, settings: Settings) -> None:
         from app.archive.readback import archived_finance, is_paper_100k
 
         if is_paper_100k(trading_period):
-            return archived_finance()
+            return archived_finance(
+                settings,
+                side=side,
+                outcome=outcome,
+                symbol=symbol,
+                dte=dte,
+                start=start,
+                end=end,
+                exit_reason=exit_reason,
+                hour=hour,
+            )
         cache_key = ("finance", window, side, outcome, symbol, dte, start, end, exit_reason, hour, trading_period)
         cached = read_cache.get(cache_key)
         if cached is not None:

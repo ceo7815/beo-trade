@@ -2,8 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { Shell } from "@/components/Shell";
-import { ArchiveBoard } from "@/components/ArchiveBoard";
+import { ArchiveSummary, type ArchiveResult } from "@/components/ArchiveMark";
+import { EquityCurve } from "@/components/charts";
 import { readStoredPeriod } from "@/lib/account";
+import { dayDot, isArchivePeriod } from "@/lib/archiveView";
 import { useTradingPeriod } from "@/lib/live";
 import { copy } from "@/lib/copy";
 import { LineNum, Num, StaleNote } from "@/components/live-ui";
@@ -99,6 +101,9 @@ type Report = {
   open?: Trade[];
   orphan_sells?: number;
   paper_limitation?: string;
+  read_only?: boolean;
+  archive_result?: ArchiveResult | null;
+  equity_curve?: { session_date?: string | null; equity?: string | number | null; day_pnl?: string | number | null }[];
 };
 
 function num(value: string | null | undefined) {
@@ -245,10 +250,10 @@ export default function HistoryPage() {
   const period = useTradingPeriod();
 
   useEffect(() => {
-    if (readStoredPeriod() === "paper_100k") return;
     let alive = true;
+    const path = isArchivePeriod(readStoredPeriod()) ? "/api/v1/report/trades?period=paper_100k" : "/api/v1/report/trades?period=all";
     const load = () => {
-      return apiGet<Report>("/api/v1/report/trades?period=all", 30000)
+      return apiGet<Report>(path, 30000)
         .then((body) => {
           if (!alive) return;
           setReport((current) => holdScreen(current, body) ?? body);
@@ -261,7 +266,7 @@ export default function HistoryPage() {
       alive = false;
       stop();
     };
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     if (!report?.stale) return;
@@ -297,13 +302,10 @@ export default function HistoryPage() {
     setMenu(false);
   };
 
-  if (period === "paper_100k") {
-    return (
-      <Shell>
-        <ArchiveBoard />
-      </Shell>
-    );
-  }
+  const archive = isArchivePeriod(period);
+  const curve = (report?.equity_curve || [])
+    .map((point) => ({ label: dayDot(point.session_date), value: Number(point.equity) }))
+    .filter((point) => Number.isFinite(point.value));
 
   return (
     <Shell>
@@ -317,10 +319,12 @@ export default function HistoryPage() {
             <StaleNote stale={report?.stale} asOf={report?.as_of} now={now} />
             <span className={`ops-pip ${failed || report?.available === false ? "warn" : report ? "on" : "warn"}`}>
               <i />
-              {failed || report?.available === false ? "אין נתונים" : report ? "Alpaca Paper" : "טוען"}
+              {failed || report?.available === false ? "אין נתונים" : archive ? "ארכיון · קריאה בלבד" : report ? "Alpaca Paper" : "טוען"}
             </span>
           </span>
         </header>
+        {archive ? <ArchiveSummary result={report?.archive_result} /> : null}
+        {archive && curve.length > 1 ? <EquityCurve points={curve} label="עקומת הון" /> : null}
 
         {days.length > 1 ? (
           <div className="day-bars" aria-hidden="true">
