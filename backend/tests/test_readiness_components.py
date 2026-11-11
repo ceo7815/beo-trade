@@ -46,6 +46,10 @@ def test_ready_is_not_ready_without_the_live_components(tmp_path, monkeypatch):
     assert body["components"]["last_cycle"]["last_success"] is None
     assert body["components"]["market_data"]["fresh"] is False
     assert body["components"]["broker"]["reachable"] is False
+    assert body["components"]["risk_engine"] == "HEALTHY"
+    assert body["components"]["exit_engine"] == "HEALTHY"
+    assert body["risk_policy_version"] == "aggressive-1"
+    assert body["exit_policy_version"] == "aggressive-exit-3"
     assert "worker" in body["blocked_reasons"]
     assert "last_cycle" in body["blocked_reasons"]
     assert "market_data" in body["blocked_reasons"]

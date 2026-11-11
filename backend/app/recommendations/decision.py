@@ -52,13 +52,30 @@ def supported_reason_codes(
     return codes
 
 
-def direction_matches(underlying: UnderlyingSnapshot, option: OptionSnapshot, events: set[str]) -> bool:
+def direction_matches(
+    underlying: UnderlyingSnapshot,
+    option: OptionSnapshot,
+    events: set[str],
+    config: TradingConfig | None = None,
+) -> bool:
     """CALL only on an up move, PUT only on a down move.
 
     REVERSAL used to return True for both sides. That bought a CALL while the
     quant thesis still said the stock moved down (FIG 22C, 3.11, −3.26%).
     The event can still be a reason code. It does not flip the side.
+
+    Options 2 sets ``legacy_direction_v2610`` so the 26.10 rule is restored:
+    REVERSAL allows either side, and a flat stock does not reject a side.
+    The main book leaves the flag off, which is the path below.
     """
+    if config is not None and bool(getattr(config, "legacy_direction_v2610", False)):
+        if "REVERSAL" in events:
+            return True
+        if underlying.change_percent > 0 and option.right.value == "PUT":
+            return False
+        if underlying.change_percent < 0 and option.right.value == "CALL":
+            return False
+        return True
     del events
     if underlying.change_percent > 0:
         return option.right.value == "CALL"
@@ -102,7 +119,7 @@ def build_recommendation(
     gates["DATA_OK"] = option.observed_at <= as_of and underlying.observed_at <= as_of
     gates["NEWS_OK"] = news_ok or config.allow_buy_without_news
     gates["LIQUIDITY_OK"] = option.bid > 0 and option.ask >= option.bid
-    gates["OPTIONS_OK"] = option.option_symbol in shortlist_symbols and direction_matches(underlying, option, events)
+    gates["OPTIONS_OK"] = option.option_symbol in shortlist_symbols and direction_matches(underlying, option, events, config)
     gates["GREEKS_OK"] = None not in (option.delta, option.gamma, option.theta, option.vega)
     gates["IV_OK"] = option.implied_volatility is not None and option.implied_volatility > 0
     gates["RISK_OK"] = quantity >= 1 and option.ask <= max_entry

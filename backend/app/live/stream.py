@@ -206,11 +206,11 @@ def _seed_adjusted_mark(raw_mark: Decimal | None, held: list[dict], settings: Se
         return None
     from zoneinfo import ZoneInfo
 
-    from app.trades.exclusion import SEEDS, adjust_day_pnl, closed_rows_from_seeds
+    from app.trades.exclusion import adjust_day_pnl, closed_rows_from_seeds, runtime_seeds
 
     moment = datetime.now(timezone.utc)
     session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
-    rules = [{**seed, "active": True} for seed in SEEDS]
+    rules = [{**seed, "active": True} for seed in runtime_seeds()]
     try:
         from app.trades.exclusion import active_exclusions
 

@@ -166,6 +166,7 @@ services:
       retries: 8
       start_period: 30s
 
+  # Avi is archived. Leave AVI_ENGINE_ENABLED=false. The switcher shows Options 2 instead.
   avi:
     image: beo-trade-api
     build:
@@ -215,6 +216,92 @@ services:
       retries: 8
       start_period: 30s
 
+  # Options 2: the 26.10–30.10 book (b7f62cf) on a $40,000 paper account.
+  # Own volume, own lock, own Alpaca keys. Off until OPTIONS2_ENABLED=true.
+  # Profile id is fixed here. TRADING_CONFIG_PATH cannot point this process at another file.
+  options2-api:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+      DESK_ID: options2
+      OPTIONS2_PROFILE: v2610_40k
+      OPTIONS2_ENABLED: ${OPTIONS2_ENABLED:-false}
+      OPTIONS2_ALPACA_API_KEY: ${OPTIONS2_ALPACA_API_KEY:-}
+      OPTIONS2_ALPACA_API_SECRET: ${OPTIONS2_ALPACA_API_SECRET:-}
+      OPTIONS2_ACCOUNT_LAST4: ${OPTIONS2_ACCOUNT_LAST4:-}
+      OPTIONS2_ALPACA_BASE_URL: ${OPTIONS2_ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
+    volumes:
+      - options2_data:/app/data
+    expose:
+      - "8000"
+    networks:
+      - beo
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 768M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 30s
+
+  options2-worker:
+    image: beo-trade-api
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    command: ["python", "-m", "app.workers.runner"]
+    env_file:
+      - .env
+    environment:
+      <<: *paper-env
+      PYTHONUNBUFFERED: "1"
+      DESK_ID: options2
+      OPTIONS2_PROFILE: v2610_40k
+      OPTIONS2_ENABLED: ${OPTIONS2_ENABLED:-false}
+      OPTIONS2_ALPACA_API_KEY: ${OPTIONS2_ALPACA_API_KEY:-}
+      OPTIONS2_ALPACA_API_SECRET: ${OPTIONS2_ALPACA_API_SECRET:-}
+      OPTIONS2_ACCOUNT_LAST4: ${OPTIONS2_ACCOUNT_LAST4:-}
+      OPTIONS2_ALPACA_BASE_URL: ${OPTIONS2_ALPACA_BASE_URL:-https://paper-api.alpaca.markets}
+      THETADATA_BASE_URL: ${THETADATA_BASE_URL:-http://theta:25503}
+    volumes:
+      - options2_data:/app/data
+    networks:
+      - beo
+    depends_on:
+      options2-api:
+        condition: service_healthy
+    init: true
+    stop_grace_period: 30s
+    restart: unless-stopped
+    logging: *default-logging
+    mem_limit: 1536m
+    memswap_limit: 1536m
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+    healthcheck:
+      test: ["CMD", "python", "-c", "import time; from pathlib import Path; p=Path('/app/data/worker_heartbeat.txt'); raise SystemExit(0 if p.exists() and time.time()-p.stat().st_mtime<180 else 1)"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 40s
+
   theta:
     image: beo-trade-theta
     build:
@@ -259,6 +346,7 @@ services:
         BACKEND_URL: http://api:8000
     environment:
       BACKEND_URL: http://api:8000
+      OPTIONS2_BACKEND_URL: http://options2-api:8000
       PORT: "3000"
       HOSTNAME: 0.0.0.0
       # Only the login and the internal API key reach the web container, not the broker or data secrets.
@@ -272,6 +360,8 @@ services:
       - beo
     depends_on:
       api:
+        condition: service_healthy
+      options2-api:
         condition: service_healthy
     init: true
     stop_grace_period: 20s
@@ -296,5 +386,6 @@ networks:
 volumes:
   beo_data:
   avi_data:
+  options2_data:
   theta_logs:
   theta_lib:

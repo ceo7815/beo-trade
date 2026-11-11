@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useSyncExternalStore, type ReactNode } from "react";
+import { usePathname } from "next/navigation";
 import { seedCache, setTransportMode, type LiveMode } from "@/lib/api";
 import { readStoredPeriod } from "@/lib/account";
 import { streamUrl } from "@/lib/liveFigures";
@@ -219,17 +220,21 @@ export function useTradingPeriod() {
 }
 
 export function LiveProvider({ children }: { children: ReactNode }) {
+  const path = usePathname() || "/";
+  const options2 = path.startsWith("/o2");
   useEffect(() => {
     let source: EventSource | null = null;
     let stopped = false;
     let retry = 0;
     let timer = 0;
+    commit({ snap: null, series: {}, stale: false, transport: "connecting", updatedAt: null, toasts: [] });
     const stale = window.setInterval(() => {
       if (state.transport === "sse" && state.updatedAt && Date.now() - state.updatedAt > 10000) commit({ stale: true });
     }, 1000);
     const connect = () => {
       if (stopped) return;
-      source = new EventSource(streamUrl(readStoredPeriod()));
+      const url = options2 ? "/o2-backend/api/v1/stream?trading_period=current" : streamUrl(readStoredPeriod());
+      source = new EventSource(url);
       source.addEventListener("snapshot", (event) => {
         retry = 0;
         applySnap(JSON.parse((event as MessageEvent).data) as LiveSnap, "snapshot");
@@ -260,6 +265,6 @@ export function LiveProvider({ children }: { children: ReactNode }) {
       window.clearInterval(stale);
       source?.close();
     };
-  }, []);
+  }, [options2]);
   return children;
 }

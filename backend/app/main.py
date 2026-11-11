@@ -91,6 +91,16 @@ def _money(value) -> str:
     return f"{Decimal(str(value)).quantize(Decimal('0.01'))}"
 
 
+def _options2_alert(block: str) -> str:
+    labels = {
+        "OPTIONS2_DISABLED": "אופציות 2 כבוי. אין סריקה ואין פקודות עד OPTIONS2_ENABLED=true.",
+        "OPTIONS2_NOT_CONFIGURED": "אופציות 2 בלי מפתח נייר או בלי סיומת חשבון. אין פקודות.",
+        "OPTIONS2_NOT_PAPER": "אופציות 2 סירב: הכתובת אינה שרת הנייר.",
+        "OPTIONS2_ACCOUNT_MISMATCH": "אופציות 2 סירב: החשבון לא תואם את הסיומת שהוגדרה.",
+    }
+    return labels.get(block, "אופציות 2 לא סוחר.")
+
+
 def _alpaca_counters() -> dict:
     from app.broker.snapshot import public_broker_status
 
@@ -380,7 +390,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
         from app.analytics.kill_line import display_kill_usd
         from app.control.halt import is_halted
 
-        return {
+        payload = {
             "app": current.app_name,
             "market_phase": phase,
             "exchange_timezone": calendar.timezone,
@@ -422,6 +432,13 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "daily_kill_loss_usd": display_kill_usd(current.trading(), displayed_equity),
             "alpaca": _alpaca_counters(),
         }
+        if current.desk_id.strip() == "options2":
+            from app.options2.guard import public_status as options2_status
+
+            payload.update(options2_status(current))
+            if payload.get("options2_block"):
+                payload["alerts"] = list(payload["alerts"]) + [_options2_alert(str(payload["options2_block"]))]
+        return payload
 
     @app.get("/api/v1/control/trading")
     def trading_control(authorization: str | None = Header(default=None)):

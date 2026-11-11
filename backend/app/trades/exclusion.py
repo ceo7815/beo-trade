@@ -75,8 +75,28 @@ SEEDS = [
 SEED = SEEDS[0]
 
 
-def ensure_seeded(session: Session) -> list[dict]:
+def exclusions_enabled(settings=None) -> bool:
+    """The 30.10 bug lots stay on the main book. Options 2 turns them off."""
+    try:
+        current = settings
+        if current is None:
+            from app.config.settings import get_settings
+
+            current = get_settings()
+        trading = current.trading()
+    except Exception:
+        return True
+    return bool(getattr(trading, "apply_bug_lot_exclusions", True))
+
+
+def runtime_seeds(settings=None) -> list[dict]:
+    return list(SEEDS) if exclusions_enabled(settings) else []
+
+
+def ensure_seeded(session: Session, settings=None) -> list[dict]:
     """Idempotently insert every known bug lot and emit TRADE_EXCLUDED once each."""
+    if not exclusions_enabled(settings):
+        return []
     from app.models.tables import TradeExclusion
 
     out: list[dict] = []
@@ -297,7 +317,7 @@ def rules_for_adjustment(
     else:
         rules = active_exclusions(session)
     if not rules and _exclusion_table_empty(session):
-        rules = [{**seed, "active": True} for seed in SEEDS]
+        rules = [{**seed, "active": True} for seed in runtime_seeds()]
     return [_enrich_rule(dict(rule)) for rule in rules]
 
 
@@ -530,7 +550,7 @@ def exclusion_cards(
     """
     rules = list(exclusions) if exclusions is not None else active_exclusions()
     if not rules and _exclusion_table_empty():
-        rules = [{**seed, "active": True} for seed in SEEDS]
+        rules = [{**seed, "active": True} for seed in runtime_seeds()]
     rules = [_enrich_rule(dict(rule)) for rule in rules]
     open_cards = excluded_open_rows(positions or [], rules)
     seen = {_symbol(row.get("symbol") or row.get("option_symbol")) for row in open_cards}

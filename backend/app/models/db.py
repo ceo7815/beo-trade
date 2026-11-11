@@ -73,7 +73,7 @@ def init_db(settings: Settings) -> None:
         try:
             from app.trades.exclusion import ensure_seeded
 
-            ensure_seeded(session)
+            ensure_seeded(session, settings)
         except Exception:
             pass
         session.commit()

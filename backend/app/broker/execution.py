@@ -289,6 +289,11 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
             record_trade_event(session, trade_id, "ENTRY_SUBMITTED" if intent == "buy_to_open" else "EXIT_SUBMITTED", "beo-trade", "פקודה קיימת לא נשלחה שוב", str(request.get("recommendation_id") or ""))
             return {"duplicate": True, "order": remote or {"client_order_id": client_order_id, "status": existing.status if existing is not None else ""}, "trade_id": trade_id}
     account = adapter.get_account()
+    from app.options2.guard import order_refusal
+
+    refusal = order_refusal(settings, account if isinstance(account, dict) else {})
+    if refusal:
+        raise PaperOnlyError(refusal)
     clock = adapter.get_market_clock()
     symbol = str(request["symbol"]).replace(" ", "").upper()
     contract = parse_option_symbol(symbol)

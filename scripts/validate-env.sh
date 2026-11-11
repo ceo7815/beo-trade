@@ -32,6 +32,10 @@ model="$(value_of OPENAI_MODEL)"
 if [[ -n "$base" && "$base" != "https://paper-api.alpaca.markets" ]]; then
   fail "ALPACA_BASE_URL must be empty or the Alpaca paper host"
 fi
+o2base="$(value_of OPTIONS2_ALPACA_BASE_URL)"
+if [[ -n "$o2base" && "$o2base" != "https://paper-api.alpaca.markets" ]]; then
+  fail "OPTIONS2_ALPACA_BASE_URL must be empty or the Alpaca paper host"
+fi
 if [[ -n "$model" && "$model" != "gpt-6.1-sol" ]]; then
   fail "OPENAI_MODEL must be gpt-6.1-sol"
 fi

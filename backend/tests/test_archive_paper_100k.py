@@ -213,7 +213,9 @@ def test_archive_copies_pages_and_is_idempotent(tmp_path, monkeypatch):
         assert "broker_trades" in sources
         assert "broker_trade_events" in sources
         assert "fill" in sources
-        assert client.get("/api/v1/systems", headers=read).json()["systems"][2]["id"] == "avi"
+        systems = client.get("/api/v1/systems", headers=read).json()["systems"]
+        assert [row["id"] for row in systems] == ["options", "eli", "options2"]
+        assert systems[2]["remote"] is True
         assert client.get("/api/v1/archive/paper_100k/summary").status_code == 401
         assert client.post("/api/v1/archive/paper_100k/run", headers=read).status_code == 403
 

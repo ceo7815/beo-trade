@@ -99,8 +99,8 @@ function AviScreen() {
     <div className="spy-desk" id="board">
       <header className="spy-head">
         <div>
-          <p className="spy-kicker">PAPER · QQQ · ספרד דביט</p>
-          <h1>מסחר אופציות אבי</h1>
+          <p className="spy-kicker">ארכיון · קריאה בלבד · הוחלף על ידי אופציות 2</p>
+          <h1>ארכיון אבי</h1>
         </div>
         <span className={`spy-mode ${mode}`}>{modeLabel}</span>
       </header>
