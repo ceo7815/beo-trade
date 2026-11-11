@@ -35,14 +35,15 @@ export function SystemSwitch() {
   const active = systemFromPath(path);
 
   useEffect(() => {
-    if (path.startsWith("/spy") || path.startsWith("/avi")) {
+    if (path.startsWith("/spy") || path.startsWith("/o2")) {
       remember(systemFromPath(path));
       return;
     }
+    if (path.startsWith("/avi")) return;
     if (path === "/") {
       const saved = readSaved();
       if (saved === "eli") router.replace("/spy");
-      else if (saved === "avi") router.replace("/avi");
+      else if (saved === "options2") router.replace("/o2");
       else remember("options");
     }
   }, [path, router]);

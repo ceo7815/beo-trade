@@ -53,6 +53,11 @@ const WARM: Record<string, string[]> = {
   "/risk": ["/api/v1/risk"],
   "/spy": ["/api/v1/spy/status", "/api/v1/spy/trades", "/api/v1/spy/daily"],
   "/avi": ["/api/v1/avi/status", "/api/v1/avi/trades"],
+  "/o2": ["/api/v1/desk", "/api/v1/broker/alpaca/positions", "/api/v1/risk", "/api/v1/report/trades?period=today"],
+  "/o2/positions": ["/api/v1/broker/alpaca/positions", "/api/v1/risk", "/api/v1/report/trades?period=today"],
+  "/o2/history": ["/api/v1/report/trades?period=all"],
+  "/o2/decisions": ["/api/v1/decisions?limit=200"],
+  "/o2/settings/rules": ["/api/v1/trading-rules"],
 };
 
 const icons = {
@@ -171,6 +176,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
   const system: SystemId = systemFromPath(path);
   const spyDesk = system === "eli";
   const aviDesk = system === "avi";
+  const options2 = system === "options2";
   const [period, setPeriod] = useState("current");
   const archiveView = period === "paper_100k" && !spyDesk && !aviDesk;
   const quietDesk = spyDesk || aviDesk;
@@ -231,7 +237,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       alive = false;
       stop();
     };
-  }, []);
+  }, [system]);
 
   useEffect(() => {
     if (switching || status?.trading_halted == null) return;
@@ -306,7 +312,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       items: [
         { href: "/", label: "לוח ראשי", icon: icons.desk },
         { href: "/spy", label: "מסחר יומי אלי", icon: icons.performance },
-        { href: "/avi", label: "מסחר אופציות אבי", icon: icons.ai },
+        { href: "/avi", label: "ארכיון אבי", icon: icons.ai },
         { href: "/engine", label: "המערכת האוטונומית", icon: icons.scan },
         { href: "/positions", label: "פוזיציות פתוחות", icon: icons.positions },
         { href: "/history", label: "היסטוריית עסקאות", icon: icons.history },
@@ -342,8 +348,24 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     },
   ];
 
+  const shownGroups = options2
+    ? [
+        {
+          title: "אופציות 2",
+          items: [
+            { href: "/o2", label: "לוח ראשי", icon: icons.desk },
+            { href: "/o2/positions", label: "פוזיציות פתוחות", icon: icons.positions },
+            { href: "/o2/history", label: "היסטוריית עסקאות", icon: icons.history },
+            { href: "/o2/decisions", label: "היסטוריית החלטות", icon: icons.buy },
+            { href: "/o2/settings/rules", label: "חוקי מסחר", icon: icons.version },
+            { href: "/avi", label: "ארכיון אבי", icon: icons.ai },
+          ],
+        },
+      ]
+    : groups;
+
   function active(href: string) {
-    if (href === "/") return path === "/";
+    if (href === "/" || href === "/o2") return path === href;
     if (href === "/opportunities") return path === href || path.startsWith("/opportunity/");
     if (href === "/integrations") return path === "/integrations" || /^\/integrations\/(?!future|status)/.test(path);
     return path === href || path.startsWith(`${href}/`);
@@ -358,6 +380,13 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
       ]
     : aviDesk
       ? [{ href: "/avi", label: "לוח", icon: icons.desk }]
+      : options2
+      ? [
+          { href: "/o2", label: "לוח", icon: icons.desk },
+          { href: "/o2/positions", label: "פוזיציות", icon: icons.positions },
+          { href: "/o2/history", label: "עסקאות", icon: icons.history },
+          { href: "/o2/decisions", label: "החלטות", icon: icons.decisions },
+        ]
       : [
           { href: "/", label: "לוח", icon: icons.desk },
           { href: "/positions", label: "פוזיציות", icon: icons.positions },
@@ -372,7 +401,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
     return hash === hrefHash;
   }
   const inTabs = tabs.some((tab) => tabOn(tab.href));
-  const title = aviDesk ? "מסחר אופציות אבי" : spyDesk ? "מסחר יומי אלי" : groups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
+  const title = options2 ? "אופציות 2" : aviDesk ? "ארכיון אבי" : spyDesk ? "מסחר יומי אלי" : shownGroups.flatMap((group) => group.items).find((item) => active(item.href))?.label ?? "Beo-Trade";
   const phase = status ? PHASES[status.market_phase] || status.market_phase : "מתחבר";
 
   useEffect(() => {
@@ -418,7 +447,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             </Link>
           </div>
           <nav>
-            {groups.map((group) => (
+            {shownGroups.map((group) => (
               <div key={group.title} className="nav-group">
                 <div className="nav-label">{group.title}</div>
                 {group.items.map((item) => (
@@ -459,7 +488,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
                 {phase}
                 <MobileClock />
               </span>
-              {quietDesk ? null : <AccountSwitcher />}
+              {quietDesk || options2 ? null : <AccountSwitcher />}
               {archiveView ? <ArchiveBadge /> : null}
             </div>
             {noOrders ? null : (
@@ -476,7 +505,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           </header>
           <header className="instrument">
             <div className="header-picks">
-              {quietDesk ? null : <AccountSwitcher />}
+              {quietDesk || options2 ? null : <AccountSwitcher />}
               {archiveView ? <ArchiveBadge /> : null}
             </div>
             <div className="bar-item clock-line">
@@ -520,7 +549,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
           {finder ? (
             <div className="search-pop">
               <input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder={copy.shell.search} aria-label={copy.shell.search} />
-              {groups.flatMap((group) => group.items).filter((item) => item.label.includes(query.trim())).map((item) => (
+              {shownGroups.flatMap((group) => group.items).filter((item) => item.label.includes(query.trim())).map((item) => (
                 <Link key={item.href} href={item.href} onClick={() => setFinder(false)}>{item.label}</Link>
               ))}
             </div>
@@ -533,6 +562,7 @@ function ShellFrame({ children }: { children: React.ReactNode }) {
             }))}
             series={live.series}
           />
+          {options2 ? <p className="px-6 pt-3 text-sm text-[var(--muted)]">נייר · 40,000$ · פרופיל 26.10 (b7f62cf) · סקייל 0.40</p> : null}
           {note ? <p className="px-6 pt-3 text-sm text-[var(--down)]">{note}</p> : null}
           {live.stale ? <p className="stale-note">{copy.common.stale(Math.max(1, Math.round(((Date.now() - (live.updatedAt || Date.now())) / 1000))))}</p> : null}
           <motion.div

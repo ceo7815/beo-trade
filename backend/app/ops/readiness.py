@@ -304,6 +304,8 @@ def build_ready(settings: Settings, *, now: datetime | None = None, broker_probe
         "monitor_last_success": success["last_success"],
         "account_read_failures": failures,
         "account_read_last_success": account_read.get("last_success_at"),
+        "risk_policy_version": trading.risk_policy_version,
+        "exit_policy_version": trading.exit_policy_version,
         "components": {
             "worker": worker,
             "last_cycle": cycle,
@@ -311,6 +313,8 @@ def build_ready(settings: Settings, *, now: datetime | None = None, broker_probe
             "broker": broker,
             "monitor_success": success,
             "account_read": account_component,
+            "risk_engine": health["components"]["risk_engine"],
+            "exit_engine": health["components"]["exit_engine"],
         },
     }
     return code, body

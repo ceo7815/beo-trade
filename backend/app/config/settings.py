@@ -186,6 +186,16 @@ class TradingConfig:
     exit_reprice_seconds: int = 15
     # STOP / PROTECTED_STOP reprice sooner so a resting limit does not slip further.
     stop_exit_reprice_seconds: int = 5
+    # Options 2 (v2610) restores the 26.10 direction rule. The main book leaves this false.
+    legacy_direction_v2610: bool = False
+    # False sells a stop at the bid. True (the main book) uses one tick under the bid.
+    marketable_stop: bool = True
+    # False skips the 30.10 bug-lot seeds. The main book keeps them.
+    apply_bug_lot_exclusions: bool = True
+    # Documentation fields for the Options 2 profile. Unused by the 20K book.
+    options2_scale: float = 1.0
+    options2_capital_usd: int = 0
+    options2_source_commit: str = ""
     exit_reprice_close_minutes: int = 5
     scan_strike_range: int = 15
     min_eod_days: int = 5
@@ -314,6 +324,11 @@ class Settings(BaseSettings):
     dev_user_id: str = "00000000-0000-0000-0000-000000000001"
     trading_config_path: str = ""
     calendar_path: str = ""
+    # Options 2 process only. Empty on the main book, Eli, and Avi.
+    desk_id: str = ""
+    options2_profile: str = ""
+    options2_enabled: bool = False
+    options2_account_last4: str = ""
 
     @model_validator(mode="after")
     def production_rules(self) -> "Settings":
@@ -346,6 +361,10 @@ class Settings(BaseSettings):
         return "sqlite:///" + (data_dir / "beo_trade.db").as_posix()
 
     def trading(self) -> TradingConfig:
+        if self.desk_id.strip() == "options2":
+            from app.options2.desk import profile_file
+
+            return load_trading_config(profile_file(self.options2_profile))
         path = Path(self.trading_config_path) if self.trading_config_path else None
         return load_trading_config(path)
 
@@ -372,6 +391,9 @@ _settings: Settings | None = None
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
+        from app.options2.desk import prepare_process
+
+        prepare_process()
         _settings = Settings()
     return _settings
 

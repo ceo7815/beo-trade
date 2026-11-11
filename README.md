@@ -33,4 +33,16 @@ Enable on XCloud: set those variables in the server env, set `SPY_ENGINE_ENABLED
 
 The deleted view accounts stay in the account menu as unavailable: `PA3LU0NE5` (beo 10K ILS) and `PA3YUE43D` (SPY Intraday 20K ILS). Their credentials are not used, and a failure there does not change options trading.
 
+## Options 2 / אופציות 2
+
+A third paper book. It trades the 26.10–30.10.2026 rules from commit `b7f62cf` (the $3,500 kill from `d86be52` and pacing from `f172fa4` are included). Percent rules are unchanged. Dollar brakes are that book's dollars × 0.40 for a $40,000 account: daily kill $1,400 (or a 5% loss, whichever is first) and the day-floor ladder `1,600 → 800` through `6,000 → 4,400`. The profile file is `backend/app/config/trading.toml`'s sibling `trading_v2610_40k.toml`. `TRADING_CONFIG_PATH` cannot select it. The process loads it only when `DESK_ID=options2` and `OPTIONS2_PROFILE=v2610_40k`.
+
+It does not change the main options book (PA3N1EPU6, 20K ₪) or Eli's intraday book. Own compose services `options2-api` and `options2-worker`, own volume `options2_data`, own lock, own SQLite. It never reads `ALPACA_API_KEY`. Keys are `OPTIONS2_ALPACA_API_KEY` and `OPTIONS2_ALPACA_API_SECRET`. `OPTIONS2_ACCOUNT_LAST4` must be the suffix of that paper account. A live Alpaca host is refused and no order is sent. The engine is off until `OPTIONS2_ENABLED=true`. While it is off the worker heartbeats and does not scan.
+
+Not in this book: the CALL block before 10:00 New York, the 0.50–8 premium band, the marketable stop, the extended-CALL filter, the day trail, and the 30.10 bug-lot exclusion.
+
+Avi's QQQ debit-spread service stays in compose and stays off (`AVI_ENGINE_ENABLED=false`). Its page is an archive at `/avi`. The switcher shows אופציות, מסחר יומי אלי, and אופציות 2.
+
+Enable on XCloud: set the three Options 2 values in the server env, set `OPTIONS2_ENABLED=true`, then Deploy Now. A git push does not start it. The same read key used by the other desks can read `/api/v1/system`, `/api/v1/report/trades`, `/api/v1/risk`, `/api/v1/trading-rules`, `/api/v1/decisions`, and `/api/v1/broker/alpaca/positions` on the Options 2 API.
+
 Read API, same key as the other desk reads: `/api/v1/spy/status`, `/api/v1/spy/trades`, `/api/v1/spy/daily`, `/api/v1/spy/signals`. The site switcher at the top moves between Options and SPY Intraday.

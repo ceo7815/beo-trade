@@ -67,15 +67,23 @@ def option_tick(price: Decimal) -> Decimal:
     return Decimal("0.05") if price >= 3 else Decimal("0.01")
 
 
-def marketable_sell_limit(bid: Decimal | None, reason: str | None = None) -> Decimal | None:
+def marketable_sell_limit(
+    bid: Decimal | None,
+    reason: str | None = None,
+    *,
+    marketable: bool = True,
+) -> Decimal | None:
     """Limit for a protective sell.
 
     STOP and PROTECTED_STOP go one tick under the live bid so the order can take
     liquidity instead of resting. Other exit reasons keep the bid unchanged.
     The -40% stop threshold itself is not changed here — only the order price.
+    ``marketable=False`` (Options 2 / the 26.10 book) sells at the bid.
     """
     if bid is None or bid <= 0:
         return None
+    if not marketable:
+        return bid
     urgent = str(reason or "") in {"STOP", "PROTECTED_STOP"}
     if not urgent:
         return bid
@@ -321,7 +329,7 @@ def run_false_hard_stop_release_once(settings: Settings, moment: datetime | None
     adjusted = None
     try:
         from app.broker.snapshot import peek
-        from app.trades.exclusion import SEEDS, adjust_day_pnl, closed_rows_from_seeds, matches_trade
+        from app.trades.exclusion import adjust_day_pnl, closed_rows_from_seeds, matches_trade, runtime_seeds
 
         account = peek("account")
         raw_positions = peek("positions")
@@ -344,7 +352,7 @@ def run_false_hard_stop_release_once(settings: Settings, moment: datetime | None
         except Exception:
             pass
         if adjusted is None and measured is not None:
-            rules = [{**seed, "active": True} for seed in SEEDS]
+            rules = [{**seed, "active": True} for seed in runtime_seeds()]
             try:
                 from app.trades.exclusion import active_exclusions
 

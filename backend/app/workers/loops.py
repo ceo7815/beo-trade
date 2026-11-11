@@ -272,7 +272,11 @@ def monitor_once(settings: Settings, quotes: dict | None = None, adapter=None, n
                     continue
                 from app.options.day_floor import marketable_sell_limit
 
-                limit = marketable_sell_limit(signal.exit_price, getattr(signal, "reason", None)) or signal.exit_price
+                limit = marketable_sell_limit(
+                    signal.exit_price,
+                    getattr(signal, "reason", None),
+                    marketable=bool(getattr(settings.trading(), "marketable_stop", True)),
+                ) or signal.exit_price
                 record_trade_event(session, trade_id, "EXIT_TRIGGERED", "beo-trade", f"{signal.reason} {limit} {source}")
                 if submit:
                     try:
@@ -649,7 +653,7 @@ def _reprice_exit(adapter, session, trade_id: str, order: dict, signal, moment: 
     except Exception:
         return None
     reason = str(getattr(signal, "reason", "") or "")
-    target = marketable_sell_limit(signal.exit_price, reason)
+    target = marketable_sell_limit(signal.exit_price, reason, marketable=bool(getattr(trading, "marketable_stop", True)))
     if target is None or target <= 0 or target >= limit:
         return None
     stamp = str(order.get("submitted_at") or order.get("created_at") or "")

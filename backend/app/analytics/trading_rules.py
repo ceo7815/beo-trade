@@ -82,9 +82,15 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
 
     release = _release_version()
     periods = public_periods()
+    v2610 = str(getattr(trading, "capital_profile", "") or "") == "v2610_40k"
     small_20k = profile_is_20k(trading)
     ladder_basis = ladder_basis_usd(trading, opened)
-    steps = scaled_day_floor_steps(trading, ladder_basis) if small_20k else ()
+    if v2610:
+        steps = tuple((Decimal(str(arm)), Decimal(str(lock))) for arm, lock in trading.day_floor_steps)
+    elif small_20k:
+        steps = scaled_day_floor_steps(trading, ladder_basis)
+    else:
+        steps = ()
     kill_pct = configured_kill_pct(trading) if small_20k else Decimal(str(tier.kill_pct))
     per_trade = Decimal("0.15") if small_20k else tier.per_trade_pct
     exposure = Decimal("1") if small_20k else tier.exposure_pct
@@ -98,7 +104,56 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
                 "הרצפה רק עולה. נגיעה ברצפה סוגרת את כל הפוזיציות ועוצרת את היום.",
             )
         )
-    if small_20k:
+    if v2610:
+        scale = Decimal(str(getattr(trading, "options2_scale", 0.40) or 0.40))
+        call_value = "כבוי"
+        call_explain = (
+            "בשבוע 26–30.10 לא הייתה חסימת CALL לפני 10:00 שעון ניו־יורק. "
+            "opening_call_block_until_minutes = 0."
+        )
+        sizing_rules = [
+            _rule("risk", "סיכון לעסקה", _pct(trading.risk_per_trade_pct), "2% מההון החי, חלקי סטופ 40%. אותו אחוז כמו ב־b7f62cf."),
+            _rule("per_trade", "תקרת עסקה", _pct(trading.normal_position_capital_pct), "7% מההון. תקרה קשיחה 10%.", _money(None if basis is None else basis * Decimal(str(trading.normal_position_capital_pct)))),
+            _rule("hard_cap", "תקרה קשיחה", _pct(trading.hard_position_capital_pct), "אף עסקה לא עוברת 10% מההון."),
+            _rule("exposure", "חשיפה מצטברת", _pct(trading.max_total_open_exposure_pct), "סך הפרמיה הפתוחה עד 35% מההון.", _money(None if basis is None else basis * Decimal(str(trading.max_total_open_exposure_pct)))),
+            _rule("aggregate", "סיכון מצטבר", _pct(trading.max_aggregate_planned_risk_pct), "סך הסיכון המתוכנן עד 15% מההון."),
+            _rule("sector", "מגבלת סקטור", _pct(trading.max_sector_exposure_pct), "10% לסקטור. שם בלי סקטור הוא דלי משלו."),
+            _rule("max_positions", "מקסימום פוזיציות", str(trading.max_concurrent_positions), "עד 10 פוזיציות, אחת לכל נכס בסיס."),
+            _rule("per_underlying", "פוזיציה אחת לנכס", str(trading.max_positions_per_underlying), "אחרי STOP או INVALIDATION הנכס חסום עד סוף הסשן."),
+        ]
+        brake_rules = [
+            _rule(
+                "kill",
+                "קייל יומי",
+                f"${_money(kill)} או {_pct(trading.daily_hard_stop_pct)}",
+                "המוקדם מבין הפסד 1,400$ (3,500$ × 0.40) לבין הפסד 5% מההון. סוגר הכל וחוסם את היום.",
+                _money(kill),
+            ),
+            _rule("warn", "אזהרה", _pct(trading.daily_warning_pct), "2.5% הפסד יומי. לא סוגר ולא חוסם."),
+            _rule("entry_brake", "עצירת כניסות", _pct(trading.daily_entry_stop_pct), "הפסד 4% חוסם קנייה חדשה. המכירות נשארות."),
+            *ladder_rules,
+            _rule("day_trail", "טרייל יום", "כבוי", "לא היה בשבוע 26–30.10. הרצפה היא רק סולם הדולרים."),
+            _rule(
+                "scale",
+                "מקדם סקייל",
+                str(scale),
+                f"מקור {getattr(trading, 'options2_source_commit', 'b7f62cf')} על 100,000$. החשבון הזה הוא {getattr(trading, 'options2_capital_usd', 40000)}$.",
+            ),
+        ]
+        tier_rows = [
+            {
+                "id": "v2610_40k",
+                "label": "אופציות 2 · 40,000$",
+                "per_trade": "7% / קשיח 10%",
+                "kill": "$1,400 או 5%",
+                "arm": "1,600$",
+                "protect": "רצפה 800$",
+                "exposure": "35%",
+                "provisional": False,
+                "explain": "שחזור b7f62cf. אחוזים זהים. בלמי דולר × 0.40.",
+            }
+        ]
+    elif small_20k:
         sizing_rules = [
             _rule("per_trade", "מגבלת עסקה", "15% קשיח", "אם חוזה אחד עולה יותר מ־15% מההון — מדלגים. אין חריגת חוזה אחד מעל התקרה.", _money(None if basis is None else basis * per_trade), _money(None if eq_ils is None else eq_ils * per_trade)),
             _rule("exposure", "חשיפה מצטברת", "100%", "סך הפרמיה הפתוחה יכול להגיע לכל ההון.", _money(None if basis is None else basis * exposure)),

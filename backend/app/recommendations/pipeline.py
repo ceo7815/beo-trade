@@ -236,7 +236,7 @@ def run_scan(
         shortlist = [
             item
             for item in rank_contracts(enriched, underlying, config, as_of)
-            if direction_matches(underlying, item, events)
+            if direction_matches(underlying, item, events, config)
         ]
         if not shortlist:
             if enriched:

@@ -170,7 +170,21 @@ def run_forever() -> None:
     )
     settings = get_settings()
     assert_boot_safe(settings)
+    signal.signal(signal.SIGTERM, _request_stop)
+    signal.signal(signal.SIGINT, _request_stop)
     _lock_handle = acquire_single_worker_lock(WORKER_LOCK)
+    if str(getattr(settings, "desk_id", "") or "").strip() == "options2":
+        from app.options2.guard import trading_allowed
+
+        allowed, block = trading_allowed(settings)
+        if not allowed:
+            # Heartbeat only. No scan and no order until the paper account is pinned.
+            log.info("options2.idle", reason=block, profile=str(getattr(settings, "options2_profile", "") or ""))
+            while not _stop:
+                beat(HEARTBEAT, "IDLE")
+                time.sleep(5)
+            log.info("worker.stopped", service="worker")
+            return
     configure_database(settings)
     init_db(settings)
     try:
@@ -179,8 +193,6 @@ def run_forever() -> None:
         run_false_hard_stop_release_once(settings)
     except Exception:
         pass
-    signal.signal(signal.SIGTERM, _request_stop)
-    signal.signal(signal.SIGINT, _request_stop)
     calendar = settings.calendar()
     trading = settings.trading()
     last_scan = 0.0

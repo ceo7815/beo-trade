@@ -24,6 +24,8 @@ python -m pytest backend/tests -q
 
 מנוע SPY הוא תהליך נפרד (`python -m app.spy.runner`, שירות `spy`). הוא לא נוגע במסחר האופציות. מספר חשבון הנייר החדש ($25,000) נכנס רק ב-`SPY_ALPACA_ACCOUNT`. פרטים והפעלה ב-`README.md`.
 
+אופציות 2 היא תהליך נפרד (`options2-api` + `options2-worker`) על ווליום `options2_data`. הפרופיל הוא `trading_v2610_40k.toml` (קומיט `b7f62cf`, סקייל 0.40 ל־40,000$). המפתחות הם `OPTIONS2_ALPACA_API_KEY`, `OPTIONS2_ALPACA_API_SECRET`, `OPTIONS2_ACCOUNT_LAST4`. בלי `OPTIONS2_ENABLED=true` אין סריקה ואין פקודה. `TRADING_CONFIG_PATH` לא בוחר את הקובץ. אבי נשאר כבוי; המסך שלו הוא ארכיון. אחרי מילוי הסביבה ב-XCloud צריך Deploy Now. דחיפה לגיט לא מפעילה את המערכת.
+
 לשרת XCloud, מתוך שורש הפרויקט:
 
 ```

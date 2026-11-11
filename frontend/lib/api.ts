@@ -76,6 +76,11 @@ export type SystemStatus = {
   paper_only: boolean;
   trading_halted?: boolean;
   daily_kill_loss_usd?: string | null;
+  desk?: string;
+  options2_enabled?: boolean;
+  options2_block?: string | null;
+  options2_profile?: string;
+  options2_capital_usd?: string;
 };
 
 export type BuyCard = {
@@ -148,8 +153,18 @@ export function setTransportMode(mode: LiveMode) {
   liveMode = mode;
 }
 
+/** Options 2 pages live under /o2 and talk to their own API proxy. */
+export function deskApiRoot(): string {
+  if (typeof window !== "undefined" && window.location.pathname.startsWith("/o2")) return "/o2-backend";
+  return "/backend";
+}
+
+function storeKey(path: string): string {
+  return `${deskApiRoot()} ${path}`;
+}
+
 export function seedCache(path: string, data: unknown) {
-  memory.set(path, { data, at: Date.now() });
+  memory.set(storeKey(path), { data, at: Date.now() });
 }
 
 function toLogin(response: Response) {
@@ -184,11 +199,12 @@ function windowFor(path: string) {
 export { holdScreen, unavailable };
 
 function cachedEntry(path: string): CacheEntry | null {
-  const hit = memory.get(path);
+  const key = storeKey(path);
+  const hit = memory.get(key);
   if (!hit) return null;
   const expired = Date.now() - hit.at > windowFor(path).stale;
   if (expired && unavailable(hit.data)) {
-    memory.delete(path);
+    memory.delete(key);
     return null;
   }
   return hit;
@@ -200,39 +216,41 @@ export function peekCached<T>(path: string): T | null {
 }
 
 function fetchFresh<T>(path: string, timeoutMs: number): Promise<T> {
-  const existing = flights.get(path);
+  const key = storeKey(path);
+  const existing = flights.get(key);
   if (existing) return existing as Promise<T>;
   const promise = (async () => {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`/backend${path}`, { cache: "no-store", signal: controller.signal });
+      const response = await fetch(`${deskApiRoot()}${path}`, { cache: "no-store", signal: controller.signal });
       toLogin(response);
       if (!response.ok) throw new Error(copy.errors.request);
       const data = (await response.json()) as T;
       if (unavailable(data)) {
-        const previous = memory.get(path);
+        const previous = memory.get(key);
         if (previous && !unavailable(previous.data)) {
           const prior = previous.data as { available?: boolean; stale?: boolean; as_of?: string | null };
           const kept = holdScreen(prior, data as typeof prior);
           if (kept) kept.as_of = prior.as_of ?? new Date(previous.at).toISOString();
-          memory.set(path, { data: kept, at: previous.at });
+          memory.set(key, { data: kept, at: previous.at });
           return kept as T;
         }
       }
-      memory.set(path, { data, at: Date.now() });
+      memory.set(key, { data, at: Date.now() });
       return data;
     } finally {
       clearTimeout(timer);
-      flights.delete(path);
+      flights.delete(key);
     }
   })();
-  flights.set(path, promise);
+  flights.set(key, promise);
   return promise;
 }
 
 export async function apiGet<T>(path: string, timeoutMs = 15000): Promise<T> {
-  path = withTradingPeriod(path, readStoredPeriod());
+  const period = typeof window !== "undefined" && window.location.pathname.startsWith("/o2") ? "current" : readStoredPeriod();
+  path = withTradingPeriod(path, period);
   const hit = cachedEntry(path);
   const age = hit ? Date.now() - hit.at : Infinity;
   const { fresh } = windowFor(path);
@@ -255,7 +273,7 @@ export function loadCached<T>(path: string, apply: (body: T) => void, timeoutMs 
 }
 
 export function warm(paths: string[]) {
-  for (const path of paths) void apiGet(withTradingPeriod(path, readStoredPeriod())).catch(() => undefined);
+  for (const path of paths) void apiGet(path).catch(() => undefined);
 }
 
 export function poll(task: () => Promise<unknown> | unknown, everyMs: number): () => void {
@@ -301,13 +319,13 @@ export function poll(task: () => Promise<unknown> | unknown, everyMs: number): (
 }
 
 export async function apiDelete(path: string): Promise<void> {
-  const response = await fetch(`/backend${path}`, { method: "DELETE" });
+  const response = await fetch(`${deskApiRoot()}${path}`, { method: "DELETE" });
   toLogin(response);
   if (!response.ok) throw new Error(copy.errors.request);
 }
 
 export async function apiPost<T>(path: string, body?: unknown): Promise<T> {
-  const response = await fetch(`/backend${path}`, {
+  const response = await fetch(`${deskApiRoot()}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: body ? JSON.stringify(body) : undefined,
