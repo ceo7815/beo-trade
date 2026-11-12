@@ -397,6 +397,64 @@ class ThetaFeed:
     def context_quotes(self) -> dict:
         return dict(_state.context)
 
+    def session_gap(self, symbol: str, as_of: datetime) -> dict:
+        """Regular-session open, prior close, and the minutes through 09:45 for one name.
+
+        Same stock paths the scan already reads. An empty field means that print was
+        not available. Callers fail open rather than blocking on a missing gap.
+        """
+        name = str(symbol or "").strip().upper()
+        empty = {"symbol": name, "open": None, "prior_close": None, "bars": [], "live_price": None, "live_time": None}
+        if not name:
+            return empty
+        from datetime import time as clock_time
+
+        session_day = as_of.astimezone(EXCHANGE).date()
+        try:
+            ohlc_rows = self._get("/v3/stock/snapshot/ohlc", {"symbol": name}, required=False)
+            trade_rows = self._get("/v3/stock/snapshot/trade", {"symbol": name}, required=False)
+            eod_rows = self._get(
+                "/v3/stock/history/eod",
+                {
+                    "symbol": name,
+                    "start_date": (session_day - timedelta(days=30)).strftime("%Y%m%d"),
+                    "end_date": (session_day - timedelta(days=1)).strftime("%Y%m%d"),
+                },
+                required=False,
+            )
+            minute_rows: list[dict] = []
+            if as_of.astimezone(EXCHANGE).time() >= clock_time(9, 45):
+                minute_rows = self._get(
+                    "/v3/stock/history/ohlc",
+                    {
+                        "symbol": name,
+                        "start_date": session_day.strftime("%Y%m%d"),
+                        "end_date": session_day.strftime("%Y%m%d"),
+                        "interval": "1m",
+                        "start_time": "09:30:00",
+                        "end_time": "09:46:00",
+                    },
+                    required=False,
+                )
+        except Exception:
+            return empty
+        ohlc = _by_symbol(ohlc_rows).get(name) or (ohlc_rows[0] if ohlc_rows else None)
+        trade = _by_symbol(trade_rows).get(name) or (trade_rows[0] if trade_rows else None)
+        prior_rows = _history_before(eod_rows, session_day)
+        prior_close = _dec(prior_rows[-1].get("close")) if prior_rows else None
+        live_stamp = _stamp((trade or {}).get("timestamp"))
+        live_time = None
+        if live_stamp is not None and live_stamp.astimezone(EXCHANGE).date() == session_day:
+            live_time = live_stamp.astimezone(EXCHANGE).strftime("%H:%M:%S")
+        return {
+            "symbol": name,
+            "open": None if _dec((ohlc or {}).get("open")) is None else str(_dec((ohlc or {}).get("open"))),
+            "prior_close": None if prior_close is None else str(prior_close),
+            "bars": _session_minutes(minute_rows, session_day),
+            "live_price": None if _dec((trade or {}).get("price")) is None else str(_dec((trade or {}).get("price"))),
+            "live_time": live_time,
+        }
+
     def load_spots(self, symbols: tuple[str, ...], as_of: datetime) -> list[UnderlyingSnapshot]:
         """Live stock price for named symbols. No history and no context names.
 
@@ -838,6 +896,28 @@ class ThetaFeed:
                 if item is not None:
                     contracts.append(item)
         return contracts
+
+
+def _session_minutes(rows: list[dict], session_day: date) -> list[dict]:
+    """Today's regular-session minute bars, as start/open/close text."""
+    found = []
+    for row in rows:
+        stamp = _stamp(row.get("timestamp") or row.get("created") or row.get("last_trade"))
+        if stamp is None or stamp.astimezone(EXCHANGE).date() != session_day:
+            continue
+        opened = _dec(row.get("open"))
+        close = _dec(row.get("close"))
+        if opened is None or close is None:
+            continue
+        found.append(
+            {
+                "start": stamp.astimezone(EXCHANGE).strftime("%H:%M:%S"),
+                "open": str(opened),
+                "close": str(close),
+            }
+        )
+    found.sort(key=lambda item: item["start"])
+    return found
 
 
 def _history_before(rows: list[dict], session_day: date) -> list[dict]:

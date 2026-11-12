@@ -702,6 +702,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "equity_note": None
             if not excluded_rows
             else "יתרת Alpaca כפי שהיא; P&L התצוגה מנוכה מעסקת הבאג",
+            "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(moment),
         }
 
     @app.get("/api/v1/report/trades")

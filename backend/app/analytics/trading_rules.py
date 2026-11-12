@@ -297,6 +297,12 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
                     ),
                     "CALL נחסם רק כששני התנאים מתקיימים יחד (CALL_EXTENDED_AT_HIGH), עם אחוז התנועה ואחוז המרחק בפירוט. PUT לא נחסם. בלי מחיר פתיחה או בלי שיא היום אין חסימה. כיבוי: call_extended_at_high_enabled = false.",
                 ),
+                _rule(
+                    "open_guard",
+                    "גאפ הפתיחה של QQQ",
+                    "09:30–10:10 ניו־יורק · תיקון 50% מ־09:45",
+                    "OPEN_NO_FADE: עד 10:10 אין CALL אחרי גאפ למטה ואין PUT אחרי גאפ למעלה. OPEN_GAP_RETRACE: מ־09:45, אם QQQ כבר תיקן לפחות חצי מהגאפ, אין כניסה חדשה עד 10:10. בלי מחיר פתיחה או בלי סגירה קודמת אין חסימה (GAP_DATA_MISSING). פוזיציה פתוחה לא נסגרת. השער פעיל ב־20K ובאופציות 2.",
+                ),
                 _rule("dte", "DTE", f"מועדף {trading.preferred_dte}, מקס׳ מועדף {trading.preferred_max_dte}, תקרה {trading.max_expiration_days}", "דירוג לפי ימי פקיעה; מעבר לתקרה נחסם."),
                 _rule("pace", "קצב כניסות", f"עד {trading.entry_pace_max_entries} ב־{trading.entry_pace_window_minutes} דק׳", "בלי מיקס צדדים בחלון; אחרי הפסד הצד ההפוך מחכה."),
                 _rule("regime", "משטר שוק", "פעיל במערכת", "כניסות מסוננות גם לפי מצב המשטר (regime) כשהוא זמין."),

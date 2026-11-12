@@ -431,6 +431,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "trading_halted": is_halted(),
             "daily_kill_loss_usd": display_kill_usd(current.trading(), displayed_equity),
             "alpaca": _alpaca_counters(),
+            "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(now),
         }
         if current.desk_id.strip() == "options2":
             from app.options2.guard import public_status as options2_status

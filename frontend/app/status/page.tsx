@@ -18,6 +18,7 @@ const RULES: Record<string, string> = {
   Scanner: "תקין כשגיל הדופק אינו מעל 180 שניות.",
   "Quant Engine": "המנוע קיים בקוד. אין כאן בדיקת חיבור נפרדת.",
   "Paper Trading": "תקין כשמצב המסחר הוא PAPER.",
+  "גאפ פתיחה": "גאפ QQQ, התיקון מ־09:45, והאם כניסה חדשה חסומה עד 10:10. בלי נתון אין חסימה.",
 };
 
 export default function StatusPage() {
@@ -164,5 +165,15 @@ function healthRows(status: SystemStatus): { label: string; text: string; tone: 
     { label: "יציאות", ...exits() },
     { label: "Quant Engine", text: "אין נתונים", tone: "wait" },
     { label: "Paper Trading", text: status.paper_only ? "תקין" : "אין נתונים", tone: status.paper_only ? "ok" : "wait" },
+    { label: "גאפ פתיחה", ...opening(status.open_guard) },
   ];
+}
+
+function opening(guard: SystemStatus["open_guard"]): { text: string; tone: Tone } {
+  if (!guard) return { text: "אין נתונים", tone: "wait" };
+  if (guard.data_missing || guard.status === "GAP_DATA_MISSING") return { text: "אין נתון", tone: "wait" };
+  if (guard.retrace_blocking) return { text: "חסימת פתיחה", tone: "warn" };
+  if (guard.no_fade_side) return { text: `בלי ${guard.no_fade_side}`, tone: "warn" };
+  if (guard.gap_pct) return { text: `${guard.gap_pct}%`, tone: "ok" };
+  return { text: "מחוץ לחלון", tone: "ok" };
 }
