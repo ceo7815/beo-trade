@@ -24,6 +24,17 @@ type Risk = {
   max_spread: string;
   max_slippage: string;
   sector_note: string;
+  open_guard?: {
+    symbol?: string;
+    gap_pct?: string | null;
+    retracement_pct?: string | null;
+    data_missing?: boolean;
+    status?: string;
+    no_fade_side?: string | null;
+    retrace_blocking?: boolean;
+    blocked_sides?: string[];
+    in_window?: boolean;
+  } | null;
 };
 
 type Policy = {
@@ -95,6 +106,17 @@ function ratio(value: string | null | undefined) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "אין נתונים";
   return number <= 1 ? `${(number * 100).toFixed(0)}%` : String(value);
+}
+
+function guardValue(guard: Risk["open_guard"]) {
+  if (!guard) return "אין נתונים";
+  if (guard.data_missing || guard.status === "GAP_DATA_MISSING") return "אין נתון גאפ";
+  const gap = guard.gap_pct == null || guard.gap_pct === "" ? "—" : `${guard.gap_pct}%`;
+  const retrace = guard.retracement_pct == null || guard.retracement_pct === "" ? "—" : `${guard.retracement_pct}%`;
+  if (guard.retrace_blocking) return `QQQ ${gap} · תיקון ${retrace} · חסימת כניסות`;
+  if (guard.no_fade_side) return `QQQ ${gap} · בלי ${guard.no_fade_side}`;
+  if (guard.in_window) return `QQQ ${gap} · תיקון ${retrace}`;
+  return guard.gap_pct == null ? "מחוץ לחלון" : `QQQ ${gap}`;
 }
 
 function near(used: string | null | undefined, limit: string | null | undefined) {
@@ -279,6 +301,21 @@ export default function RiskPage() {
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[4].explain)}>
             <b>פוזיציות</b>
             <strong className={`num ${near(body?.open_positions == null ? null : String(body.open_positions), body?.max_positions == null ? null : String(body.max_positions)) ? "bad" : ""}`}>{positions}</strong>
+          </button>
+          <button
+            type="button"
+            className="plain-row"
+            onClick={() =>
+              setOpen({
+                title: "גאפ הפתיחה",
+                does: "עד 10:10 שעון ניו יורק אין כניסה נגד גאפ QQQ. מ־09:45, תיקון של 50% ומעלה חוסם כל כניסה חדשה עד 10:10. בלי פתיחה או בלי סגירה קודמת אין חסימה.",
+                tools: ["ThetaData QQQ"],
+                formula: "גאפ = פתיחה / סגירה קודמת − 1\nתיקון = (מחיר 09:45 − פתיחה) / (סגירה קודמת − פתיחה)",
+              })
+            }
+          >
+            <b>גאפ פתיחה</b>
+            <strong className={`num ${body?.open_guard?.retrace_blocking || body?.open_guard?.no_fade_side ? "bad" : ""}`}>{guardValue(body?.open_guard)}</strong>
           </button>
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[2].explain)}>
             <b>חשיפה</b>

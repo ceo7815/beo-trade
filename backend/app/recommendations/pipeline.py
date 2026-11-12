@@ -185,8 +185,12 @@ def run_scan(
     counts: dict | None = None,
     open_underlyings: set[str] | None = None,
     open_planned_risk: Decimal = Decimal("0"),
+    open_guard: dict | None = None,
 ) -> list[Recommendation]:
+    from app.positions.open_guard import entry_block, guard_for
+
     assert_no_future(underlyings, options, news, as_of)
+    gap_state = open_guard if open_guard is not None else guard_for(as_of)
     results: list[Recommendation] = []
     buys = 0
     seen: dict[str, ModelOutput] = {}
@@ -413,6 +417,12 @@ def run_scan(
                 recommendation.decision = DecisionKind.SUPPRESS
                 recommendation.suppress_reason = stretch
                 recommendation.policy_trace = {**recommendation.policy_trace, "call_extended_at_high": stretch}
+        if recommendation.decision is DecisionKind.BUY:
+            gap_block = entry_block(recommendation.call_put.value, underlying.symbol, as_of, gap_state)
+            if gap_block:
+                recommendation.decision = DecisionKind.SUPPRESS
+                recommendation.suppress_reason = gap_block
+                recommendation.policy_trace = {**recommendation.policy_trace, "open_guard": gap_block}
         if recommendation.decision is DecisionKind.BUY:
             if buys >= config.max_buys_per_scan:
                 recommendation.decision = DecisionKind.SUPPRESS

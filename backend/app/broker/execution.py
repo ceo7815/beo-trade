@@ -334,6 +334,12 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
             closed_for = _live_day_kill(settings, adapter, account, moment)
         if closed_for:
             reasons.append(closed_for)
+        if contract is not None:
+            from app.positions.open_guard import entry_block
+
+            gap_block = entry_block(str(contract["right"]), str(contract["underlying"]), moment)
+            if gap_block:
+                reasons.append(gap_block)
         held = adapter.get_positions()
         if any(str(row.get("symbol") or "").replace(" ", "") == symbol and (_decimal(row.get("qty")) or Decimal("0")) > 0 for row in held):
             reasons.append("כבר קיימת פוזיציה פתוחה")

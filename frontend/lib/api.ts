@@ -14,6 +14,19 @@ export type FeedStatus = {
   last_error: string | null;
 };
 
+export type OpenGuardStatus = {
+  symbol?: string;
+  gap_pct?: string | null;
+  retracement_pct?: string | null;
+  data_missing?: boolean;
+  in_window?: boolean;
+  retrace_blocking?: boolean;
+  no_fade_side?: string | null;
+  blocked_sides?: string[];
+  status?: string;
+  latched?: boolean;
+};
+
 export type SystemStatus = {
   app: string;
   market_phase: string;
@@ -81,6 +94,7 @@ export type SystemStatus = {
   options2_block?: string | null;
   options2_profile?: string;
   options2_capital_usd?: string;
+  open_guard?: OpenGuardStatus | null;
 };
 
 export type BuyCard = {

@@ -105,6 +105,14 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
         record_scan_blocked(moment, "אין נתוני חשבון")
         return {"ok": False, "blocked": "אין נתוני חשבון"}
     providers = build_providers(settings)
+    from app.positions.open_guard import refresh_open_guard
+
+    try:
+        refresh_open_guard(moment, providers)
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="open_guard")
     entries = []
     from app.models.db import database_ready, session_scope
     from app.models.store import load_usage
@@ -1302,6 +1310,15 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             entries=0 if pace_book is None else len(pace_book.entries),
             losses=0 if pace_book is None else len(pace_book.losses),
         )
+        try:
+            from app.positions.open_guard import refresh_open_guard
+            from app.providers.registry import build_providers
+
+            refresh_open_guard(moment, build_providers(settings))
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="open_guard_submit")
         for row in buys:
             side = row.call_put.value
             if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
@@ -1339,6 +1356,18 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": stretch})
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=stretch)
+                continue
+            from app.positions.open_guard import entry_block
+
+            gap_block = entry_block(side, row.underlying, moment)
+            if gap_block:
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", gap_block, row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": gap_block})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=gap_block)
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:

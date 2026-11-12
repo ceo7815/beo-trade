@@ -60,6 +60,9 @@ export const blockReasons: Record<string, string> = {
   SIDE_MIX_BLOCK: "אין ערבוב CALL ו-PUT בחלון",
   POST_LOSS_OPPOSITE_BLOCK: "צד הפוך חסום אחרי הפסד",
   CALL_EXTENDED_AT_HIGH: "CALL מתוח על השיא",
+  OPEN_NO_FADE: "נגד גאפ הפתיחה",
+  OPEN_GAP_RETRACE: "הגאפ תוקן בפתיחה",
+  GAP_DATA_MISSING: "אין נתון גאפ",
 };
 
 export const copy = {
