@@ -1143,13 +1143,24 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
         _submit_step(log, "news", articles=len(news))
     except Exception as exc:
-        from app.ops.failure import log_failure
+        import traceback
 
-        log_failure("worker.scan_caught", exc, service="worker", where="revalidation")
+        from app.ops.failure import failure_fields, log_failure
+
+        detail = failure_fields(exc)
+        log_failure(
+            "worker.scan_caught",
+            exc,
+            service="worker",
+            where="revalidation",
+            traceback_text=" ".join(traceback.format_exc().split())[:1500],
+        )
         if _is_timeout(exc):
             blocked_all(f"SUBMIT_TIMEOUT: {type(exc).__name__}")
         else:
-            blocked_all(f"REVALIDATION_DATA: {type(exc).__name__}")
+            # The audit used to keep only the class name, so an UnboundLocalError
+            # could not be told apart from any other revalidation failure.
+            blocked_all(f"REVALIDATION_DATA: {detail['error']}: {detail['message']} | {detail['traceback']}")
         return
     equity = _cash(settings)
     if equity is not None:
@@ -1312,8 +1323,10 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         )
         try:
             from app.positions.open_guard import refresh_open_guard
-            from app.providers.registry import build_providers
 
+            # build_providers is the module import. A second import here makes the
+            # name local to this whole function, so the earlier revalidation call
+            # raises UnboundLocalError before this line ever runs.
             refresh_open_guard(moment, build_providers(settings))
         except Exception as exc:
             from app.ops.failure import log_failure
