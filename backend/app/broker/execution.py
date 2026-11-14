@@ -330,16 +330,45 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         if unavailable:
             reasons.append(unavailable)
         closed_for = day_close_reason(settings, moment)
+        brake = None
         if not closed_for and clock.get("is_open") is True:
-            closed_for = _live_day_kill(settings, adapter, account, moment)
+            from app.capital import effective_kill_usd
+            from app.options.day_floor import latch_hard_stop
+            from app.options.risk_limits import day_flatten_reason
+            from app.positions.entry_gates import add_brake_reason
+
+            pnl, opened = _measured_for_entry(settings, adapter, account, moment)
+            equity_now = _decimal(account.get("equity"))
+            if day_flatten_reason(equity_now, pnl, settings.trading(), open_equity=opened) == "DAILY_HARD_STOP":
+                try:
+                    latch_hard_stop(settings, moment)
+                except Exception:
+                    pass
+                closed_for = "DAILY_HARD_STOP"
+            brake = add_brake_reason(pnl, effective_kill_usd(settings.trading(), equity_now, open_equity=opened))
         if closed_for:
             reasons.append(closed_for)
+        if brake:
+            reasons.append(brake)
         if contract is not None:
             from app.positions.open_guard import entry_block
 
             gap_block = entry_block(str(contract["right"]), str(contract["underlying"]), moment)
             if gap_block:
                 reasons.append(gap_block)
+            from app.positions.entry_gates import chase_reading
+
+            gate = request.get("entry_gate") if isinstance(request.get("entry_gate"), dict) else None
+            chase = chase_reading(
+                (gate or {}).get("side") or contract["right"],
+                None if gate is None else gate.get("price"),
+                None if gate is None else gate.get("open"),
+                None if gate is None else gate.get("atr14"),
+                symbol=str(contract["underlying"]),
+                log_missing=gate is None,
+            )
+            if chase["reason"]:
+                reasons.append(chase["reason"])
         held = adapter.get_positions()
         if any(str(row.get("symbol") or "").replace(" ", "") == symbol and (_decimal(row.get("qty")) or Decimal("0")) > 0 for row in held):
             reasons.append("כבר קיימת פוזיציה פתוחה")
@@ -377,30 +406,27 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
     return {"duplicate": False, "order": order, "trade_id": trade_id}
 
 
-def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime) -> str | None:
-    """Block the buy and latch the day when the dollar kill or the percent hard stop is already reached."""
+def _measured_for_entry(settings: Settings, adapter, account: dict, moment: datetime) -> tuple[Decimal | None, Decimal | None]:
+    """(adjusted day P&L, locked session-open equity). P&L is None when the mark cannot be read."""
     from zoneinfo import ZoneInfo
 
-    from app.options.day_floor import latch_hard_stop
-    from app.options.risk_limits import day_flatten_reason
     from app.trades.exclusion import compute_adjusted_day_pnl
 
     if not hasattr(adapter, "get_activities") and not hasattr(adapter, "get_session_activities"):
-        return None
+        return None, None
     session_date = moment.astimezone(ZoneInfo(settings.exchange_timezone)).date()
     try:
         from app.analytics.finance import read_session_funding
 
         activities = read_session_funding(adapter, session_date)
     except Exception:
-        return None
+        return None, None
     if not isinstance(activities, list):
-        return None
+        return None, None
     try:
         held = adapter.get_positions()
     except Exception:
         held = []
-    # Same adjusted figure as /risk and the worker floor (funding + seeded closed lots).
     pnl = compute_adjusted_day_pnl(
         account.get("equity"),
         account.get("last_equity"),
@@ -408,10 +434,19 @@ def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime)
         session_date,
         activities=activities,
     )
-    equity = _decimal(account.get("equity"))
     from app.capital.session_lock import open_equity_from_account
 
     opened = open_equity_from_account(account, moment, persist=True)
+    return pnl, opened
+
+
+def _live_day_kill(settings: Settings, adapter, account: dict, moment: datetime) -> str | None:
+    """Block the buy and latch the day when the dollar kill or the percent hard stop is already reached."""
+    from app.options.day_floor import latch_hard_stop
+    from app.options.risk_limits import day_flatten_reason
+
+    pnl, opened = _measured_for_entry(settings, adapter, account, moment)
+    equity = _decimal(account.get("equity"))
     if day_flatten_reason(equity, pnl, settings.trading(), open_equity=opened) != "DAILY_HARD_STOP":
         return None
     try:

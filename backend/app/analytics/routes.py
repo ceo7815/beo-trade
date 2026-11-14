@@ -703,6 +703,11 @@ def register(app: FastAPI, settings: Settings) -> None:
             if not excluded_rows
             else "יתרת Alpaca כפי שהיא; P&L התצוגה מנוכה מעסקת הבאג",
             "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(moment),
+            "add_brake": __import__("app.positions.entry_gates", fromlist=["public_add_brake"]).public_add_brake(
+                measured,
+                __import__("app.capital", fromlist=["effective_kill_usd"]).effective_kill_usd(trading, equity, open_equity=opened),
+            ),
+            "chase_atr": __import__("app.positions.entry_gates", fromlist=["public_chase"]).public_chase(),
         }
 
     @app.get("/api/v1/report/trades")

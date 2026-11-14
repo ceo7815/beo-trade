@@ -35,6 +35,14 @@ type Risk = {
     blocked_sides?: string[];
     in_window?: boolean;
   } | null;
+  add_brake?: {
+    blocking?: boolean;
+    day_pnl?: string | null;
+    threshold?: string | null;
+    fraction?: string;
+    data_missing?: boolean;
+  } | null;
+  chase_atr?: { limit?: string; period?: number } | null;
 };
 
 type Policy = {
@@ -106,6 +114,13 @@ function ratio(value: string | null | undefined) {
   const number = Number(value);
   if (!Number.isFinite(number)) return "אין נתונים";
   return number <= 1 ? `${(number * 100).toFixed(0)}%` : String(value);
+}
+
+function brakeValue(brake: Risk["add_brake"]) {
+  if (!brake) return "אין נתונים";
+  if (brake.data_missing || brake.day_pnl == null || brake.threshold == null) return "אין נתון יום";
+  const state = brake.blocking ? "כניסות חסומות" : "כניסות פתוחות";
+  return `${brake.day_pnl}$ / ${brake.threshold}$ · ${state}`;
 }
 
 function guardValue(guard: Risk["open_guard"]) {
@@ -316,6 +331,21 @@ export default function RiskPage() {
           >
             <b>גאפ פתיחה</b>
             <strong className={`num ${body?.open_guard?.retrace_blocking || body?.open_guard?.no_fade_side ? "bad" : ""}`}>{guardValue(body?.open_guard)}</strong>
+          </button>
+          <button
+            type="button"
+            className="plain-row"
+            onClick={() =>
+              setOpen({
+                title: "בלם כניסות",
+                does: "אין כניסה חדשה כשההפסד של היום מגיע לרבע מהקייל הנעול. פוזיציה פתוחה נשארת מנוהלת. אם היום חוזר מעל הקו, כניסות חוזרות. מועמד גם נחסם אם המניה כבר זזה מהפתיחה יותר מ־0.65 פעמים ATR של 14 ימים בכיוון העסקה. בלי נתון אין חסימה.",
+                tools: ["Alpaca", "ThetaData"],
+                formula: "בלם = P&L היום ≤ −25% × קייל נעול\nרדיפה CALL = (מחיר − פתיחה) / ATR14 > 0.65\nרדיפה PUT = (פתיחה − מחיר) / ATR14 > 0.65",
+              })
+            }
+          >
+            <b>בלם כניסות</b>
+            <strong className={`num ${body?.add_brake?.blocking ? "bad" : ""}`}>{brakeValue(body?.add_brake)}{body?.chase_atr?.limit ? ` · ATR ${body.chase_atr.limit}` : ""}</strong>
           </button>
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[2].explain)}>
             <b>חשיפה</b>
