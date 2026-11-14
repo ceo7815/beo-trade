@@ -186,11 +186,33 @@ def run_scan(
     open_underlyings: set[str] | None = None,
     open_planned_risk: Decimal = Decimal("0"),
     open_guard: dict | None = None,
+    account_day_pnl: Decimal | None = None,
+    kill_usd: Decimal | None = None,
 ) -> list[Recommendation]:
+    from app.positions.entry_gates import (
+        add_brake_reason,
+        atr14,
+        chase_reading,
+        public_add_brake,
+        session_day_of,
+    )
     from app.positions.open_guard import entry_block, guard_for
 
     assert_no_future(underlyings, options, news, as_of)
     gap_state = open_guard if open_guard is not None else guard_for(as_of)
+    brake = None
+    if kill_usd is not None:
+        brake = add_brake_reason(account_day_pnl, kill_usd)
+        if account_day_pnl is None:
+            import structlog
+
+            structlog.get_logger().info(
+                "entry.add_brake_data_missing",
+                service="worker",
+                kill_usd=str(kill_usd),
+            )
+    move_rows: list[dict] = []
+    session_day = session_day_of(as_of)
     results: list[Recommendation] = []
     buys = 0
     seen: dict[str, ModelOutput] = {}
@@ -423,6 +445,41 @@ def run_scan(
                 recommendation.decision = DecisionKind.SUPPRESS
                 recommendation.suppress_reason = gap_block
                 recommendation.policy_trace = {**recommendation.policy_trace, "open_guard": gap_block}
+        chase = chase_reading(
+            recommendation.call_put.value,
+            underlying.price,
+            underlying.open,
+            atr14(underlying.bars, session_day),
+            symbol=underlying.symbol,
+        )
+        move_rows.append(
+            {
+                "symbol": chase["symbol"] or underlying.symbol,
+                "side": chase["side"],
+                "move_atr": chase["move_atr"],
+                "open": chase["open"],
+                "price": chase["price"],
+                "atr14": chase["atr14"],
+                "limit": chase["limit"],
+                "chase_blocked": chase["chase_blocked"],
+                "missing": chase["missing"],
+            }
+        )
+        recommendation.policy_trace = {
+            **recommendation.policy_trace,
+            "move_atr": chase["move_atr"],
+            "atr14": chase["atr14"],
+            "chase_open": chase["open"],
+            "chase_price": chase["price"],
+        }
+        if recommendation.decision is DecisionKind.BUY and chase["reason"]:
+            recommendation.decision = DecisionKind.SUPPRESS
+            recommendation.suppress_reason = chase["reason"]
+            recommendation.policy_trace = {**recommendation.policy_trace, "chase_atr": chase["reason"]}
+        if recommendation.decision is DecisionKind.BUY and brake:
+            recommendation.decision = DecisionKind.SUPPRESS
+            recommendation.suppress_reason = brake
+            recommendation.policy_trace = {**recommendation.policy_trace, "add_brake": brake}
         if recommendation.decision is DecisionKind.BUY:
             if buys >= config.max_buys_per_scan:
                 recommendation.decision = DecisionKind.SUPPRESS
@@ -451,6 +508,8 @@ def run_scan(
                 "buys": buys,
                 "decisions": len(results),
                 "suppress_reasons": suppress_reasons,
+                "move_atr": move_rows,
+                "add_brake": {**public_add_brake(account_day_pnl, kill_usd), "reason": brake} if kill_usd is not None else None,
             }
         )
     return results

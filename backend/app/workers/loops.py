@@ -105,7 +105,16 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
         record_scan_blocked(moment, "אין נתוני חשבון")
         return {"ok": False, "blocked": "אין נתוני חשבון"}
     providers = build_providers(settings)
+    from app.positions.entry_gates import live_brake_inputs
     from app.positions.open_guard import refresh_open_guard
+
+    try:
+        account_day_pnl, kill_usd = live_brake_inputs(settings)
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("worker.scan_caught", exc, service="worker", where="add_brake")
+        account_day_pnl, kill_usd = None, None
 
     try:
         refresh_open_guard(moment, providers)
@@ -138,6 +147,8 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             open_underlyings=_open_underlyings(settings),
             open_planned_risk=_open_planned_risk(settings),
             progress=progress,
+            account_day_pnl=account_day_pnl,
+            kill_usd=kill_usd,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
         from app.ops.failure import log_failure
@@ -1301,6 +1312,31 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         if floor.get("closed"):
             blocked_all(str(floor.get("reason") or "DAY_FLOOR"))
             return
+        from app.capital import effective_kill_usd
+        from app.capital.session_lock import open_equity_from_account
+        from app.positions.entry_gates import add_brake_reason, brake_threshold
+
+        opened_for_brake = open_equity_from_account(account, moment, persist=False)
+        kill_usd = effective_kill_usd(settings.trading(), equity, open_equity=opened_for_brake)
+        brake = add_brake_reason(measured, kill_usd)
+        line = brake_threshold(kill_usd)
+        _submit_step(
+            log,
+            "add_brake",
+            blocking=brake is not None,
+            day_pnl="" if measured is None else str(measured),
+            threshold="" if line is None else str(line),
+        )
+        if measured is None or line is None:
+            log.info(
+                "entry.add_brake_data_missing",
+                service="worker",
+                day_pnl=None if measured is None else str(measured),
+                kill_usd=str(kill_usd),
+            )
+        elif brake:
+            blocked_all(brake)
+            return
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
         from app.broker.runtime import broker_risk_snapshot
@@ -1381,6 +1417,28 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                     session.commit()
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": gap_block})
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=gap_block)
+                continue
+            from app.positions.entry_gates import chase_reading
+
+            trace = row.policy_trace if isinstance(getattr(row, "policy_trace", None), dict) else {}
+            spot = spots.get(row.underlying) if isinstance(spots, dict) else None
+            fresh_price = None if spot is None else getattr(spot, "price", None)
+            fresh_open = None if spot is None else getattr(spot, "open", None)
+            chase = chase_reading(
+                side,
+                fresh_price or trace.get("chase_price") or getattr(row, "underlying_price", None),
+                fresh_open or trace.get("chase_open"),
+                trace.get("atr14"),
+                symbol=row.underlying,
+            )
+            if chase["reason"]:
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", chase["reason"], row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": chase["reason"], "move_atr": chase["move_atr"]})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=chase["reason"], move_atr=chase["move_atr"] or "")
                 continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
@@ -1500,6 +1558,12 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                             "system_validated": True,
                             "recommendation_id": row.recommendation_id,
                             "revalidation": context,
+                            "entry_gate": {
+                                "side": side,
+                                "open": chase["open"],
+                                "price": chase["price"],
+                                "atr14": chase["atr14"],
+                            },
                         },
                         live,
                         quotes,

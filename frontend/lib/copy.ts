@@ -63,6 +63,8 @@ export const blockReasons: Record<string, string> = {
   OPEN_NO_FADE: "נגד גאפ הפתיחה",
   OPEN_GAP_RETRACE: "הגאפ תוקן בפתיחה",
   GAP_DATA_MISSING: "אין נתון גאפ",
+  ADD_BRAKE: "בלם כניסות על רבע מהקייל",
+  CHASE_ATR: "רדיפה מול ATR",
 };
 
 export const copy = {

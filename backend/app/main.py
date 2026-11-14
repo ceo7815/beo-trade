@@ -91,6 +91,34 @@ def _money(value) -> str:
     return f"{Decimal(str(value)).quantize(Decimal('0.01'))}"
 
 
+def _entry_gate_status(current) -> dict:
+    """Brake and chase as a read-only monitor sees them. Uses the risk cache when it is warm."""
+    from decimal import Decimal
+
+    from app.analytics.read_cache import read_cache
+    from app.capital import effective_kill_usd
+    from app.capital.session_lock import read_locked_open_equity
+    from app.positions.entry_gates import public_add_brake, public_chase
+
+    cached = read_cache.get(("risk",))
+    pnl = None
+    kill = None
+    if isinstance(cached, dict):
+        if cached.get("today_pnl") not in {None, ""}:
+            try:
+                pnl = Decimal(str(cached["today_pnl"]))
+            except Exception:
+                pnl = None
+        if cached.get("daily_kill_loss_usd") not in {None, ""}:
+            try:
+                kill = Decimal(str(cached["daily_kill_loss_usd"]))
+            except Exception:
+                kill = None
+    if kill is None:
+        kill = effective_kill_usd(current.trading(), open_equity=read_locked_open_equity())
+    return {"add_brake": public_add_brake(pnl, kill), "chase_atr": public_chase()}
+
+
 def _options2_alert(block: str) -> str:
     labels = {
         "OPTIONS2_DISABLED": "אופציות 2 כבוי. אין סריקה ואין פקודות עד OPTIONS2_ENABLED=true.",
@@ -432,6 +460,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
             "daily_kill_loss_usd": display_kill_usd(current.trading(), displayed_equity),
             "alpaca": _alpaca_counters(),
             "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(now),
+            **_entry_gate_status(current),
         }
         if current.desk_id.strip() == "options2":
             from app.options2.guard import public_status as options2_status
@@ -593,6 +622,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 cash = Decimal("0")
             active = {row.option_symbol for row in open_positions(session)}
         ledger = make_ledger(current, entries)
+        from app.positions.entry_gates import live_brake_inputs
+
+        try:
+            account_day_pnl, kill_usd = live_brake_inputs(current)
+        except Exception:
+            account_day_pnl, kill_usd = None, None
         try:
             result = execute_scan(
                 providers,
@@ -603,6 +638,8 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 now.astimezone(ZoneInfo(current.exchange_timezone)).date(),
                 cash,
                 active,
+                account_day_pnl=account_day_pnl,
+                kill_usd=kill_usd,
             )
         except MarketDataMissing as exc:
             raise HTTPException(

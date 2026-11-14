@@ -95,6 +95,20 @@ export type SystemStatus = {
   options2_profile?: string;
   options2_capital_usd?: string;
   open_guard?: OpenGuardStatus | null;
+  add_brake?: {
+    blocking?: boolean;
+    day_pnl?: string | null;
+    kill_usd?: string | null;
+    threshold?: string | null;
+    fraction?: string;
+    data_missing?: boolean;
+    reason?: string | null;
+  } | null;
+  chase_atr?: {
+    limit?: string;
+    period?: number;
+    blocks_on_missing_data?: boolean;
+  } | null;
 };
 
 export type BuyCard = {

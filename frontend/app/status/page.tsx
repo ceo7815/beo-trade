@@ -19,6 +19,7 @@ const RULES: Record<string, string> = {
   "Quant Engine": "המנוע קיים בקוד. אין כאן בדיקת חיבור נפרדת.",
   "Paper Trading": "תקין כשמצב המסחר הוא PAPER.",
   "גאפ פתיחה": "גאפ QQQ, התיקון מ־09:45, והאם כניסה חדשה חסומה עד 10:10. בלי נתון אין חסימה.",
+  "בלם כניסות": "P&L היום מול רבע מהקייל הנעול. חסום רק כשההפסד על הקו או מתחתיו. ATR 0.65 הוא שער לכל מועמד בנפרד.",
 };
 
 export default function StatusPage() {
@@ -166,7 +167,15 @@ function healthRows(status: SystemStatus): { label: string; text: string; tone: 
     { label: "Quant Engine", text: "אין נתונים", tone: "wait" },
     { label: "Paper Trading", text: status.paper_only ? "תקין" : "אין נתונים", tone: status.paper_only ? "ok" : "wait" },
     { label: "גאפ פתיחה", ...opening(status.open_guard) },
+    { label: "בלם כניסות", ...brake(status.add_brake) },
   ];
+}
+
+function brake(row: SystemStatus["add_brake"]): { text: string; tone: Tone } {
+  if (!row) return { text: "אין נתונים", tone: "wait" };
+  if (row.data_missing || row.day_pnl == null || row.threshold == null) return { text: "אין נתון", tone: "wait" };
+  if (row.blocking) return { text: `${row.day_pnl}$`, tone: "warn" };
+  return { text: `${row.day_pnl}$`, tone: "ok" };
 }
 
 function opening(guard: SystemStatus["open_guard"]): { text: string; tone: Tone } {
