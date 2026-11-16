@@ -186,31 +186,21 @@ def run_scan(
     open_underlyings: set[str] | None = None,
     open_planned_risk: Decimal = Decimal("0"),
     open_guard: dict | None = None,
-    account_day_pnl: Decimal | None = None,
-    kill_usd: Decimal | None = None,
+    session_closes: list[dict] | None = None,
 ) -> list[Recommendation]:
     from app.positions.entry_gates import (
-        add_brake_reason,
         atr14,
         chase_reading,
-        public_add_brake,
+        loss_streak_reason,
+        public_loss_streak,
         session_day_of,
     )
     from app.positions.open_guard import entry_block, guard_for
 
     assert_no_future(underlyings, options, news, as_of)
     gap_state = open_guard if open_guard is not None else guard_for(as_of)
-    brake = None
-    if kill_usd is not None:
-        brake = add_brake_reason(account_day_pnl, kill_usd)
-        if account_day_pnl is None:
-            import structlog
-
-            structlog.get_logger().info(
-                "entry.add_brake_data_missing",
-                service="worker",
-                kill_usd=str(kill_usd),
-            )
+    # None means the caller did not read closes (backtests, tests): no streak gate.
+    brake = loss_streak_reason(session_closes, as_of) if session_closes is not None else None
     move_rows: list[dict] = []
     session_day = session_day_of(as_of)
     results: list[Recommendation] = []
@@ -479,7 +469,7 @@ def run_scan(
         if recommendation.decision is DecisionKind.BUY and brake:
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = brake
-            recommendation.policy_trace = {**recommendation.policy_trace, "add_brake": brake}
+            recommendation.policy_trace = {**recommendation.policy_trace, "loss_streak": brake}
         if recommendation.decision is DecisionKind.BUY:
             if buys >= config.max_buys_per_scan:
                 recommendation.decision = DecisionKind.SUPPRESS
@@ -509,7 +499,7 @@ def run_scan(
                 "decisions": len(results),
                 "suppress_reasons": suppress_reasons,
                 "move_atr": move_rows,
-                "add_brake": {**public_add_brake(account_day_pnl, kill_usd), "reason": brake} if kill_usd is not None else None,
+                "loss_streak": public_loss_streak(session_closes, as_of) if session_closes is not None else None,
             }
         )
     return results

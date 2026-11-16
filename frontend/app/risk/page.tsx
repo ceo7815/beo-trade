@@ -35,12 +35,15 @@ type Risk = {
     blocked_sides?: string[];
     in_window?: boolean;
   } | null;
-  add_brake?: {
+  loss_streak?: {
+    enabled?: boolean;
+    threshold?: number;
+    current_streak?: number;
     blocking?: boolean;
-    day_pnl?: string | null;
-    threshold?: string | null;
-    fraction?: string;
+    closes_today?: number;
+    recent_closes?: { closed_at?: string; pnl?: string; symbol?: string; result?: string }[];
     data_missing?: boolean;
+    reason?: string | null;
   } | null;
   chase_atr?: { limit?: string; period?: number } | null;
 };
@@ -116,11 +119,11 @@ function ratio(value: string | null | undefined) {
   return number <= 1 ? `${(number * 100).toFixed(0)}%` : String(value);
 }
 
-function brakeValue(brake: Risk["add_brake"]) {
+function brakeValue(brake: Risk["loss_streak"]) {
   if (!brake) return "אין נתונים";
-  if (brake.data_missing || brake.day_pnl == null || brake.threshold == null) return "אין נתון יום";
+  if (brake.data_missing) return "אין נתון סגירות";
   const state = brake.blocking ? "כניסות חסומות" : "כניסות פתוחות";
-  return `${brake.day_pnl}$ / ${brake.threshold}$ · ${state}`;
+  return `${brake.current_streak ?? 0}/${brake.threshold ?? 2} הפסדים ברצף · ${state}`;
 }
 
 function guardValue(guard: Risk["open_guard"]) {
@@ -338,14 +341,14 @@ export default function RiskPage() {
             onClick={() =>
               setOpen({
                 title: "בלם כניסות",
-                does: "אין כניסה חדשה כשההפסד של היום מגיע לרבע מהקייל הנעול. פוזיציה פתוחה נשארת מנוהלת. אם היום חוזר מעל הקו, כניסות חוזרות. מועמד גם נחסם אם המניה כבר זזה מהפתיחה יותר מ־0.65 פעמים ATR של 14 ימים בכיוון העסקה. בלי נתון אין חסימה.",
+                does: "אין כניסה חדשה אחרי שתי עסקאות סגורות ברצף שהפסידו באותו יום מסחר. עסקה שנסגרת ברווח משחררת את הבלם ומאפסת את הספירה. הפסד פתוח לא נספר ופוזיציה פתוחה נשארת מנוהלת. מועמד גם נחסם אם המניה כבר זזה מהפתיחה יותר מ־0.65 פעמים ATR של 14 ימים בכיוון העסקה. בלי נתון אין חסימה.",
                 tools: ["Alpaca", "ThetaData"],
-                formula: "בלם = P&L היום ≤ −25% × קייל נעול\nרדיפה CALL = (מחיר − פתיחה) / ATR14 > 0.65\nרדיפה PUT = (פתיחה − מחיר) / ATR14 > 0.65",
+                formula: "בלם = 2 סגירות מפסידות ברצף (P&L ממומש < 0), מתאפס ברווח\nרדיפה CALL = (מחיר − פתיחה) / ATR14 > 0.65\nרדיפה PUT = (פתיחה − מחיר) / ATR14 > 0.65",
               })
             }
           >
             <b>בלם כניסות</b>
-            <strong className={`num ${body?.add_brake?.blocking ? "bad" : ""}`}>{brakeValue(body?.add_brake)}{body?.chase_atr?.limit ? ` · ATR ${body.chase_atr.limit}` : ""}</strong>
+            <strong className={`num ${body?.loss_streak?.blocking ? "bad" : ""}`}>{brakeValue(body?.loss_streak)}{body?.chase_atr?.limit ? ` · ATR ${body.chase_atr.limit}` : ""}</strong>
           </button>
           <button type="button" className="plain-row" onClick={() => setOpen(cubes[2].explain)}>
             <b>חשיפה</b>

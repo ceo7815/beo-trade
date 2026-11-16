@@ -332,10 +332,9 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         closed_for = day_close_reason(settings, moment)
         brake = None
         if not closed_for and clock.get("is_open") is True:
-            from app.capital import effective_kill_usd
             from app.options.day_floor import latch_hard_stop
             from app.options.risk_limits import day_flatten_reason
-            from app.positions.entry_gates import add_brake_reason
+            from app.positions.entry_gates import live_session_closes, loss_streak_missing_log, loss_streak_reason
 
             pnl, opened = _measured_for_entry(settings, adapter, account, moment)
             equity_now = _decimal(account.get("equity"))
@@ -345,7 +344,13 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
                 except Exception:
                     pass
                 closed_for = "DAILY_HARD_STOP"
-            brake = add_brake_reason(pnl, effective_kill_usd(settings.trading(), equity_now, open_equity=opened))
+            try:
+                session_closes = live_session_closes(settings, moment, adapter)
+            except Exception:
+                session_closes = None
+            if session_closes is None:
+                loss_streak_missing_log(where="revalidation")
+            brake = loss_streak_reason(session_closes, moment)
         if closed_for:
             reasons.append(closed_for)
         if brake:

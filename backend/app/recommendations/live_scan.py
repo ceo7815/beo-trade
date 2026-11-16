@@ -67,8 +67,7 @@ def execute_scan(
     open_underlyings: set[str] | None = None,
     open_planned_risk: Decimal = Decimal("0"),
     progress: Callable[..., None] | None = None,
-    account_day_pnl: Decimal | None = None,
-    kill_usd: Decimal | None = None,
+    session_closes: list[dict] | None = None,
 ) -> ScanResult:
     """Load news when Benzinga is configured, then run the decision pipeline.
 
@@ -192,8 +191,7 @@ def execute_scan(
         counts=counts,
         open_underlyings=open_underlyings,
         open_planned_risk=open_planned_risk,
-        account_day_pnl=account_day_pnl,
-        kill_usd=kill_usd,
+        session_closes=session_closes,
     )
     clock.mark("decisions")
     _store_rejections(scan_id, now, rejections)
@@ -224,7 +222,7 @@ def execute_scan(
         "decisions": len(rows),
         "suppress_reasons": counts.get("suppress_reasons", {}),
         "move_atr": counts.get("move_atr", []),
-        "add_brake": counts.get("add_brake"),
+        "loss_streak": counts.get("loss_streak"),
         "rejections": len(rejections),
         "orders": 0,
         "fills": 0,

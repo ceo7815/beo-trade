@@ -105,16 +105,18 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
         record_scan_blocked(moment, "אין נתוני חשבון")
         return {"ok": False, "blocked": "אין נתוני חשבון"}
     providers = build_providers(settings)
-    from app.positions.entry_gates import live_brake_inputs
+    from app.positions.entry_gates import live_session_closes, loss_streak_missing_log
     from app.positions.open_guard import refresh_open_guard
 
     try:
-        account_day_pnl, kill_usd = live_brake_inputs(settings)
+        session_closes = live_session_closes(settings, moment)
     except Exception as exc:
         from app.ops.failure import log_failure
 
-        log_failure("worker.scan_caught", exc, service="worker", where="add_brake")
-        account_day_pnl, kill_usd = None, None
+        log_failure("worker.scan_caught", exc, service="worker", where="loss_streak")
+        session_closes = None
+    if session_closes is None:
+        loss_streak_missing_log(where="scan")
 
     try:
         refresh_open_guard(moment, providers)
@@ -147,8 +149,7 @@ def scan_once(settings: Settings, now: datetime | None = None) -> dict:
             open_underlyings=_open_underlyings(settings),
             open_planned_risk=_open_planned_risk(settings),
             progress=progress,
-            account_day_pnl=account_day_pnl,
-            kill_usd=kill_usd,
+            session_closes=session_closes,
         )
     except (ProviderUnavailable, ProviderNotConfigured, MarketDataMissing) as exc:
         from app.ops.failure import log_failure
@@ -1312,28 +1313,27 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         if floor.get("closed"):
             blocked_all(str(floor.get("reason") or "DAY_FLOOR"))
             return
-        from app.capital import effective_kill_usd
-        from app.capital.session_lock import open_equity_from_account
-        from app.positions.entry_gates import add_brake_reason, brake_threshold
+        from app.positions.entry_gates import live_session_closes, loss_streak_missing_log, loss_streak_reason, loss_streak_state
 
-        opened_for_brake = open_equity_from_account(account, moment, persist=False)
-        kill_usd = effective_kill_usd(settings.trading(), equity, open_equity=opened_for_brake)
-        brake = add_brake_reason(measured, kill_usd)
-        line = brake_threshold(kill_usd)
+        try:
+            session_closes = live_session_closes(settings, moment, adapter)
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="loss_streak_submit")
+            session_closes = None
+        brake = loss_streak_reason(session_closes, moment)
+        streak = loss_streak_state(session_closes, moment)
         _submit_step(
             log,
-            "add_brake",
+            "loss_streak",
             blocking=brake is not None,
-            day_pnl="" if measured is None else str(measured),
-            threshold="" if line is None else str(line),
+            streak=streak["streak"],
+            closes_today=streak["closes_today"],
+            data_missing=streak["data_missing"],
         )
-        if measured is None or line is None:
-            log.info(
-                "entry.add_brake_data_missing",
-                service="worker",
-                day_pnl=None if measured is None else str(measured),
-                kill_usd=str(kill_usd),
-            )
+        if session_closes is None:
+            loss_streak_missing_log(where="submit")
         elif brake:
             blocked_all(brake)
             return

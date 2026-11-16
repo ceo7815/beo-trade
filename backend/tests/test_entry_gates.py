@@ -1,4 +1,4 @@
-"""ADD_BRAKE and CHASE_ATR. New buys only. The kill, the floor, and exits stay put."""
+"""LOSS_STREAK and CHASE_ATR. New buys only. The kill, the floor, and exits stay put."""
 
 from __future__ import annotations
 
@@ -11,20 +11,21 @@ from pathlib import Path
 import structlog
 from fastapi.testclient import TestClient
 
-from app.capital import effective_kill_usd
 from app.config.settings import Settings, load_trading_config
 from app.positions.entry_gates import (
-    ADD_BRAKE,
-    ADD_BRAKE_FRACTION,
     CHASE_ATR,
     CHASE_ATR_LIMIT,
-    add_brake_reason,
+    LOSS_STREAK,
+    LOSS_STREAK_LENGTH,
     atr14,
-    brake_threshold,
     chase_reading,
     directional_move,
-    public_add_brake,
+    loss_streak_reason,
+    loss_streak_state,
     public_chase,
+    public_loss_streak,
+    session_closes_from_adapter,
+    session_closes_from_fills,
 )
 from app.quant.bars import atr
 from app.schemas.domain import Bar
@@ -45,56 +46,173 @@ def _bars(count: int, *, high: str = "101", low: str = "99", close: str = "100",
     return rows
 
 
-def test_options2_brake_is_a_quarter_of_the_1400_kill_and_the_edges_hold():
-    cfg = load_trading_config(ROOT / "app" / "config" / "trading_v2610_40k.toml")
-    kill = effective_kill_usd(cfg, Decimal("40000"), open_equity=Decimal("39000"))
-    assert kill == Decimal("1400")
-    assert brake_threshold(kill) == Decimal("-350")
-    assert ADD_BRAKE_FRACTION == Decimal("0.25")
-    on_the_line = add_brake_reason(Decimal("-350"), kill)
-    assert on_the_line is not None and on_the_line.startswith(ADD_BRAKE)
-    assert "day_pnl=-350" in on_the_line and "threshold=-350" in on_the_line
-    assert add_brake_reason(Decimal("-350.01"), kill).startswith(ADD_BRAKE)
-    assert add_brake_reason(Decimal("-349.99"), kill) is None
-    assert add_brake_reason(Decimal("0"), kill) is None
-    assert add_brake_reason(Decimal("10"), kill) is None
+def _close(minute: int, pnl: str, *, day: datetime = NY_OPEN) -> dict:
+    stamp = day + timedelta(minutes=minute)
+    return {"symbol": f"QQQ{minute:04d}", "pnl": pnl, "closed_at": stamp.isoformat()}
 
 
-def test_20k_brake_uses_the_locked_kill_not_the_shrunk_equity():
-    cfg = load_trading_config()
-    assert cfg.capital_profile == "20k_ils"
-    # 5,782.11 × 3500/30000 = 674.58. A quarter of that kill is 168.645.
-    opened = Decimal("5782.11")
-    shrunk = Decimal("5000")
-    kill = effective_kill_usd(cfg, shrunk, open_equity=opened)
-    assert kill == Decimal("674.58")
-    assert brake_threshold(kill) == Decimal("-168.645")
-    blocked = add_brake_reason(Decimal("-168.645"), kill)
-    assert blocked is not None and "day_pnl=-168.645" in blocked and "threshold=-168.645" in blocked
-    assert add_brake_reason(Decimal("-168.644"), kill) is None
-    # 25% of a kill locked to the shrunk $5,000 book is about −$145.83.
-    # The same −$150 must not brake against the locked $674.58 kill.
-    live_kill = effective_kill_usd(cfg, shrunk)
-    assert add_brake_reason(Decimal("-150"), live_kill) is not None
-    assert add_brake_reason(Decimal("-150"), kill) is None
+NOW = NY_OPEN + timedelta(hours=3)
 
 
-def test_the_brake_lifts_when_pnl_recovers_and_missing_data_does_not_block():
-    kill = Decimal("1400")
-    assert add_brake_reason(Decimal("-400"), kill).startswith(ADD_BRAKE)
-    assert add_brake_reason(Decimal("-350"), kill).startswith(ADD_BRAKE)
-    assert add_brake_reason(Decimal("-349.99"), kill) is None
-    assert add_brake_reason(Decimal("25"), kill) is None
-    assert add_brake_reason(None, kill) is None
-    assert add_brake_reason(Decimal("-400"), None) is None
-    assert add_brake_reason(Decimal("-400"), 0) is None
-    assert add_brake_reason("", kill) is None
-    view = public_add_brake(Decimal("-400"), kill)
-    assert view["blocking"] is True
-    assert view["lifts_when_recovered"] is True
-    assert public_add_brake(Decimal("-100"), kill)["blocking"] is False
-    assert public_add_brake(None, kill)["data_missing"] is True
-    assert public_add_brake(None, kill)["blocking"] is False
+def _blocked(*pnls: str) -> bool:
+    closes = [_close(index, pnl) for index, pnl in enumerate(pnls)]
+    return loss_streak_reason(closes, NOW) is not None
+
+
+def test_two_losing_closes_in_a_row_block_and_the_text_is_clear():
+    assert LOSS_STREAK_LENGTH == 2
+    assert _blocked("-10", "-5") is True
+    reason = loss_streak_reason([_close(1, "-10"), _close(2, "-5.50")], NOW)
+    assert reason is not None and reason.startswith(LOSS_STREAK)
+    assert "consecutive_losses=2" in reason and "threshold=2" in reason and "last_closes=-10,-5.5" in reason
+    assert _blocked("-10") is False
+    assert _blocked() is False
+    assert _blocked("-1", "-1", "-1") is True
+
+
+def test_loss_win_loss_does_not_block_and_a_win_releases_and_resets():
+    assert _blocked("-10", "20", "-5") is False
+    assert _blocked("-10", "-5", "20") is False
+    # After the release two NEW losses are needed.
+    assert _blocked("-10", "-5", "20", "-3") is False
+    assert _blocked("-10", "-5", "20", "-3", "-4") is True
+    state = loss_streak_state([_close(1, "-10"), _close(2, "-5"), _close(3, "20")], NOW)
+    assert state["streak"] == 0 and state["blocking"] is False
+
+
+def test_breakeven_close_is_neutral_it_is_not_a_loss_and_does_not_reset():
+    assert _blocked("-10", "0", "-5") is True
+    assert _blocked("-10", "0") is False
+    assert _blocked("0", "0", "0") is False
+    # A blocked streak stays blocked through a flat close; only a win releases it.
+    assert _blocked("-10", "-5", "0") is True
+    assert _blocked("-10", "-5", "0", "7") is False
+
+
+def test_closes_are_ordered_by_close_time_not_by_list_order():
+    closes = [_close(3, "20"), _close(1, "-10"), _close(2, "-5")]
+    assert loss_streak_reason(closes, NOW) is None
+    closes = [_close(3, "-5"), _close(1, "20"), _close(2, "-10")]
+    assert loss_streak_reason(closes, NOW) is not None
+
+
+def test_a_new_session_day_starts_at_zero():
+    yesterday = NY_OPEN - timedelta(days=1)
+    old = [_close(1, "-10", day=yesterday), _close(2, "-5", day=yesterday)]
+    assert loss_streak_reason(old, NOW) is None
+    assert loss_streak_reason(old, yesterday + timedelta(hours=3)) is not None
+    mixed = old + [_close(5, "-1")]
+    state = loss_streak_state(mixed, NOW)
+    assert state["streak"] == 1 and state["closes_today"] == 1 and state["blocking"] is False
+    # The New York day is the boundary, not UTC midnight: 23:30 New York is already the next UTC date.
+    late = datetime(2026, 10, 1, 23, 30, tzinfo=UTC)
+    late_closes = [{"symbol": "A", "pnl": "-1", "closed_at": late.isoformat()}, {"symbol": "B", "pnl": "-1", "closed_at": (late + timedelta(minutes=5)).isoformat()}]
+    assert loss_streak_reason(late_closes, late + timedelta(minutes=10)) is not None
+
+
+def test_unread_or_broken_closes_do_not_block():
+    assert loss_streak_reason(None, NOW) is None
+    view = public_loss_streak(None, NOW)
+    assert view["data_missing"] is True and view["blocking"] is False and view["enabled"] is True
+    assert loss_streak_reason([{"pnl": "-1"}, {"closed_at": NY_OPEN.isoformat(), "pnl": "x"}, "junk"], NOW) is None
+
+
+def test_public_view_has_the_risk_shape():
+    closes = [_close(1, "10"), _close(2, "-4"), _close(3, "-6")]
+    view = public_loss_streak(closes, NOW)
+    assert view["rule"] == LOSS_STREAK and view["enabled"] is True and view["threshold"] == 2
+    assert view["current_streak"] == 2 and view["blocking"] is True
+    assert view["closes_today"] == 3 and view["data_missing"] is False
+    assert [item["result"] for item in view["recent_closes"]] == ["win", "loss", "loss"]
+    assert view["reason"].startswith(LOSS_STREAK)
+    assert public_loss_streak([_close(1, "10")], NOW)["blocking"] is False
+    many = [_close(index, "1") for index in range(12)]
+    assert len(public_loss_streak(many, NOW)["recent_closes"]) == 5
+
+
+def _fill(execution: str, symbol: str, side: str, price: str, at: datetime, qty: str = "1") -> dict:
+    return {"execution_id": execution, "symbol": symbol, "side": side, "qty": qty, "price": price, "timestamp": at.isoformat(), "broker_order_id": execution}
+
+
+def test_closed_trades_come_from_fills_open_losers_are_ignored_and_old_days_dropped():
+    call_a = "QQQ261001C00500000"
+    call_b = "QQQ261001C00501000"
+    call_c = "QQQ261001P00490000"
+    fills = [
+        _fill("1", call_a, "buy", "2.00", NY_OPEN),
+        _fill("2", call_a, "sell", "1.00", NY_OPEN + timedelta(minutes=5)),  # closed loser -100
+        _fill("3", call_b, "buy", "2.00", NY_OPEN + timedelta(minutes=6)),
+        _fill("4", call_b, "sell", "1.50", NY_OPEN + timedelta(minutes=9)),  # closed loser -50
+        # Open position deep in the red: no sell, never a close.
+        _fill("5", call_c, "buy", "3.00", NY_OPEN + timedelta(minutes=10)),
+        # Yesterday's closed winner is not today's.
+        _fill("6", "SPY261001C00600000", "buy", "1.00", NY_OPEN - timedelta(days=1)),
+        _fill("7", "SPY261001C00600000", "sell", "2.00", NY_OPEN - timedelta(days=1) + timedelta(minutes=3)),
+    ]
+    closes = session_closes_from_fills(fills, NOW)
+    assert [row["pnl"] for row in closes] == ["-100.00", "-50.00"]
+    assert loss_streak_reason(closes, NOW) is not None
+    # A winning close at the end releases. The open loser stays out of it.
+    fills += [_fill("8", call_c, "sell", "3.50", NY_OPEN + timedelta(minutes=30))]
+    assert loss_streak_reason(session_closes_from_fills(fills, NOW), NOW) is None
+    only_open = [fills[0], fills[2], fills[4]]
+    assert session_closes_from_fills(only_open, NOW) == []
+    assert loss_streak_reason(session_closes_from_fills(only_open, NOW), NOW) is None
+
+
+def test_an_excluded_bug_lot_is_not_a_close_and_cannot_start_a_streak():
+    bug = "QQQ261001C00500000"
+    other = "QQQ261001C00501000"
+    fills = [
+        _fill("1", bug, "buy", "2.00", NY_OPEN),
+        _fill("2", bug, "sell", "1.00", NY_OPEN + timedelta(minutes=5)),
+        _fill("3", other, "buy", "2.00", NY_OPEN + timedelta(minutes=6)),
+        _fill("4", other, "sell", "1.00", NY_OPEN + timedelta(minutes=9)),
+    ]
+    assert loss_streak_reason(session_closes_from_fills(fills, NOW, exclusions=[]), NOW) is not None
+    rule = {"symbol": bug, "active": True, "quantity": 1, "entry_price": "2.00", "session_day": "2026-10-01"}
+    closes = session_closes_from_fills(fills, NOW, exclusions=[rule])
+    assert [row["symbol"] for row in closes] == [other]
+    assert loss_streak_reason(closes, NOW) is None
+
+
+def test_stored_and_alpaca_fills_are_one_book_so_a_loss_is_not_counted_twice(tmp_path):
+    from app.models.db import session_scope
+    from app.models.tables import BrokerFillRecord
+    from tests.test_entry_pace import _database
+
+    _database(tmp_path)
+    settings = Settings(app_env="local", trading_mode="PAPER", auth_required=False)
+    symbol = "QQQ261001C00500000"
+    buy = _fill("e-1", symbol, "buy", "2.00", NY_OPEN)
+    sell = _fill("e-2", symbol, "sell", "1.00", NY_OPEN + timedelta(minutes=5))
+    with session_scope() as session:
+        for row in (buy, sell):
+            session.add(BrokerFillRecord(execution_id=row["execution_id"], symbol=row["symbol"], payload=row, observed_at=datetime.fromisoformat(row["timestamp"])))
+        session.commit()
+
+    class Adapter:
+        def __init__(self, fills):
+            self.fills = fills
+            self.asked = {}
+
+        def get_all_fills(self, max_pages=20, after=""):
+            self.asked = {"max_pages": max_pages, "after": after}
+            return list(self.fills)
+
+    both = Adapter([buy, sell])
+    closes = session_closes_from_adapter(settings, both, NOW)
+    assert [row["pnl"] for row in closes] == ["-100.00"]
+    assert both.asked["after"] == "2026-09-30"
+    # Alpaca alone, stored alone, and an adapter with no fill reader all give the same close.
+    assert [row["pnl"] for row in session_closes_from_adapter(settings, Adapter([]), NOW)] == ["-100.00"]
+    assert [row["pnl"] for row in session_closes_from_adapter(settings, object(), NOW)] == ["-100.00"]
+
+    class Broken:
+        def get_all_fills(self, **_kw):
+            raise RuntimeError("alpaca down")
+
+    assert [row["pnl"] for row in session_closes_from_adapter(settings, Broken(), NOW)] == ["-100.00"]
 
 
 def test_chase_is_symmetric_and_the_limit_is_exclusive():
@@ -149,24 +267,38 @@ def test_atr14_uses_completed_days_and_ignores_todays_bar():
 def test_both_profiles_feed_the_same_rule_and_eli_and_avi_do_not():
     main = load_trading_config()
     options2 = load_trading_config(ROOT / "app" / "config" / "trading_v2610_40k.toml")
-    assert public_add_brake(Decimal("-168.645"), effective_kill_usd(main, open_equity=Decimal("5782.11")))["blocking"] is True
-    assert public_add_brake(Decimal("-350"), effective_kill_usd(options2, open_equity=Decimal("40000")))["blocking"] is True
+    closes = [_close(1, "-3"), _close(2, "-4")]
+    # The rule has no per-profile number: both desks get the same streak of 2, whatever their kill.
+    assert public_loss_streak(closes, NOW)["blocking"] is True
+    assert public_loss_streak(closes[:1], NOW)["blocking"] is False
+    assert not hasattr(main, "loss_streak") and not hasattr(options2, "loss_streak")
     assert public_chase()["limit"] == "0.65"
     assert public_chase()["blocks_on_missing_data"] is False
     for name in ("spy/engine.py", "spy/strategy.py", "avi/engine.py", "avi/strategy.py"):
         text = (ROOT / "app" / name).read_text(encoding="utf-8")
         assert "entry_gates" not in text
+        assert "LOSS_STREAK" not in text
         assert "ADD_BRAKE" not in text
         assert "CHASE_ATR" not in text
 
 
+def test_the_old_day_pnl_brake_is_gone():
+    import app.positions.entry_gates as gates
+
+    for name in ("ADD_BRAKE", "ADD_BRAKE_FRACTION", "add_brake_reason", "brake_threshold", "public_add_brake", "live_brake_inputs"):
+        assert not hasattr(gates, name)
+    for path in ("app/main.py", "app/workers/loops.py", "app/broker/execution.py", "app/recommendations/pipeline.py", "app/analytics/routes.py"):
+        text = (ROOT / path).read_text(encoding="utf-8")
+        assert "add_brake" not in text and "ADD_BRAKE" not in text
+
+
 def test_exits_do_not_read_the_new_gates():
     exits = inspect.getsource(monitor_once) + inspect.getsource(close_all_positions)
-    assert "add_brake_reason" not in exits
+    assert "loss_streak_reason" not in exits
     assert "chase_reading" not in exits
-    assert "ADD_BRAKE" not in exits
+    assert "LOSS_STREAK" not in exits
     assert "CHASE_ATR" not in exits
-    assert "add_brake_reason" in inspect.getsource(_submit_autonomous_buys)
+    assert "loss_streak_reason" in inspect.getsource(_submit_autonomous_buys)
     assert "chase_reading" in inspect.getsource(_submit_autonomous_buys)
 
 
@@ -258,10 +390,11 @@ def test_scan_records_move_atr_and_both_gates_can_suppress_a_buy():
         moment.date(),
         Decimal("100000"),
         set(),
-        account_day_pnl=Decimal("-350"),
-        kill_usd=Decimal("1400"),
+        session_closes=[_close(1, "-10", day=moment - timedelta(hours=1)), _close(2, "-5", day=moment - timedelta(hours=1))],
     )
-    assert stopped[0].suppress_reason.startswith(ADD_BRAKE)
+    assert stopped[0].decision is DecisionKind.SUPPRESS
+    assert stopped[0].suppress_reason.startswith(LOSS_STREAK)
+    assert stopped[0].policy_trace["loss_streak"] == stopped[0].suppress_reason
     resumed = run_scan(
         [underlying],
         [option],
@@ -273,10 +406,23 @@ def test_scan_records_move_atr_and_both_gates_can_suppress_a_buy():
         moment.date(),
         Decimal("100000"),
         set(),
-        account_day_pnl=Decimal("-349.99"),
-        kill_usd=Decimal("1400"),
+        session_closes=[_close(1, "-10", day=moment - timedelta(hours=1)), _close(2, "5", day=moment - timedelta(hours=1)), _close(3, "-5", day=moment - timedelta(hours=1))],
     )
     assert resumed[0].decision is DecisionKind.BUY
+    unread = run_scan(
+        [underlying],
+        [option],
+        news,
+        config,
+        StubAI(),
+        ledger(),
+        moment,
+        moment.date(),
+        Decimal("100000"),
+        set(),
+        session_closes=[],
+    )
+    assert unread[0].decision is DecisionKind.BUY
 
 
 def test_rules_book_and_risk_and_system_show_both_gates(tmp_path):
@@ -284,9 +430,10 @@ def test_rules_book_and_risk_and_system_show_both_gates(tmp_path):
     from app.main import create_app
 
     entry = build_trading_rules(Settings(app_env="local", trading_mode="PAPER", auth_required=False))["active"]["sections"]["entry"]
-    brake = next(item for item in entry if item["id"] == "add_brake")
+    assert not any(item["id"] == "add_brake" for item in entry)
+    brake = next(item for item in entry if item["id"] == "loss_streak")
     chase = next(item for item in entry if item["id"] == "chase_atr")
-    assert ADD_BRAKE in brake["explain"] and "25%" in brake["value"]
+    assert LOSS_STREAK in brake["explain"] and "2" in brake["value"]
     assert CHASE_ATR in chase["explain"] and "0.65" in chase["value"]
     settings = Settings(
         app_env="local",
@@ -299,18 +446,23 @@ def test_rules_book_and_risk_and_system_show_both_gates(tmp_path):
         risk = client.get("/api/v1/risk")
         assert risk.status_code == 200
         body = risk.json()
-        assert body["add_brake"]["fraction"] == "0.25"
-        assert body["add_brake"]["lifts_when_recovered"] is True
+        assert "add_brake" not in body
+        assert body["loss_streak"]["enabled"] is True
+        assert body["loss_streak"]["threshold"] == 2
+        assert body["loss_streak"]["current_streak"] == 0
+        assert body["loss_streak"]["blocking"] is False
+        assert body["loss_streak"]["recent_closes"] == []
         assert body["chase_atr"]["limit"] == "0.65"
         assert body["chase_atr"]["period"] == 14
         assert body["chase_atr"]["blocks_on_missing_data"] is False
         system = client.get("/api/v1/system")
         assert system.status_code == 200
-        assert system.json()["add_brake"]["fraction"] == "0.25"
+        assert "add_brake" not in system.json()
+        assert system.json()["loss_streak"]["threshold"] == 2
         assert system.json()["chase_atr"]["limit"] == "0.65"
 
 
-def test_submit_blocks_on_the_brake_and_resumes_when_the_day_recovers(tmp_path, monkeypatch):
+def test_submit_blocks_on_two_losses_and_resumes_when_a_winner_closes(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     from app.schemas.domain import DecisionKind, OptionRight, Recommendation
@@ -351,10 +503,13 @@ def test_submit_blocks_on_the_brake_and_resumes_when_the_day_recovers(tmp_path, 
         def get_activities(self):
             return []
 
+        def get_all_fills(self, max_pages=20, after=""):
+            return list(state["fills"])
+
         def close(self):
             return None
 
-    state = {"equity": "29150.00"}
+    state = {"equity": "30000.00", "fills": []}
     monkeypatch.setattr("app.broker.runtime.open_paper_broker", lambda _settings: Adapter(state["equity"]))
 
     def quotes(_settings, _live, _buys):
@@ -403,25 +558,51 @@ def test_submit_blocks_on_the_brake_and_resumes_when_the_day_recovers(tmp_path, 
         gate_results={"DATA_OK": True},
         policy_trace={"atr14": "10", "chase_open": "100", "chase_price": "100"},
     )
-    # Locked open is $30,000, so the 20K kill is $3,500 and the brake is −$875.
-    # Equity 29,100 is a −$900 day, past the line. 29,200 is −$800 and the brake lifts.
-    state["equity"] = "29100.00"
+    # The day P&L is deeply negative on purpose: only closed trades count now.
+    state["equity"] = "28000.00"
+    first = "NVDA261113C00099000"
+    second = "NVDA261113C00098000"
+    third = "AMD261113C00098000"
+    day = moment - timedelta(hours=2)
+    state["fills"] = [
+        _fill("a1", first, "buy", "2.00", day),
+        _fill("a2", first, "sell", "1.00", day + timedelta(minutes=5)),
+        _fill("b1", second, "buy", "2.00", day + timedelta(minutes=6)),
+        _fill("b2", second, "sell", "1.50", day + timedelta(minutes=9)),
+        # An open loser is not a close and does not count.
+        _fill("c1", third, "buy", "3.00", day + timedelta(minutes=10)),
+    ]
     outcomes: list[dict] = []
     _submit_autonomous_buys(settings, [buy], moment, outcomes)
     assert outcomes[0]["result"] == "blocked"
-    assert outcomes[0]["reason"].startswith(ADD_BRAKE)
-    assert "day_pnl=-900" in outcomes[0]["reason"]
+    assert outcomes[0]["reason"].startswith(LOSS_STREAK)
+    assert "consecutive_losses=2" in outcomes[0]["reason"]
     assert placed == []
     from app.options.day_floor import day_close_reason
 
     assert day_close_reason(settings, moment) is None
 
-    state["equity"] = "29200.00"
+    # A winner closes: the block lifts at once, even with the day still negative.
+    state["fills"].append(_fill("c2", third, "sell", "3.50", day + timedelta(minutes=30)))
     outcomes = []
     recovered = replace(buy, recommendation_id="rec-brake-2")
     _submit_autonomous_buys(settings, [recovered], moment, outcomes)
     assert outcomes[0]["result"] == "submitted"
     assert placed == ["placed"]
+
+    # Two fresh losing closes after that win block again.
+    state["fills"] += [
+        _fill("d1", "TSLA261113C00100000", "buy", "2.00", day + timedelta(minutes=40)),
+        _fill("d2", "TSLA261113C00100000", "sell", "1.00", day + timedelta(minutes=45)),
+        _fill("e1", "MSFT261113C00100000", "buy", "2.00", day + timedelta(minutes=46)),
+        _fill("e2", "MSFT261113C00100000", "sell", "1.00", day + timedelta(minutes=50)),
+    ]
+    outcomes = []
+    _submit_autonomous_buys(settings, [replace(buy, recommendation_id="rec-brake-3")], moment, outcomes)
+    assert outcomes[0]["result"] == "blocked"
+    assert outcomes[0]["reason"].startswith(LOSS_STREAK)
+    assert placed == ["placed"]
+    state["fills"] = []
 
     state["equity"] = "30000.00"
     chased = replace(
