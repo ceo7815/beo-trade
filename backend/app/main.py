@@ -92,31 +92,15 @@ def _money(value) -> str:
 
 
 def _entry_gate_status(current) -> dict:
-    """Brake and chase as a read-only monitor sees them. Uses the risk cache when it is warm."""
-    from decimal import Decimal
-
+    """Loss streak and chase as a read-only monitor sees them. Reuses /risk's loss_streak from the cache when it is warm."""
     from app.analytics.read_cache import read_cache
-    from app.capital import effective_kill_usd
-    from app.capital.session_lock import read_locked_open_equity
-    from app.positions.entry_gates import public_add_brake, public_chase
+    from app.positions.entry_gates import public_chase, public_loss_streak
 
     cached = read_cache.get(("risk",))
-    pnl = None
-    kill = None
-    if isinstance(cached, dict):
-        if cached.get("today_pnl") not in {None, ""}:
-            try:
-                pnl = Decimal(str(cached["today_pnl"]))
-            except Exception:
-                pnl = None
-        if cached.get("daily_kill_loss_usd") not in {None, ""}:
-            try:
-                kill = Decimal(str(cached["daily_kill_loss_usd"]))
-            except Exception:
-                kill = None
-    if kill is None:
-        kill = effective_kill_usd(current.trading(), open_equity=read_locked_open_equity())
-    return {"add_brake": public_add_brake(pnl, kill), "chase_atr": public_chase()}
+    streak = cached.get("loss_streak") if isinstance(cached, dict) else None
+    if not isinstance(streak, dict):
+        streak = public_loss_streak(None)
+    return {"loss_streak": streak, "chase_atr": public_chase()}
 
 
 def _options2_alert(block: str) -> str:
@@ -622,12 +606,12 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 cash = Decimal("0")
             active = {row.option_symbol for row in open_positions(session)}
         ledger = make_ledger(current, entries)
-        from app.positions.entry_gates import live_brake_inputs
+        from app.positions.entry_gates import live_session_closes
 
         try:
-            account_day_pnl, kill_usd = live_brake_inputs(current)
+            session_closes = live_session_closes(current, now)
         except Exception:
-            account_day_pnl, kill_usd = None, None
+            session_closes = None
         try:
             result = execute_scan(
                 providers,
@@ -638,8 +622,7 @@ def create_app(settings: Settings | None = None, *, allow_open_api: bool = False
                 now.astimezone(ZoneInfo(current.exchange_timezone)).date(),
                 cash,
                 active,
-                account_day_pnl=account_day_pnl,
-                kill_usd=kill_usd,
+                session_closes=session_closes,
             )
         except MarketDataMissing as exc:
             raise HTTPException(

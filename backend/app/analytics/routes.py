@@ -130,6 +130,17 @@ def _load_fills(adapter, after: str) -> list[dict]:
     return fills
 
 
+def _loss_streak_view(settings: Settings, moment: datetime) -> dict:
+    """LOSS_STREAK for /risk. A failed read shows data_missing and does not block."""
+    from app.positions.entry_gates import live_session_closes, public_loss_streak
+
+    try:
+        closes = live_session_closes(settings, moment)
+    except Exception:
+        closes = None
+    return public_loss_streak(closes, moment)
+
+
 def _usage_since(frame: dict, zone: str) -> datetime:
     start = frame.get("start")
     if not start:
@@ -703,10 +714,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             if not excluded_rows
             else "יתרת Alpaca כפי שהיא; P&L התצוגה מנוכה מעסקת הבאג",
             "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(moment),
-            "add_brake": __import__("app.positions.entry_gates", fromlist=["public_add_brake"]).public_add_brake(
-                measured,
-                __import__("app.capital", fromlist=["effective_kill_usd"]).effective_kill_usd(trading, equity, open_equity=opened),
-            ),
+            "loss_streak": _loss_streak_view(settings, moment),
             "chase_atr": __import__("app.positions.entry_gates", fromlist=["public_chase"]).public_chase(),
         }
 

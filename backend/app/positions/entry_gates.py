@@ -1,9 +1,15 @@
 """New-entry gates. Exits, size, the stop, the trail, the kill, and the day floor do not read this.
 
-ADD_BRAKE stops new buys when today's day P&L is at or below 25% of the locked
-daily kill. The day P&L is the same figure /risk uses: equity minus session-open
-equity, after same-day funding and excluded lots. Open positions keep being
-managed. The block is not a halt: the next check above the line may buy again.
+LOSS_STREAK stops new buys after two closed trades in a row lost money on the
+current New York session day. Closed trades come from the same fill book the
+history screen uses (stored broker fills reconciled with Alpaca paper FILL
+activities), ordered by close time. The last two closes both below zero block.
+A close above zero releases the block at once and resets the count to zero; two
+new losing closes in a row are then needed. A close at exactly zero is neutral:
+it is not a loss and it does not reset. Unrealized P&L is ignored, open positions
+keep being managed, and the count starts over on each new session day. Nothing is
+latched here: every check reads the closes again. Missing or unreadable closes do
+not block.
 
 CHASE_ATR skips one candidate when the underlying has already moved more than
 0.65 times its 14-day average true range in the trade direction since today's
@@ -21,10 +27,12 @@ from zoneinfo import ZoneInfo
 
 import structlog
 
-ADD_BRAKE = "ADD_BRAKE"
+LOSS_STREAK = "LOSS_STREAK"
 CHASE_ATR = "CHASE_ATR"
-# Share of the locked daily kill. At or below this loss, new entries stop.
-ADD_BRAKE_FRACTION = Decimal("0.25")
+# Consecutive losing closes (realized P&L below zero) that stop new entries.
+LOSS_STREAK_LENGTH = 2
+# Recent closes echoed on /risk.
+LOSS_STREAK_RECENT = 5
 # Directional move since the regular-session open, in units of ATR14.
 CHASE_ATR_LIMIT = Decimal("0.65")
 ATR_PERIOD = 14
@@ -33,27 +41,70 @@ NY = ZoneInfo("America/New_York")
 log = structlog.get_logger()
 
 
-def brake_threshold(kill_usd: object) -> Decimal | None:
-    """Negative dollars. New entries stop at or below this line. None when the kill is unknown."""
-    kill = _positive(kill_usd)
-    if kill is None:
-        return None
-    return -(kill * ADD_BRAKE_FRACTION)
+def _close_rows(closes: object) -> list[tuple[datetime, Decimal, str]] | None:
+    """(closed_at, realized P&L, symbol) sorted by close time. None when closes were not read.
 
-
-def add_brake_reason(day_pnl: object, kill_usd: object) -> str | None:
-    """ADD_BRAKE with the day P&L and the threshold, or None when entries may continue.
-
-    Missing P&L or a missing kill does not block. Equal to the threshold blocks.
-    A later call with a recovered P&L returns None: nothing is latched here.
+    A row without a usable time or P&L is skipped. Equal times keep the order given.
     """
-    line = brake_threshold(kill_usd)
-    pnl = _signed(day_pnl)
-    if line is None or pnl is None:
+    if closes is None or isinstance(closes, (str, bytes)):
         return None
-    if pnl > line:
+    try:
+        rows = list(closes)  # type: ignore[call-overload]
+    except TypeError:
         return None
-    return f"{ADD_BRAKE} day_pnl={_plain(pnl)} threshold={_plain(line)}"
+    found: list[tuple[datetime, Decimal, str]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        stamp = _moment(row.get("closed_at"))
+        pnl = _signed(row.get("pnl"))
+        if stamp is None or pnl is None:
+            continue
+        found.append((stamp, pnl, str(row.get("symbol") or "")))
+    found.sort(key=lambda item: item[0])
+    return found
+
+
+def loss_streak_state(closes: object, moment: datetime | None = None) -> dict:
+    """The streak as the gate reads it. Only closes on the New York day of ``moment`` count.
+
+    ``moment`` defaults to now. ``data_missing`` is true when the closes were not read.
+    """
+    rows = _close_rows(closes)
+    day = session_day_of(moment or datetime.now(timezone.utc))
+    if rows is None:
+        return {"streak": 0, "blocking": False, "data_missing": True, "closes_today": 0, "recent": [], "session_day": day.isoformat()}
+    today = [item for item in rows if session_day_of(item[0]) == day]
+    streak = 0
+    for _stamp, pnl, _symbol in today:
+        if pnl < 0:
+            streak += 1
+        elif pnl > 0:
+            streak = 0
+    recent = [
+        {"closed_at": stamp.isoformat(), "pnl": _plain(pnl), "symbol": symbol, "result": "loss" if pnl < 0 else "win" if pnl > 0 else "flat"}
+        for stamp, pnl, symbol in today[-LOSS_STREAK_RECENT:]
+    ]
+    return {
+        "streak": streak,
+        "blocking": streak >= LOSS_STREAK_LENGTH,
+        "data_missing": False,
+        "closes_today": len(today),
+        "recent": recent,
+        "session_day": day.isoformat(),
+    }
+
+
+def loss_streak_reason(closes: object, moment: datetime | None = None) -> str | None:
+    """LOSS_STREAK with the count, or None when entries may continue.
+
+    Unread closes do not block. A later call after a winning close returns None.
+    """
+    state = loss_streak_state(closes, moment)
+    if not state["blocking"]:
+        return None
+    last = ",".join(item["pnl"] for item in state["recent"][-LOSS_STREAK_LENGTH:])
+    return f"{LOSS_STREAK} consecutive_losses={state['streak']} threshold={LOSS_STREAK_LENGTH} last_closes={last}"
 
 
 def atr14(bars, session_day: date | None = None) -> Decimal | None:
@@ -179,21 +230,22 @@ def chase_reason(
     ).get("reason")
 
 
-def public_add_brake(day_pnl: object, kill_usd: object) -> dict:
+def public_loss_streak(closes: object, moment: datetime | None = None) -> dict:
     """What /risk and /system show. Does not log and does not block a buy by itself."""
-    line = brake_threshold(kill_usd)
-    pnl = _signed(day_pnl)
-    reason = add_brake_reason(pnl, kill_usd)
+    state = loss_streak_state(closes, moment)
+    reason = loss_streak_reason(closes, moment)
     return {
-        "rule": ADD_BRAKE,
-        "fraction": _plain(ADD_BRAKE_FRACTION),
+        "rule": LOSS_STREAK,
+        "enabled": True,
+        "threshold": LOSS_STREAK_LENGTH,
+        "current_streak": state["streak"],
         "blocking": reason is not None,
-        "day_pnl": None if pnl is None else _plain(pnl),
-        "kill_usd": None if _positive(kill_usd) is None else _plain(_positive(kill_usd)),
-        "threshold": None if line is None else _plain(line),
         "reason": reason,
-        "lifts_when_recovered": True,
-        "data_missing": line is None or pnl is None,
+        "releases_on_winning_close": True,
+        "closes_today": state["closes_today"],
+        "recent_closes": state["recent"],
+        "session_day": state["session_day"],
+        "data_missing": state["data_missing"],
     }
 
 
@@ -212,67 +264,148 @@ def session_day_of(moment: datetime) -> date:
     return stamp.astimezone(NY).date()
 
 
-def brake_inputs_from_account(config, account: dict | None, positions, activities, session_date) -> tuple[Decimal | None, Decimal | None]:
-    """(day P&L, locked kill) from an account payload the caller already read.
+def session_closes_from_fills(
+    fills: list[dict],
+    moment: datetime,
+    multiplier: int = 100,
+    exclusions: list[dict] | None = None,
+) -> list[dict]:
+    """Closed round trips (one contract, flat to flat) that closed on the New York day of ``moment``.
 
-    Day P&L is ``compute_adjusted_day_pnl`` (equity minus session-open equity,
-    after funding and excluded lots). The kill is ``effective_kill_usd`` locked
-    to that session open. A missing activity list leaves the P&L unknown.
+    A lot on an active bug exclusion (the same rules /risk uses for the day P&L)
+    is not a close here either, so an excluded bug loss cannot start a streak.
+    ``exclusions`` None loads the active rules; an unreadable table means none.
     """
-    from app.capital import effective_kill_usd
-    from app.capital.session_lock import open_equity_from_account
+    from app.analytics.trades import round_trips
+    from app.trades.exclusion import active_exclusions, matches_trade
 
-    opened = None if not isinstance(account, dict) else open_equity_from_account(account, persist=False)
-    kill = effective_kill_usd(config, open_equity=opened)
-    kill_out = kill if kill > 0 else None
-    if not isinstance(account, dict) or not isinstance(activities, list):
-        return None, kill_out
-    from app.trades.exclusion import compute_adjusted_day_pnl
+    if exclusions is None:
+        try:
+            exclusions = active_exclusions()
+        except Exception:
+            exclusions = []
+    day = session_day_of(moment)
+    closed = [
+        row
+        for row in (round_trips(fills or [], multiplier=multiplier).get("closed") or [])
+        if not exclusions or not matches_trade(row, exclusions)
+    ]
+    # round_trips lists newest first. Oldest first keeps equal close times in fill order.
+    closed.reverse()
+    found = []
+    for row in closed:
+        stamp = _moment(row.get("closed_at"))
+        if stamp is not None and session_day_of(stamp) == day:
+            found.append({"symbol": row.get("symbol"), "pnl": row.get("pnl"), "closed_at": stamp.isoformat()})
+    return found
 
-    pnl = compute_adjusted_day_pnl(
-        account.get("equity"),
-        account.get("last_equity"),
-        positions if isinstance(positions, list) else [],
-        session_date,
-        activities=activities,
-    )
-    return pnl, kill_out
+
+def _stored_day_fills(moment: datetime) -> list[dict]:
+    """Fills already reconciled into broker_fills from the day before the session on. Empty when unreadable."""
+    from datetime import time, timedelta
+
+    from app.models.db import database_ready, session_scope
+
+    if not database_ready():
+        return []
+    from sqlalchemy import select
+
+    from app.models.tables import BrokerFillRecord
+
+    since = datetime.combine(session_day_of(moment) - timedelta(days=1), time.min, tzinfo=NY).astimezone(timezone.utc)
+    payloads: list[dict] = []
+    with session_scope() as session:
+        rows = session.scalars(
+            select(BrokerFillRecord)
+            .where(BrokerFillRecord.observed_at >= since)
+            .order_by(BrokerFillRecord.observed_at.asc(), BrokerFillRecord.id.asc())
+        )
+        for row in rows:
+            payload = dict(row.payload) if isinstance(row.payload, dict) else {}
+            if row.execution_id and not payload.get("execution_id"):
+                payload["execution_id"] = row.execution_id
+            if row.symbol and not payload.get("symbol"):
+                payload["symbol"] = row.symbol
+            if row.broker_order_id and not payload.get("broker_order_id"):
+                payload["broker_order_id"] = row.broker_order_id
+            payloads.append(payload)
+    return payloads
 
 
-def live_brake_inputs(settings) -> tuple[Decimal | None, Decimal | None]:
-    """One account read for the scan. (None, None) when the broker cannot be read."""
-    from datetime import datetime as clock
+def session_closes_from_adapter(settings, adapter, moment: datetime) -> list[dict] | None:
+    """Closed trades of today's New York session for this account. None when nothing could be read.
 
-    from app.analytics.finance import read_session_funding
+    Stored fills and Alpaca paper FILL activities are merged by execution id, the
+    same union the history screen builds, so one close is never counted twice.
+    The Alpaca read starts the day before the session so a buy from yesterday
+    still pairs with today's sell.
+    """
+    from datetime import timedelta
+
+    from app.analytics.closed_trades import merge_fills
+    from app.ops.failure import log_failure
+
+    stored: list[dict] = []
+    live: list[dict] = []
+    stored_ok = False
+    live_ok = False
+    try:
+        stored = _stored_day_fills(moment)
+        stored_ok = True
+    except Exception as exc:
+        log_failure("worker.scan_caught", exc, service="worker", where="loss_streak_stored")
+    reader = getattr(adapter, "get_all_fills", None)
+    if callable(reader):
+        try:
+            after = (session_day_of(moment) - timedelta(days=1)).isoformat()
+            rows = reader(max_pages=5, after=after)
+            live = list(rows) if isinstance(rows, list) else []
+            live_ok = isinstance(rows, list)
+        except Exception as exc:
+            log_failure("worker.scan_caught", exc, service="worker", where="loss_streak_live")
+    if not stored_ok and not live_ok:
+        return None
+    multiplier = int(getattr(settings.trading(), "contract_multiplier", 100) or 100)
+    return session_closes_from_fills(merge_fills(stored, live), moment, multiplier)
+
+
+def live_session_closes(settings, moment: datetime | None = None, adapter=None) -> list[dict] | None:
+    """Today's closed trades for the account this process trades. None when the broker cannot be read.
+
+    Opens its own paper adapter when none is given. A caller that passes one keeps ownership.
+    """
     from app.broker.runtime import open_paper_broker
-    from app.core.sessions import exchange_zone
     from app.integrations.alpaca import AlpacaNotConfigured, PaperOnlyError
 
+    at = moment or datetime.now(timezone.utc)
+    owned = adapter is None
+    if owned:
+        try:
+            adapter = open_paper_broker(settings)
+        except (AlpacaNotConfigured, PaperOnlyError):
+            return None
     try:
-        adapter = open_paper_broker(settings)
-    except (AlpacaNotConfigured, PaperOnlyError):
-        return None, None
-    session_date = clock.now(timezone.utc).astimezone(exchange_zone(settings.calendar())).date()
-    try:
-        account = adapter.get_account()
-        activities = read_session_funding(adapter, session_date)
-        positions = adapter.get_positions()
-    except Exception as exc:
-        from app.ops.failure import log_failure
-
-        log_failure("worker.scan_caught", exc, service="worker", where="add_brake")
-        return None, None
+        return session_closes_from_adapter(settings, adapter, at)
     finally:
-        adapter.close()
-    if not isinstance(account, dict):
-        return None, None
-    return brake_inputs_from_account(
-        settings.trading(),
-        account,
-        positions if isinstance(positions, list) else [],
-        activities if isinstance(activities, list) else None,
-        session_date,
-    )
+        if owned:
+            adapter.close()
+
+
+def loss_streak_missing_log(*, where: str) -> None:
+    log.info("entry.loss_streak_data_missing", service="worker", where=where)
+
+
+def _moment(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        stamp = datetime.fromisoformat(text.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return stamp if stamp.tzinfo is not None else stamp.replace(tzinfo=timezone.utc)
 
 
 def _positive(value: object) -> Decimal | None:

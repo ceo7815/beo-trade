@@ -95,12 +95,13 @@ export type SystemStatus = {
   options2_profile?: string;
   options2_capital_usd?: string;
   open_guard?: OpenGuardStatus | null;
-  add_brake?: {
+  loss_streak?: {
+    enabled?: boolean;
+    threshold?: number;
+    current_streak?: number;
     blocking?: boolean;
-    day_pnl?: string | null;
-    kill_usd?: string | null;
-    threshold?: string | null;
-    fraction?: string;
+    closes_today?: number;
+    recent_closes?: { closed_at?: string; pnl?: string; symbol?: string; result?: string }[];
     data_missing?: boolean;
     reason?: string | null;
   } | null;
