@@ -27,6 +27,8 @@ _SHARED_POLICY = {
     "stop_loss_percent": 0.40,
     "opening_entry_cap": 2,
     "opening_entry_until_minutes": 600,
+    "loss_streak_enabled": True,
+    "opening_wait_minutes": 0,
     "entry_rules_version": "v10.29-pacing",
     # The main books keep the post-26.10 behavior. Options 2 overrides these in its own policy.
     "legacy_direction_v2610": False,
@@ -201,6 +203,9 @@ OFFICIAL_POLICY_V2610_40K = {
     "opening_entry_cap": 2,
     "opening_entry_until_minutes": 600,
     "opening_call_block_until_minutes": 0,
+    # 17.11: no LOSS_STREAK brake here, and no new buys before 09:50 New York.
+    "loss_streak_enabled": False,
+    "opening_wait_minutes": 20,
     "call_extended_at_high_enabled": False,
     "entry_rules_version": "v10.29-pacing",
     "entry_pace_enabled": True,

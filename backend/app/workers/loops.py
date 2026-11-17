@@ -1313,30 +1313,43 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         if floor.get("closed"):
             blocked_all(str(floor.get("reason") or "DAY_FLOOR"))
             return
-        from app.positions.entry_gates import live_session_closes, loss_streak_missing_log, loss_streak_reason, loss_streak_state
-
-        try:
-            session_closes = live_session_closes(settings, moment, adapter)
-        except Exception as exc:
-            from app.ops.failure import log_failure
-
-            log_failure("worker.scan_caught", exc, service="worker", where="loss_streak_submit")
-            session_closes = None
-        brake = loss_streak_reason(session_closes, moment)
-        streak = loss_streak_state(session_closes, moment)
-        _submit_step(
-            log,
-            "loss_streak",
-            blocking=brake is not None,
-            streak=streak["streak"],
-            closes_today=streak["closes_today"],
-            data_missing=streak["data_missing"],
+        from app.positions.entry_gates import (
+            live_session_closes,
+            loss_streak_enabled,
+            loss_streak_missing_log,
+            loss_streak_reason,
+            loss_streak_state,
+            opening_wait_gate,
         )
-        if session_closes is None:
-            loss_streak_missing_log(where="submit")
-        elif brake:
-            blocked_all(brake)
-            return
+
+        streak_on = loss_streak_enabled(settings.trading())
+        if streak_on:
+            try:
+                session_closes = live_session_closes(settings, moment, adapter)
+            except Exception as exc:
+                from app.ops.failure import log_failure
+
+                log_failure("worker.scan_caught", exc, service="worker", where="loss_streak_submit")
+                session_closes = None
+            brake = loss_streak_reason(session_closes, moment)
+            streak = loss_streak_state(session_closes, moment)
+            _submit_step(
+                log,
+                "loss_streak",
+                enabled=True,
+                blocking=brake is not None,
+                streak=streak["streak"],
+                closes_today=streak["closes_today"],
+                data_missing=streak["data_missing"],
+            )
+            if session_closes is None:
+                loss_streak_missing_log(where="submit")
+            elif brake:
+                blocked_all(brake)
+                return
+        else:
+            # Options 2 (v2610_40k): no LOSS_STREAK brake. The day kill and the floor above still apply.
+            _submit_step(log, "loss_streak", enabled=False, blocking=False)
         buying_power = account.get("options_buying_power") or account.get("buying_power")
         buying = None if buying_power in {None, ""} else Decimal(str(buying_power))
         from app.broker.runtime import broker_risk_snapshot
@@ -1368,8 +1381,18 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             from app.ops.failure import log_failure
 
             log_failure("worker.scan_caught", exc, service="worker", where="open_guard_submit")
+        opening_wait = opening_wait_gate(trading, moment)
         for row in buys:
             side = row.call_put.value
+            if opening_wait:
+                with session_scope() as session:
+                    from app.broker.store import record_trade_event
+
+                    record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", opening_wait, row.recommendation_id)
+                    session.commit()
+                outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": opening_wait})
+                _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=opening_wait)
+                continue
             if opening_cap_reached(moment, opening_taken, trading.opening_entry_cap, trading.opening_entry_until_minutes):
                 with session_scope() as session:
                     from app.broker.store import record_trade_event

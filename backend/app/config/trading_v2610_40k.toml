@@ -88,6 +88,10 @@ same_direction_window_minutes = 30
 # opening buys were -$4,236 together. The first two and everything after 10:00 made the profit.
 opening_entry_cap = 2
 opening_entry_until_minutes = 600
+# 17.11: LOSS_STREAK is off for Options 2 so a red day can keep trading back to profit.
+loss_streak_enabled = false
+# 17.11: no new buys in the first 20 minutes (09:30:00-09:49:59 New York). First buy from 09:50.
+opening_wait_minutes = 20
 # New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
 # mix inside that window, and after a losing close the opposite side waits 30 minutes.
 # The same side stays eligible. Pending buys count; a canceled buy does not.

@@ -16,7 +16,14 @@ CHASE_ATR skips one candidate when the underlying has already moved more than
 regular-session open. ATR uses completed daily bars only. A missing open, price,
 or ATR does not block.
 
-Both desks (the 20K book and options2) run this code. There is no switch.
+Both desks (the 20K book and options2) run this code. LOSS_STREAK reads
+``loss_streak_enabled`` from the trading profile: the 20K book keeps it on,
+Options 2 (v2610_40k) turns it off since 17.11.
+
+OPENING_WAIT blocks every new buy in the first ``opening_wait_minutes`` after the
+09:30 New York open (DST follows America/New_York). Options 2 uses 20 minutes, so
+09:30:00-09:49:59 is blocked as OPENING_WAIT_20M and the first buy can go at 09:50.
+0 turns it off (the 20K book).
 """
 
 from __future__ import annotations
@@ -29,6 +36,9 @@ import structlog
 
 LOSS_STREAK = "LOSS_STREAK"
 CHASE_ATR = "CHASE_ATR"
+OPENING_WAIT = "OPENING_WAIT"
+# 09:30 New York, minutes from midnight.
+REGULAR_OPEN_MINUTES = 9 * 60 + 30
 # Consecutive losing closes (realized P&L below zero) that stop new entries.
 LOSS_STREAK_LENGTH = 2
 # Recent closes echoed on /risk.
@@ -105,6 +115,65 @@ def loss_streak_reason(closes: object, moment: datetime | None = None) -> str | 
         return None
     last = ",".join(item["pnl"] for item in state["recent"][-LOSS_STREAK_LENGTH:])
     return f"{LOSS_STREAK} consecutive_losses={state['streak']} threshold={LOSS_STREAK_LENGTH} last_closes={last}"
+
+
+def loss_streak_enabled(trading: object) -> bool:
+    """False only when the profile turns LOSS_STREAK off (Options 2). A missing field keeps it on."""
+    return bool(getattr(trading, "loss_streak_enabled", True))
+
+
+def loss_streak_gate(trading: object, closes: object, moment: datetime | None = None) -> str | None:
+    """loss_streak_reason when the profile has the brake on, otherwise None."""
+    if not loss_streak_enabled(trading):
+        return None
+    return loss_streak_reason(closes, moment)
+
+
+def opening_wait_minutes(trading: object) -> int:
+    try:
+        return max(0, int(getattr(trading, "opening_wait_minutes", 0) or 0))
+    except (TypeError, ValueError):
+        return 0
+
+
+def opening_wait_reason(moment: datetime, minutes: object) -> str | None:
+    """OPENING_WAIT_<N>M from 09:30:00 to just before 09:30 + N on the New York clock. 0 is off.
+
+    Seconds count: with N=20, 09:49:59 is blocked and 09:50:00 is not. Before the
+    open this gate says nothing; the market clock already stops buys there.
+    """
+    try:
+        wait = int(minutes or 0)
+    except (TypeError, ValueError):
+        return None
+    if wait <= 0:
+        return None
+    stamp = moment if moment.tzinfo is not None else moment.replace(tzinfo=timezone.utc)
+    local = stamp.astimezone(NY)
+    since_open = (local.hour * 60 + local.minute - REGULAR_OPEN_MINUTES) * 60 + local.second
+    if 0 <= since_open < wait * 60:
+        return f"{OPENING_WAIT}_{wait}M"
+    return None
+
+
+def opening_wait_gate(trading: object, moment: datetime) -> str | None:
+    return opening_wait_reason(moment, opening_wait_minutes(trading))
+
+
+def public_opening_wait(trading: object, moment: datetime | None = None) -> dict:
+    """The opening wait as /risk and /system show it."""
+    wait = opening_wait_minutes(trading)
+    at = moment or datetime.now(timezone.utc)
+    reason = opening_wait_reason(at, wait)
+    until = REGULAR_OPEN_MINUTES + wait
+    return {
+        "rule": f"{OPENING_WAIT}_{wait}M" if wait else OPENING_WAIT,
+        "enabled": wait > 0,
+        "minutes": wait,
+        "first_entry_ny": f"{until // 60:02d}:{until % 60:02d}" if wait else None,
+        "blocking": reason is not None,
+        "reason": reason,
+    }
 
 
 def atr14(bars, session_day: date | None = None) -> Decimal | None:
@@ -230,13 +299,16 @@ def chase_reason(
     ).get("reason")
 
 
-def public_loss_streak(closes: object, moment: datetime | None = None) -> dict:
-    """What /risk and /system show. Does not log and does not block a buy by itself."""
+def public_loss_streak(closes: object, moment: datetime | None = None, enabled: bool = True) -> dict:
+    """What /risk and /system show. Does not log and does not block a buy by itself.
+
+    ``enabled`` False (Options 2) still shows the count but never blocks.
+    """
     state = loss_streak_state(closes, moment)
-    reason = loss_streak_reason(closes, moment)
+    reason = loss_streak_reason(closes, moment) if enabled else None
     return {
         "rule": LOSS_STREAK,
-        "enabled": True,
+        "enabled": bool(enabled),
         "threshold": LOSS_STREAK_LENGTH,
         "current_streak": state["streak"],
         "blocking": reason is not None,

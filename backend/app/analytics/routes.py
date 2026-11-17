@@ -132,13 +132,28 @@ def _load_fills(adapter, after: str) -> list[dict]:
 
 def _loss_streak_view(settings: Settings, moment: datetime) -> dict:
     """LOSS_STREAK for /risk. A failed read shows data_missing and does not block."""
-    from app.positions.entry_gates import live_session_closes, public_loss_streak
+    from app.positions.entry_gates import live_session_closes, loss_streak_enabled, public_loss_streak
 
+    try:
+        enabled = loss_streak_enabled(settings.trading())
+    except Exception:
+        enabled = True
     try:
         closes = live_session_closes(settings, moment)
     except Exception:
         closes = None
-    return public_loss_streak(closes, moment)
+    return public_loss_streak(closes, moment, enabled)
+
+
+def _opening_wait_view(settings: Settings, moment: datetime) -> dict:
+    """OPENING_WAIT for /risk. Options 2: no new buys before 09:50 New York."""
+    from app.positions.entry_gates import public_opening_wait
+
+    try:
+        trading = settings.trading()
+    except Exception:
+        trading = None
+    return public_opening_wait(trading, moment)
 
 
 def _usage_since(frame: dict, zone: str) -> datetime:
@@ -715,6 +730,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             else "יתרת Alpaca כפי שהיא; P&L התצוגה מנוכה מעסקת הבאג",
             "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(moment),
             "loss_streak": _loss_streak_view(settings, moment),
+            "opening_wait": _opening_wait_view(settings, moment),
             "chase_atr": __import__("app.positions.entry_gates", fromlist=["public_chase"]).public_chase(),
         }
 
