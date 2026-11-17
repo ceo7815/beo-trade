@@ -84,6 +84,10 @@ class TradingConfig:
     same_direction_window_minutes: int = 30
     opening_entry_cap: int = 2
     opening_entry_until_minutes: int = 600
+    # LOSS_STREAK entry brake (two losing closes in a row stop new buys). Options 2 turns it off.
+    loss_streak_enabled: bool = True
+    # No new buys in the first N minutes after the 09:30 New York open (OPENING_WAIT_<N>M). 0 disables.
+    opening_wait_minutes: int = 0
     # Before this New York clock (minutes from midnight), CALL buys are blocked. PUT stays open. 0 disables.
     opening_call_block_until_minutes: int = 600
     # CALL only. Block when the stock is already up at least this fraction from today's open

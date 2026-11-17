@@ -191,7 +191,9 @@ def run_scan(
     from app.positions.entry_gates import (
         atr14,
         chase_reading,
-        loss_streak_reason,
+        loss_streak_enabled,
+        loss_streak_gate,
+        opening_wait_gate,
         public_loss_streak,
         session_day_of,
     )
@@ -200,7 +202,10 @@ def run_scan(
     assert_no_future(underlyings, options, news, as_of)
     gap_state = open_guard if open_guard is not None else guard_for(as_of)
     # None means the caller did not read closes (backtests, tests): no streak gate.
-    brake = loss_streak_reason(session_closes, as_of) if session_closes is not None else None
+    # A profile with loss_streak_enabled false (Options 2) never gets the streak gate.
+    brake = loss_streak_gate(config, session_closes, as_of) if session_closes is not None else None
+    # First N minutes after the 09:30 New York open: no new buys (Options 2: 20). 0 is off.
+    opening_wait = opening_wait_gate(config, as_of)
     move_rows: list[dict] = []
     session_day = session_day_of(as_of)
     results: list[Recommendation] = []
@@ -416,6 +421,10 @@ def run_scan(
         ):
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = "OPENING_CALL_BLOCK"
+        if recommendation.decision is DecisionKind.BUY and opening_wait:
+            recommendation.decision = DecisionKind.SUPPRESS
+            recommendation.suppress_reason = opening_wait
+            recommendation.policy_trace = {**recommendation.policy_trace, "opening_wait": opening_wait}
         if recommendation.decision is DecisionKind.BUY:
             stretch = call_extended_at_high_reason(
                 recommendation.call_put.value,
@@ -499,7 +508,9 @@ def run_scan(
                 "decisions": len(results),
                 "suppress_reasons": suppress_reasons,
                 "move_atr": move_rows,
-                "loss_streak": public_loss_streak(session_closes, as_of) if session_closes is not None else None,
+                "loss_streak": (
+                    public_loss_streak(session_closes, as_of, loss_streak_enabled(config)) if session_closes is not None else None
+                ),
             }
         )
     return results

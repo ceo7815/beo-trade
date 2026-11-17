@@ -94,13 +94,17 @@ def _money(value) -> str:
 def _entry_gate_status(current) -> dict:
     """Loss streak and chase as a read-only monitor sees them. Reuses /risk's loss_streak from the cache when it is warm."""
     from app.analytics.read_cache import read_cache
-    from app.positions.entry_gates import public_chase, public_loss_streak
+    from app.positions.entry_gates import loss_streak_enabled, public_chase, public_loss_streak, public_opening_wait
 
+    try:
+        trading = current.trading()
+    except Exception:
+        trading = None
     cached = read_cache.get(("risk",))
     streak = cached.get("loss_streak") if isinstance(cached, dict) else None
     if not isinstance(streak, dict):
-        streak = public_loss_streak(None)
-    return {"loss_streak": streak, "chase_atr": public_chase()}
+        streak = public_loss_streak(None, enabled=loss_streak_enabled(trading) if trading is not None else True)
+    return {"loss_streak": streak, "opening_wait": public_opening_wait(trading), "chase_atr": public_chase()}
 
 
 def _options2_alert(block: str) -> str:

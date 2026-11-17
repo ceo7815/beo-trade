@@ -334,7 +334,7 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
         if not closed_for and clock.get("is_open") is True:
             from app.options.day_floor import latch_hard_stop
             from app.options.risk_limits import day_flatten_reason
-            from app.positions.entry_gates import live_session_closes, loss_streak_missing_log, loss_streak_reason
+            from app.positions.entry_gates import live_session_closes, loss_streak_enabled, loss_streak_missing_log, loss_streak_reason
 
             pnl, opened = _measured_for_entry(settings, adapter, account, moment)
             equity_now = _decimal(account.get("equity"))
@@ -344,17 +344,23 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
                 except Exception:
                     pass
                 closed_for = "DAILY_HARD_STOP"
-            try:
-                session_closes = live_session_closes(settings, moment, adapter)
-            except Exception:
-                session_closes = None
-            if session_closes is None:
-                loss_streak_missing_log(where="revalidation")
-            brake = loss_streak_reason(session_closes, moment)
+            if loss_streak_enabled(settings.trading()):
+                try:
+                    session_closes = live_session_closes(settings, moment, adapter)
+                except Exception:
+                    session_closes = None
+                if session_closes is None:
+                    loss_streak_missing_log(where="revalidation")
+                brake = loss_streak_reason(session_closes, moment)
         if closed_for:
             reasons.append(closed_for)
         if brake:
             reasons.append(brake)
+        from app.positions.entry_gates import opening_wait_gate
+
+        opening_wait = opening_wait_gate(settings.trading(), moment)
+        if opening_wait:
+            reasons.append(opening_wait)
         if contract is not None:
             from app.positions.open_guard import entry_block
 
