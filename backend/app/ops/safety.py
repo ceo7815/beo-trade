@@ -29,6 +29,7 @@ _SHARED_POLICY = {
     "opening_entry_until_minutes": 600,
     "loss_streak_enabled": True,
     "opening_wait_minutes": 0,
+    "index_chase_pct": 0.0,
     "entry_rules_version": "v10.29-pacing",
     # The main books keep the post-26.10 behavior. Options 2 overrides these in its own policy.
     "legacy_direction_v2610": False,
@@ -206,6 +207,8 @@ OFFICIAL_POLICY_V2610_40K = {
     # 17.11: no LOSS_STREAK brake here, and no new buys before 09:50 New York.
     "loss_streak_enabled": False,
     "opening_wait_minutes": 20,
+    # 23.11: QQQ_CHASE_075, no new buy after QQQ already moved 0.75% from the open in that direction.
+    "index_chase_pct": 0.0075,
     "call_extended_at_high_enabled": False,
     "entry_rules_version": "v10.29-pacing",
     "entry_pace_enabled": True,

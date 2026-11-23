@@ -380,6 +380,18 @@ def place_order(settings: Settings, session: Session, adapter, request: dict, no
             )
             if chase["reason"]:
                 reasons.append(chase["reason"])
+            from app.positions.entry_gates import index_chase_gate
+
+            # QQQ_CHASE (Options 2): same QQQ open/price the submit loop read. Missing values do not block.
+            index_block = index_chase_gate(
+                settings.trading(),
+                (gate or {}).get("side") or contract["right"],
+                None if gate is None else gate.get("qqq_price"),
+                None if gate is None else gate.get("qqq_open"),
+                log_missing=gate is None,
+            )
+            if index_block:
+                reasons.append(index_block)
         held = adapter.get_positions()
         if any(str(row.get("symbol") or "").replace(" ", "") == symbol and (_decimal(row.get("qty")) or Decimal("0")) > 0 for row in held):
             reasons.append("כבר קיימת פוזיציה פתוחה")

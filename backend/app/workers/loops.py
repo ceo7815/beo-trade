@@ -762,6 +762,36 @@ def _revalidation_quotes(settings: Settings, live: datetime, buys) -> list:
     return quotes
 
 
+def _index_chase_inputs(settings: Settings, live: datetime, moment: datetime, spots: dict | None) -> tuple:
+    """(QQQ price, QQQ open) for QQQ_CHASE. (None, None) when QQQ cannot be read; the gate then fails open.
+
+    A QQQ spot already loaded for this submit is reused. Otherwise one spot read for QQQ only.
+    The open is the spot's session open, else today's open_guard reading (same QQQ feed).
+    """
+    spot = spots.get("QQQ") if isinstance(spots, dict) else None
+    if spot is None:
+        try:
+            feed = getattr(build_providers(settings).market, "feed", None)
+            reader = getattr(feed, "load_spots", None)
+            if callable(reader):
+                spot = next((row for row in reader(("QQQ",), live) if str(getattr(row, "symbol", "")).upper() == "QQQ"), None)
+        except Exception as exc:
+            from app.ops.failure import log_failure
+
+            log_failure("worker.scan_caught", exc, service="worker", where="index_chase_spot")
+            spot = None
+    price = None if spot is None else getattr(spot, "price", None)
+    opened = None if spot is None else getattr(spot, "open", None)
+    if not opened:
+        try:
+            from app.positions.open_guard import guard_for
+
+            opened = guard_for(moment).get("open")
+        except Exception:
+            opened = None
+    return price, opened
+
+
 def _loaded_bundles(settings: Settings, now: datetime, underlyings_held: tuple[str, ...] = ()) -> dict:
     try:
         providers = build_providers(settings)
@@ -1382,6 +1412,13 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
 
             log_failure("worker.scan_caught", exc, service="worker", where="open_guard_submit")
         opening_wait = opening_wait_gate(trading, moment)
+        from app.positions.entry_gates import index_chase_pct, index_chase_reading
+
+        index_limit = index_chase_pct(trading)
+        index_price, index_open = (None, None)
+        if index_limit is not None:
+            index_price, index_open = _index_chase_inputs(settings, live, moment, spots)
+        index_missing_logged = False
         for row in buys:
             side = row.call_put.value
             if opening_wait:
@@ -1463,6 +1500,19 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                 outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": chase["reason"], "move_atr": chase["move_atr"]})
                 _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=chase["reason"], move_atr=chase["move_atr"] or "")
                 continue
+            index_chase = None
+            if index_limit is not None:
+                index_chase = index_chase_reading(side, index_price, index_open, index_limit, log_missing=not index_missing_logged)
+                index_missing_logged = index_missing_logged or bool(index_chase["missing"])
+                if index_chase["reason"]:
+                    with session_scope() as session:
+                        from app.broker.store import record_trade_event
+
+                        record_trade_event(session, row.recommendation_id, "BLOCKED", "beo-trade", index_chase["reason"], row.recommendation_id)
+                        session.commit()
+                    outcomes.append({"symbol": row.option_symbol, "result": "blocked", "reason": index_chase["reason"], "qqq_move_pct": index_chase["move_pct"]})
+                    _submit_step(log, "row_gate", symbol=row.option_symbol, result="blocked", reason=index_chase["reason"])
+                    continue
             if trading.max_same_direction_entries > 0 and same_side.get(side, 0) >= trading.max_same_direction_entries:
                 with session_scope() as session:
                     from app.broker.store import record_trade_event
@@ -1586,6 +1636,8 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
                                 "open": chase["open"],
                                 "price": chase["price"],
                                 "atr14": chase["atr14"],
+                                "qqq_open": None if index_chase is None else index_chase["open"],
+                                "qqq_price": None if index_chase is None else index_chase["price"],
                             },
                         },
                         live,

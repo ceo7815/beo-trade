@@ -156,6 +156,17 @@ def _opening_wait_view(settings: Settings, moment: datetime) -> dict:
     return public_opening_wait(trading, moment)
 
 
+def _index_chase_view(settings: Settings) -> dict:
+    """QQQ_CHASE for /risk. Options 2: 0.75% from the open; other profiles off."""
+    from app.positions.entry_gates import public_index_chase
+
+    try:
+        trading = settings.trading()
+    except Exception:
+        trading = None
+    return public_index_chase(trading)
+
+
 def _usage_since(frame: dict, zone: str) -> datetime:
     start = frame.get("start")
     if not start:
@@ -731,6 +742,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "open_guard": __import__("app.positions.open_guard", fromlist=["public_open_guard"]).public_open_guard(moment),
             "loss_streak": _loss_streak_view(settings, moment),
             "opening_wait": _opening_wait_view(settings, moment),
+            "index_chase": _index_chase_view(settings),
             "chase_atr": __import__("app.positions.entry_gates", fromlist=["public_chase"]).public_chase(),
         }
 

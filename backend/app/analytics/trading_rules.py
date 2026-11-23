@@ -304,6 +304,20 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
                     "OPEN_NO_FADE: עד 10:10 אין CALL אחרי גאפ למטה ואין PUT אחרי גאפ למעלה. OPEN_GAP_RETRACE: מ־09:45, אם QQQ כבר תיקן לפחות חצי מהגאפ, אין כניסה חדשה עד 10:10. בלי מחיר פתיחה או בלי סגירה קודמת אין חסימה (GAP_DATA_MISSING). פוזיציה פתוחה לא נסגרת. השער פעיל ב־20K ובאופציות 2.",
                 ),
                 _rule(
+                    "index_chase",
+                    "בלי רדיפה אחרי QQQ",
+                    (
+                        f"פעיל · {float(getattr(trading, 'index_chase_pct', 0) or 0) * 100:.2f}% מהפתיחה"
+                        if float(getattr(trading, "index_chase_pct", 0) or 0) > 0
+                        else "כבוי"
+                    ),
+                    (
+                        "QQQ_CHASE: אין CALL חדש כש־QQQ כבר עלה מהפתיחה של 09:30 ניו־יורק לפחות בסף, ואין PUT חדש כש־QQQ כבר ירד מהפתיחה לפחות בסף. "
+                        "באופציות 2: 0.75% (QQQ_CHASE_075). השער חל בסריקה, לפני שליחה ובבדיקה מחדש מול הברוקר, וכל חסימה נרשמת ביומן העסקה. "
+                        "בלי מחיר פתיחה או בלי מחיר QQQ אין חסימה (entry.index_chase_data_missing). פוזיציה פתוחה לא נסגרת. ב־20K כבוי (index_chase_pct = 0)."
+                    ),
+                ),
+                _rule(
                     "opening_wait",
                     "בלי כניסה ב־20 הדקות הראשונות" if int(getattr(trading, "opening_wait_minutes", 0) or 0) == 20 else "המתנה אחרי הפתיחה",
                     (

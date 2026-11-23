@@ -360,8 +360,8 @@ def test_rules_book_and_release_notes_describe_both_changes():
     entry = build_trading_rules(k20)["active"]["sections"]["entry"]
     assert next(item for item in entry if item["id"] == "opening_wait")["value"] == "כבוי"
     assert next(item for item in entry if item["id"] == "loss_streak")["value"] == "2 סגירות מפסידות ברצף"
-    latest = json.loads((ROOT / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"][0]
-    assert latest["version"] == "2026.11.17.1"
+    releases = json.loads((ROOT / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"]
+    latest = next(item for item in releases if item["version"] == "2026.11.17.1")
     assert any("OPENING_WAIT_20M" in line for line in latest["changes"])
     assert any("LOSS_STREAK" in line for line in latest["changes"])
 
