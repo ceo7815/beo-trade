@@ -191,6 +191,8 @@ def run_scan(
     from app.positions.entry_gates import (
         atr14,
         chase_reading,
+        index_chase_pct,
+        index_chase_reading,
         loss_streak_enabled,
         loss_streak_gate,
         opening_wait_gate,
@@ -206,6 +208,10 @@ def run_scan(
     brake = loss_streak_gate(config, session_closes, as_of) if session_closes is not None else None
     # First N minutes after the 09:30 New York open: no new buys (Options 2: 20). 0 is off.
     opening_wait = opening_wait_gate(config, as_of)
+    # QQQ_CHASE (Options 2: 0.75%): no new buy after QQQ already ran that far from the open in the trade direction.
+    index_limit = index_chase_pct(config)
+    index_quote = next((item for item in underlyings if str(getattr(item, "symbol", "")).upper() == "QQQ"), None)
+    index_missing_logged = False
     move_rows: list[dict] = []
     session_day = session_day_of(as_of)
     results: list[Recommendation] = []
@@ -475,6 +481,26 @@ def run_scan(
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = chase["reason"]
             recommendation.policy_trace = {**recommendation.policy_trace, "chase_atr": chase["reason"]}
+        if recommendation.decision is DecisionKind.BUY and index_limit is not None:
+            index_chase = index_chase_reading(
+                recommendation.call_put.value,
+                None if index_quote is None else index_quote.price,
+                None if index_quote is None else index_quote.open,
+                index_limit,
+                # QQQ outside this scan's universe is not a data fault: the submit gate reads QQQ itself.
+                log_missing=index_quote is not None and not index_missing_logged,
+            )
+            index_missing_logged = index_missing_logged or bool(index_chase["missing"])
+            recommendation.policy_trace = {
+                **recommendation.policy_trace,
+                "qqq_open": index_chase["open"],
+                "qqq_price": index_chase["price"],
+                "qqq_move_pct": index_chase["move_pct"],
+            }
+            if index_chase["reason"]:
+                recommendation.decision = DecisionKind.SUPPRESS
+                recommendation.suppress_reason = index_chase["reason"]
+                recommendation.policy_trace = {**recommendation.policy_trace, "index_chase": index_chase["reason"]}
         if recommendation.decision is DecisionKind.BUY and brake:
             recommendation.decision = DecisionKind.SUPPRESS
             recommendation.suppress_reason = brake

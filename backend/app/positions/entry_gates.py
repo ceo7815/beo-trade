@@ -24,6 +24,13 @@ OPENING_WAIT blocks every new buy in the first ``opening_wait_minutes`` after th
 09:30 New York open (DST follows America/New_York). Options 2 uses 20 minutes, so
 09:30:00-09:49:59 is blocked as OPENING_WAIT_20M and the first buy can go at 09:50.
 0 turns it off (the 20K book).
+
+QQQ_CHASE (index chase) skips a new buy when QQQ has already moved at least
+``index_chase_pct`` from today's 09:30 New York open in the trade direction: a
+CALL is skipped when QQQ >= open x (1 + pct), a PUT when QQQ <= open x (1 - pct).
+Options 2 (v2610_40k) uses 0.0075 since 23.11 and logs QQQ_CHASE_075. 0 turns it
+off (every other profile). A missing QQQ open or price does not block; the miss is
+logged as entry.index_chase_data_missing. Exits never read it.
 """
 
 from __future__ import annotations
@@ -37,6 +44,8 @@ import structlog
 LOSS_STREAK = "LOSS_STREAK"
 CHASE_ATR = "CHASE_ATR"
 OPENING_WAIT = "OPENING_WAIT"
+QQQ_CHASE = "QQQ_CHASE"
+INDEX_CHASE_SYMBOL = "QQQ"
 # 09:30 New York, minutes from midnight.
 REGULAR_OPEN_MINUTES = 9 * 60 + 30
 # Consecutive losing closes (realized P&L below zero) that stop new entries.
@@ -173,6 +182,86 @@ def public_opening_wait(trading: object, moment: datetime | None = None) -> dict
         "first_entry_ny": f"{until // 60:02d}:{until % 60:02d}" if wait else None,
         "blocking": reason is not None,
         "reason": reason,
+    }
+
+
+def index_chase_pct(trading: object) -> Decimal | None:
+    """The profile's QQQ_CHASE threshold as a fraction (0.0075 = 0.75%). None when off or unreadable."""
+    raw = getattr(trading, "index_chase_pct", 0) if trading is not None else 0
+    limit = _positive(raw)
+    if limit is None or limit >= 1:
+        return None
+    return limit
+
+
+def index_chase_code(limit: Decimal) -> str:
+    """Reason code in hundredths of a percent: QQQ_CHASE_075 for 0.0075, QQQ_CHASE_100 for 0.01."""
+    hundredths = int((limit * Decimal("10000")).to_integral_value())
+    return f"{QQQ_CHASE}_{hundredths:03d}"
+
+
+def index_chase_reading(side: object, price: object, open_price: object, limit: object, *, log_missing: bool = True) -> dict:
+    """QQQ move from today's open in the trade direction, and the skip text when it reached the limit.
+
+    CALL move = price / open - 1. PUT move = 1 - price / open. Blocks when move >= limit.
+    Missing open or price never blocks; it is logged once per call when ``log_missing``.
+    """
+    right = str(side or "").upper()
+    threshold = _positive(limit)
+    last = _positive(price)
+    opened = _positive(open_price)
+    move = None
+    if right in {"CALL", "PUT"} and last is not None and opened is not None:
+        change = last / opened - 1
+        move = change if right == "CALL" else -change
+    missing = threshold is not None and move is None
+    blocked = threshold is not None and move is not None and move >= threshold
+    reason = None
+    if blocked and threshold is not None and move is not None and opened is not None and last is not None:
+        reason = (
+            f"{index_chase_code(threshold)} {INDEX_CHASE_SYMBOL}_move={_plain((move * 100).quantize(Decimal('0.01')))}% "
+            f"open={_plain(opened)} price={_plain(last)} side={right}"
+        )
+    if missing and log_missing:
+        log.info(
+            "entry.index_chase_data_missing",
+            service="worker",
+            symbol=INDEX_CHASE_SYMBOL,
+            side=right or None,
+            open=None if opened is None else str(opened),
+            price=None if last is None else str(last),
+        )
+    return {
+        "symbol": INDEX_CHASE_SYMBOL,
+        "side": right,
+        "move_pct": None if move is None else _plain((move * 100).quantize(Decimal("0.01"))),
+        "open": None if opened is None else _plain(opened),
+        "price": None if last is None else _plain(last),
+        "limit_pct": None if threshold is None else _plain(threshold * 100),
+        "blocked": blocked,
+        "reason": reason,
+        "missing": missing,
+    }
+
+
+def index_chase_gate(trading: object, side: object, price: object, open_price: object, *, log_missing: bool = True) -> str | None:
+    """Skip text when the profile has QQQ_CHASE on and QQQ already ran in this direction. Otherwise None."""
+    limit = index_chase_pct(trading)
+    if limit is None:
+        return None
+    return index_chase_reading(side, price, open_price, limit, log_missing=log_missing)["reason"]
+
+
+def public_index_chase(trading: object) -> dict:
+    """QQQ_CHASE as /risk and /system show it. No feed call."""
+    limit = index_chase_pct(trading)
+    return {
+        "rule": index_chase_code(limit) if limit is not None else QQQ_CHASE,
+        "enabled": limit is not None,
+        "symbol": INDEX_CHASE_SYMBOL,
+        "limit_pct": None if limit is None else _plain(limit * 100),
+        "reference": "today's 09:30 New York open",
+        "blocks_on_missing_data": False,
     }
 
 

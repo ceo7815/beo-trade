@@ -92,6 +92,9 @@ opening_entry_until_minutes = 600
 loss_streak_enabled = false
 # 17.11: no new buys in the first 20 minutes (09:30:00-09:49:59 New York). First buy from 09:50.
 opening_wait_minutes = 20
+# 23.11: no new CALL when QQQ is already >= +0.75% from today's 09:30 New York open, no new PUT when it is
+# <= -0.75% (QQQ_CHASE_075). Backtest 11-23.11 (trade removal, estimate): +$2,105 -> +$5,417, 15 trades blocked.
+index_chase_pct = 0.0075
 # New buys only. At most 2 submitted or filled buys in any rolling 5 minutes, no CALL+PUT
 # mix inside that window, and after a losing close the opposite side waits 30 minutes.
 # The same side stays eligible. Pending buys count; a canceled buy does not.
