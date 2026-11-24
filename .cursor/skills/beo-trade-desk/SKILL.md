@@ -53,7 +53,7 @@ A liquidity exit fires only after the bid-ask spread stays wider than 25% for tw
 
 ## Decisions
 
-A paper buy may happen when the quant gates pass and the model is silent (`allow_quant_entry`). Do not require OpenAI or Benzinga for an entry. MU and SMCI were profitable without an AI review. If OpenAI returns 429, say whether it is `insufficient_quota` or `rate_limit_exceeded` once the scan records it. Do not paste the API key.
+A paper buy may happen when the quant gates pass and the model is silent (`allow_quant_entry`). Do not require OpenAI or Benzinga for an entry. MU and SMCI were profitable without an AI review. If Benzinga or any news provider fails during a scan or pre-submit revalidation, the scan continues with empty news, the failure is logged as `scan.news_unavailable`, and `/system` still records the news feed as failed; market and options feed status is still written. This does not change `allow_buy_without_news` or any entry threshold. If OpenAI returns 429, say whether it is `insufficient_quota` or `rate_limit_exceeded` once the scan records it. Do not paste the API key.
 
 Size and the equity check must use the same Alpaca account snapshot. Reading equity twice while a position is open blocks every new buy with `EQUITY_SOURCE_MISMATCH`.
 

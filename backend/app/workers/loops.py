@@ -1182,8 +1182,6 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
         quotes = _revalidation_quotes(settings, live, buys)
         spots = getattr(quotes, "spots", {})
         _submit_step(log, "_revalidation_quotes", quotes=len(quotes))
-        news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
-        _submit_step(log, "news", articles=len(news))
     except Exception as exc:
         import traceback
 
@@ -1204,6 +1202,14 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             # could not be told apart from any other revalidation failure.
             blocked_all(f"REVALIDATION_DATA: {detail['error']}: {detail['message']} | {detail['traceback']}")
         return
+    try:
+        news = providers.news.load_news(moment, symbols) if providers.news.name != "unconfigured" else []
+    except Exception as exc:
+        from app.ops.failure import log_failure
+
+        log_failure("scan.news_unavailable", exc, service="worker", where="revalidation_news")
+        news = []
+    _submit_step(log, "news", articles=len(news))
     equity = _cash(settings)
     if equity is not None:
         from app.capital import risk_equity

@@ -227,3 +227,36 @@ def test_revalidation_failure_records_the_message_and_the_traceback(desk, monkey
     assert reason.startswith("REVALIDATION_DATA: RuntimeError: quote feed down")
     assert "_submit_autonomous_buys" in reason
     assert "loops.py:" in reason
+
+def test_submit_continues_when_news_provider_fails(desk, monkeypatch):
+    """A Benzinga failure during pre-submit revalidation must not block every buy."""
+    from app.providers.benzinga import BenzingaError
+    from app.providers.registry import ProviderSet
+
+    settings, placed = desk
+
+    class _News:
+        name = "benzinga"
+
+        def load_news(self, as_of, symbols=None):
+            raise BenzingaError("האימות נכשל או שאין הרשאה")
+
+    class _Idle:
+        name = "stub"
+
+        def load_underlyings(self, as_of):
+            return []
+
+        def load_options(self, as_of):
+            return []
+
+    monkeypatch.setattr(loops, "build_providers", lambda _settings: ProviderSet(market=_Idle(), options=_Idle(), news=_News()))
+    outcomes: list[dict] = []
+    _submit_autonomous_buys(settings, [_buy("CALL", "newsfail")], _ny(11, 0), outcomes)
+    assert outcomes, "a buy must leave an outcome"
+    reason = str(outcomes[0].get("reason") or "")
+    assert "REVALIDATION_DATA" not in reason
+    assert "BenzingaError" not in reason
+    assert outcomes[0]["result"] == "submitted"
+    assert placed == ["placed"]
+

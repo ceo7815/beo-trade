@@ -47,6 +47,7 @@ class ScanResult:
         self.option_symbols = option_symbols
         self.ai_calls = ai_calls
         self.scan_id = scan_id
+        self.news_error: str | None = None
         self.stages: dict = {}
         self.filter_profile: dict = {}
 
@@ -69,11 +70,12 @@ def execute_scan(
     progress: Callable[..., None] | None = None,
     session_closes: list[dict] | None = None,
 ) -> ScanResult:
-    """Load news when Benzinga is configured, then run the decision pipeline.
+    """Load news when a news provider is configured, then run the decision pipeline.
 
     Market and options data are still required before run_scan. A configured
     news provider is fetched even when those providers are missing, so the
-    news step is not what stops the scan.
+    news step is not what stops the scan. A news-provider failure is logged as
+    scan.news_unavailable and the scan continues with empty news.
     """
     missing_market: str | None = None
     underlyings = []
@@ -105,6 +107,7 @@ def execute_scan(
             missing_market = exc.variable
     clock.mark("options")
 
+    news_error: str | None = None
     if providers.news.name == "unconfigured":
         if missing_market:
             raise MarketDataMissing(missing_market)
@@ -112,9 +115,12 @@ def execute_scan(
     else:
         symbols = tuple(dict.fromkeys(item.symbol.strip().upper() for item in kept if item.symbol))
         try:
-            news = providers.news.load_news(now, symbols or None)
+            news = list(providers.news.load_news(now, symbols or None))
         except ProviderNotConfigured as exc:
             raise MarketDataMissing(exc.variable) from exc
+        except Exception as exc:
+            news_error = _log_news_unavailable(exc, where="load_news")
+            news = []
         if missing_market:
             raise MarketDataMissing(missing_market, news_count=len(news))
     clock.mark("news")
@@ -196,6 +202,7 @@ def execute_scan(
     clock.mark("decisions")
     _store_rejections(scan_id, now, rejections)
     result = ScanResult(rows, len(news), kept, _universe_view(universe), rejections, len({item.symbol for item in kept}), counter.calls, scan_id)
+    result.news_error = news_error
     result.filter_profile = filter_profile
     _remember_scan_liquidity(underlyings)
     _store_rv_audit(scan_id, now, filter_profile.get("samples") or [])
@@ -214,6 +221,7 @@ def execute_scan(
         "option_rejections": counts.get("option_rejections", {}),
         "news_checked": len(news),
         "news_passed": counts.get("news_passed", 0),
+        "news_unavailable": news_error,
         "risk_checked": counts.get("risk_checked", 0),
         "risk_passed": counts.get("risk_passed", 0),
         "ai_calls": counter.calls,
@@ -232,6 +240,13 @@ def execute_scan(
         "seconds": clock.seconds,
     }
     return result
+
+
+def _log_news_unavailable(exc: BaseException, *, where: str) -> str:
+    from app.ops.failure import failure_fields, log_failure
+
+    log_failure("scan.news_unavailable", exc, service="scan", where=where)
+    return str(failure_fields(exc).get("message") or type(exc).__name__)[:200]
 
 
 class _StageClock:
