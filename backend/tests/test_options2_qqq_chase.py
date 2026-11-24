@@ -243,9 +243,9 @@ def test_rules_book_release_notes_and_every_entry_path():
     entry = build_trading_rules(k20)["active"]["sections"]["entry"]
     assert next(item for item in entry if item["id"] == "index_chase")["value"] == "כבוי"
     root = Path(__file__).resolve().parents[1]
-    latest = json.loads((root / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"][0]
-    assert latest["version"] == "2026.11.23.1"
-    assert any("QQQ_CHASE_075" in line for line in latest["changes"])
+    releases = json.loads((root / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"]
+    note = next(item for item in releases if item["version"] == "2026.11.23.1")
+    assert any("QQQ_CHASE_075" in line for line in note["changes"])
     assert "index_chase_reading" in inspect.getsource(loops._submit_autonomous_buys)
     assert "index_chase_gate" in inspect.getsource(execution)
     assert "index_chase_reading" in inspect.getsource(pipeline.run_scan)

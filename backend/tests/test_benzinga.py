@@ -326,9 +326,151 @@ def test_http_scan_reports_benzinga_failure_without_articles(tmp_path, monkeypat
     settings = _settings(database_url="sqlite:///" + database.as_posix())
     with TestClient(create_app(settings, allow_open_api=True)) as client:
         scan = client.post("/api/v1/scan")
-        assert scan.status_code == 502
+        # News failed, but that no longer returns 502. Market is unconfigured, so the
+        # scan continues past Benzinga and then stops on missing market data (409).
+        assert scan.status_code == 409
         assert "test-key" not in scan.text
         body = client.get("/api/v1/system").json()
         assert body["news_status"]["article_count"] == 0
         assert body["news_status"]["last_error"]
         assert body["news_status"]["authenticated"] is not True
+
+def test_scan_completes_with_empty_news_when_benzinga_auth_fails(monkeypatch):
+    events = []
+
+    def capture(event, exc, **fields):
+        events.append((event, type(exc).__name__, fields))
+
+    monkeypatch.setattr("app.ops.failure.log_failure", capture)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(401, json=["Access denied for user 0"])
+
+    providers = ProviderSet(market=_ReadyMarket(), options=_ReadyMarket(), news=_provider(handler))
+    result = execute_scan(
+        providers,
+        loose_config(),
+        StubAI(),
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("1000"),
+        set(),
+    )
+    assert result.news_count == 0
+    assert result.news_error
+    assert "test-key" not in (result.news_error or "")
+    assert result.stages["news_unavailable"]
+    assert result.recommendations
+    assert result.recommendations[0].gate_results["NEWS_OK"] is True
+    assert events
+    assert events[0][0] == "scan.news_unavailable"
+    status = providers.news.status_detail()
+    assert status["authenticated"] is False
+    assert status["article_count"] == 0
+    assert status["last_error"]
+    assert status["last_success"] is None
+
+
+def test_scan_completes_when_news_provider_raises_generic_error():
+    class _BoomNews:
+        name = "benzinga"
+
+        def load_news(self, as_of, symbols=None):
+            raise RuntimeError("news exploded")
+
+        def status_detail(self):
+            return {
+                "provider": "benzinga",
+                "authenticated": False,
+                "last_success": None,
+                "last_fetch": "2026-11-24T16:54:00+00:00",
+                "article_count": 0,
+                "last_error": "news exploded",
+            }
+
+    providers = ProviderSet(market=_ReadyMarket(), options=_ReadyMarket(), news=_BoomNews())
+    result = execute_scan(
+        providers,
+        loose_config(),
+        StubAI(),
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("1000"),
+        set(),
+    )
+    assert result.news_count == 0
+    assert result.news_error
+    assert "exploded" in result.news_error
+    assert result.recommendations
+
+
+def test_feed_status_still_written_when_news_fails(tmp_path, monkeypatch):
+    import json
+
+    from app.providers.registry import write_feed_status
+
+    feed_path = tmp_path / "feed_status.json"
+    monkeypatch.setattr("app.ops.paths.FEED_STATUS", feed_path)
+
+    class _Market:
+        name = "stub"
+
+        def load_underlyings(self, as_of):
+            return [sample_market()[0]]
+
+        def load_options(self, as_of):
+            return [sample_market()[1]]
+
+        def status_detail(self):
+            return {
+                "provider": "stub",
+                "authenticated": True,
+                "last_success": "2026-11-24T16:54:00+00:00",
+                "last_fetch": "2026-11-24T16:54:00+00:00",
+                "quote_count": 4,
+                "option_count": 12,
+                "last_error": None,
+            }
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    providers = ProviderSet(market=_Market(), options=_Market(), news=_provider(handler))
+    result = execute_scan(
+        providers,
+        loose_config(),
+        StubAI(),
+        ledger(),
+        AS_OF,
+        AS_OF.date(),
+        Decimal("1000"),
+        set(),
+    )
+    assert result.news_count == 0
+    write_feed_status(providers)
+    payload = json.loads(feed_path.read_text(encoding="utf-8"))
+    assert payload["news_status"]["provider"] == "benzinga"
+    assert payload["news_status"]["authenticated"] is False
+    assert payload["news_status"]["article_count"] == 0
+    assert payload["news_status"]["last_error"]
+    assert payload["news_status"]["last_fetch"]
+    assert payload["market_status"]["authenticated"] is True
+    assert payload["market_status"]["quote_count"] == 4
+    assert payload["options_status"]["authenticated"] is True
+    assert payload["options_status"]["option_count"] == 12
+    assert "test-key" not in feed_path.read_text(encoding="utf-8")
+
+def test_release_notes_and_desk_skill_record_news_failure_behavior():
+    import json
+    from pathlib import Path
+
+    root = Path(__file__).resolve().parents[1]
+    releases = json.loads((root / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"]
+    latest = releases[0]
+    assert latest["version"] == "2026.11.24.1"
+    assert any("scan.news_unavailable" in line for line in latest["changes"])
+    skill = (root.parent / ".cursor" / "skills" / "beo-trade-desk" / "SKILL.md").read_text(encoding="utf-8")
+    assert "scan.news_unavailable" in skill
+
