@@ -1542,7 +1542,11 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             bucket = sector_key(row.underlying)
             sector_premium = Decimal(str(sectors.get(bucket, 0)))
             fresh = fresh_news(news, row.underlying, moment, settings.trading().news_max_age_seconds)
-            action, _why = regime_trade_policy(regime, row.call_put.value)
+            action, regime_why = regime_trade_policy(
+                regime,
+                row.call_put.value,
+                allow_stressed_puts=bool(getattr(settings.trading(), "stressed_allow_puts", False)),
+            )
             decision = admit_buy(
                 _option_for_admission(row),
                 equity,
@@ -1601,6 +1605,7 @@ def _submit_autonomous_buys(settings: Settings, recommendations, moment: datetim
             context = {
                 "news_fresh": news_confirmed(fresh, settings.trading()) or settings.trading().allow_buy_without_news,
                 "regime_allowed": action == "ALLOW",
+                "regime_note": regime_why,
                 "session_open": session_open,
                 "entry_window_open": window_open,
                 "exposure_ok": exposure_reason(equity, open_premium, added, settings.trading()) is None,

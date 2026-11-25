@@ -743,6 +743,7 @@ def register(app: FastAPI, settings: Settings) -> None:
             "loss_streak": _loss_streak_view(settings, moment),
             "opening_wait": _opening_wait_view(settings, moment),
             "index_chase": _index_chase_view(settings),
+            "stressed_puts": __import__("app.market.regime_policy", fromlist=["public_stressed_regime"]).public_stressed_regime(trading),
             "chase_atr": __import__("app.positions.entry_gates", fromlist=["public_chase"]).public_chase(),
         }
 

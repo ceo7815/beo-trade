@@ -468,8 +468,7 @@ def test_release_notes_and_desk_skill_record_news_failure_behavior():
 
     root = Path(__file__).resolve().parents[1]
     releases = json.loads((root / "app" / "config" / "releases.json").read_text(encoding="utf-8"))["releases"]
-    latest = releases[0]
-    assert latest["version"] == "2026.11.24.1"
+    latest = next(item for item in releases if item["version"] == "2026.11.24.1")
     assert any("scan.news_unavailable" in line for line in latest["changes"])
     skill = (root.parent / ".cursor" / "skills" / "beo-trade-desk" / "SKILL.md").read_text(encoding="utf-8")
     assert "scan.news_unavailable" in skill
