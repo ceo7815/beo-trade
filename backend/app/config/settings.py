@@ -91,6 +91,8 @@ class TradingConfig:
     # QQQ_CHASE: no new CALL once QQQ is up this fraction from the 09:30 New York open, no new PUT once it is
     # down this fraction. Options 2 uses 0.0075 (QQQ_CHASE_075). 0 disables. Missing QQQ data does not block.
     index_chase_pct: float = 0.0
+    # When true, PUT entries remain eligible under volatility STRESSED (VIX >= 28); CALLs stay blocked.
+    stressed_allow_puts: bool = False
     # Before this New York clock (minutes from midnight), CALL buys are blocked. PUT stays open. 0 disables.
     opening_call_block_until_minutes: int = 600
     # CALL only. Block when the stock is already up at least this fraction from today's open

@@ -418,10 +418,16 @@ def run_scan(
                 recommendation.decision = DecisionKind.SUPPRESS
                 recommendation.suppress_reason = sector_reason
         if regime is not None and recommendation.decision is DecisionKind.BUY:
-            action, why = regime_trade_policy(regime, recommendation.call_put.value)
+            action, why = regime_trade_policy(
+                regime,
+                recommendation.call_put.value,
+                allow_stressed_puts=bool(getattr(config, "stressed_allow_puts", False)),
+            )
             if action == "SUPPRESS":
                 recommendation.decision = DecisionKind.SUPPRESS
                 recommendation.suppress_reason = why
+            elif why:
+                recommendation.policy_trace = {**recommendation.policy_trace, "regime": why}
         if recommendation.decision is DecisionKind.BUY and opening_call_blocked(
             recommendation.call_put.value, as_of, config.opening_call_block_until_minutes
         ):

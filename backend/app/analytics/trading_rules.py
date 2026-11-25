@@ -346,7 +346,12 @@ def build_trading_rules(settings: Settings, equity: Decimal | None = None) -> di
                 ),
                 _rule("dte", "DTE", f"מועדף {trading.preferred_dte}, מקס׳ מועדף {trading.preferred_max_dte}, תקרה {trading.max_expiration_days}", "דירוג לפי ימי פקיעה; מעבר לתקרה נחסם."),
                 _rule("pace", "קצב כניסות", f"עד {trading.entry_pace_max_entries} ב־{trading.entry_pace_window_minutes} דק׳", "בלי מיקס צדדים בחלון; אחרי הפסד הצד ההפוך מחכה."),
-                _rule("regime", "משטר שוק", "פעיל במערכת", "כניסות מסוננות גם לפי מצב המשטר (regime) כשהוא זמין."),
+                _rule(
+                    "regime",
+                    "משטר שוק",
+                    "פעיל · PUT מותר ב־STRESSED, CALL חסום" if bool(getattr(trading, "stressed_allow_puts", False)) else "פעיל במערכת · STRESSED חוסם CALL ו־PUT",
+                    "כניסות מסוננות לפי מצב המשטר (regime). במצב STRESSED (VIX ≥ 28) ברירת המחדל היא חסימה של CALL ו־PUT (REGIME_STRESSED). באופציות 2 (v2610_40k): PUT נשאר מותר כש־trend אינו UP (נרשם כ־REGIME_STRESSED_PUT_ALLOWED), ו־CALL נשאר חסום. ב־20K כבוי (stressed_allow_puts = false).",
+                ),
             ],
             "per_trade_exits": [
                 _rule("stop", "סטופ", _pct(trading.initial_stop_decline_pct), "יציאה כשהפרמיה יורדת בשיעור הזה מהכניסה."),
